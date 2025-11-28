@@ -1,5 +1,71 @@
+# Visual Studio
 .vs/
+.vscode/
+*.sln.iml
+*.code-workspace
+
+# Build results
 bin/
 obj/
+*.dll
+*.exe
+*.pdb
+*.nupkg
+publish/
+dist/
+
+# User-specific files
 *.user
-publish/*.exe
+*.userprefs
+*.suo
+*.aps
+*.ncb
+*.opensdf
+*.sdf
+*.vcxproj.filters
+
+# NuGet
+*.nuspec
+packages/
+.nuget/
+
+# Build artifacts
+artifacts/
+release/
+backup/
+
+# Testing
+TestResults/
+*.trx
+.coverage
+coverage/
+
+# Environment & Configuration
+*.log
+*.txt
+*.env
+!RELEASE_NOTES.txt
+!README.md
+!DOCKER_E2E_TESTING.md
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Docker volumes (local)
+docker_volumes/
+pg_data/
+oracle_data/
+mssql_data/
+
+# Temporary files
+*.tmp
+*.bak
+*~
+
+# IDE
+.idea/
+*.sublime-workspace
+*.sublime-project

@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: dbmigrator-postgres
+    environment:
+      POSTGRES_USER: pguser
+      POSTGRES_PASSWORD: pgpass123
+      POSTGRES_DB: testdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pguser -d testdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Oracle Database (using free Oracle Express Edition)
+  oracle:
+    image: gvenzl/oracle-xe:21.3.0
+    container_name: dbmigrator-oracle
+    environment:
+      ORACLE_PASSWORD: oraclepass123
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle_data:/opt/oracle/oradata
+      - ./init-scripts/oracle-init.sql:/container-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD", "sqlplus", "-L", "sys/oraclepass123@localhost:1521/XE", "as", "sysdba", "select 1 from dual"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    shm_size: 1gb
+
+  # SQL Server Database
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: dbmigrator-sqlserver
+    environment:
+      SA_PASSWORD: SqlServer@123
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Express
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+      - ./init-scripts/sqlserver-init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "SqlServer@123", "-Q", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  oracle_data:
+  sqlserver_data:
+
+networks:
+  default:
+    name: dbmigrator-network
