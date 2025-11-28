@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
@@ -15,19 +16,46 @@ public class DatabaseService : IDatabaseService
 {
     private const int BatchSize = 1000;
     private const int CommandTimeout = 300; // 5 minuti
+    
+    private static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "DatabaseMigrator", "debug.log");
+
+    private static void Log(string message)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(LogPath);
+            if (!Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+            
+            var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}\n";
+            File.AppendAllText(LogPath, fullMessage);
+            System.Diagnostics.Debug.WriteLine(fullMessage);
+        }
+        catch { }
+    }
 
     public async Task<bool> TestConnectionAsync(ConnectionInfo connectionInfo)
     {
         try
         {
+            Log($"TestConnectionAsync started for {connectionInfo.DatabaseType}");
+            var connStr = connectionInfo.GetConnectionString();
+            Log($"Connection string: {connStr}");
+            
             using (var connection = CreateConnection(connectionInfo))
             {
+                Log($"Opening connection...");
                 await connection.OpenAsync();
+                Log($"Connection opened successfully!");
                 return connection.State == ConnectionState.Open;
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Log($"Connection error: {ex.Message}");
+            Log($"Stack trace: {ex.StackTrace}");
             return false;
         }
     }
@@ -38,27 +66,29 @@ public class DatabaseService : IDatabaseService
         
         try
         {
+            Log($"GetTablesAsync started for {connectionInfo.DatabaseType}");
+            
             using (var connection = CreateConnection(connectionInfo))
             {
                 await connection.OpenAsync();
+                Log($"Connection opened for GetTablesAsync");
 
                 string query = connectionInfo.DatabaseType switch
                 {
                     DatabaseType.SqlServer => @"
-                        SELECT TABLE_SCHEMA, TABLE_NAME, 
-                               (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = t.TABLE_SCHEMA AND TABLE_NAME = t.TABLE_NAME) as RowCount
+                        SELECT TABLE_SCHEMA, TABLE_NAME
                         FROM INFORMATION_SCHEMA.TABLES t
                         WHERE TABLE_TYPE = 'BASE TABLE'
                         ORDER BY TABLE_SCHEMA, TABLE_NAME",
                     
                     DatabaseType.PostgreSQL => @"
-                        SELECT schemaname, tablename, 0 as RowCount
+                        SELECT schemaname, tablename
                         FROM pg_tables
                         WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
                         ORDER BY schemaname, tablename",
                     
                     DatabaseType.Oracle => @"
-                        SELECT owner, table_name, 0 as RowCount
+                        SELECT owner, table_name
                         FROM all_tables
                         WHERE owner NOT IN ('SYS', 'SYSTEM', 'XDB', 'APEX_030200')
                         ORDER BY owner, table_name",
@@ -66,6 +96,8 @@ public class DatabaseService : IDatabaseService
                     _ => throw new NotSupportedException($"Database type {connectionInfo.DatabaseType} not supported")
                 };
 
+                Log($"Executing query for tables...");
+                
                 using (var command = connection.CreateCommand())
                 {
                     command.CommandText = query;
@@ -78,6 +110,8 @@ public class DatabaseService : IDatabaseService
                             string schema = reader[0].ToString() ?? "dbo";
                             string tableName = reader[1].ToString() ?? "";
                             
+                            Log($"Found table: {schema}.{tableName}");
+                            
                             tables.Add(new TableInfo
                             {
                                 Schema = schema,
@@ -89,15 +123,20 @@ public class DatabaseService : IDatabaseService
                     }
                 }
 
+                Log($"Retrieved {tables.Count} tables");
+
                 // Ottieni row count per ogni tabella
                 foreach (var table in tables)
                 {
                     table.RowCount = await GetTableRowCountAsync(connectionInfo, table.Schema, table.TableName);
+                    Log($"Row count for {table.Schema}.{table.TableName}: {table.RowCount}");
                 }
             }
         }
         catch (Exception ex)
         {
+            Log($"GetTablesAsync error: {ex.Message}");
+            Log($"Stack trace: {ex.StackTrace}");
             throw new InvalidOperationException($"Errore nel recupero tabelle: {ex.Message}", ex);
         }
 
@@ -154,41 +193,64 @@ public class DatabaseService : IDatabaseService
 
     public async Task CreateDatabaseAsync(ConnectionInfo connectionInfo)
     {
-        // Crea connessione al sistema database (senza database specifico)
-        var systemConnInfo = new ConnectionInfo
+        try
         {
-            DatabaseType = connectionInfo.DatabaseType,
-            Server = connectionInfo.Server,
-            Port = connectionInfo.Port,
-            Username = connectionInfo.Username,
-            Password = connectionInfo.Password,
-            Database = connectionInfo.DatabaseType == DatabaseType.Oracle ? "XE" : "master"
-        };
-
-        using (var connection = CreateConnection(systemConnInfo))
-        {
-            await connection.OpenAsync();
-
-            string createQuery = connectionInfo.DatabaseType switch
+            // Crea connessione al sistema database (senza database specifico)
+            var systemConnInfo = new ConnectionInfo
             {
-                DatabaseType.SqlServer => 
-                    $"CREATE DATABASE [{connectionInfo.Database}]",
-                
-                DatabaseType.PostgreSQL => 
-                    $"CREATE DATABASE \"{connectionInfo.Database}\"",
-                
-                DatabaseType.Oracle => 
-                    $"CREATE DATABASE {connectionInfo.Database}",
-                
-                _ => throw new NotSupportedException()
+                DatabaseType = connectionInfo.DatabaseType,
+                Server = connectionInfo.Server,
+                Port = connectionInfo.Port,
+                Username = connectionInfo.Username,
+                Password = connectionInfo.Password,
+                Database = connectionInfo.DatabaseType switch
+                {
+                    DatabaseType.Oracle => "XE",
+                    DatabaseType.PostgreSQL => "postgres",  // PostgreSQL system database
+                    _ => "master"  // SQL Server system database
+                }
             };
 
-            using (var command = connection.CreateCommand())
+            using (var connection = CreateConnection(systemConnInfo))
             {
-                command.CommandText = createQuery;
-                command.CommandTimeout = CommandTimeout;
-                await command.ExecuteNonQueryAsync();
+                await connection.OpenAsync();
+
+                string createQuery = connectionInfo.DatabaseType switch
+                {
+                    DatabaseType.SqlServer => 
+                        $"CREATE DATABASE [{connectionInfo.Database}]",
+                    
+                    DatabaseType.PostgreSQL => 
+                        $"CREATE DATABASE \"{connectionInfo.Database}\"",
+                    
+                    DatabaseType.Oracle => 
+                        $"CREATE DATABASE {connectionInfo.Database}",
+                    
+                    _ => throw new NotSupportedException()
+                };
+
+                using (var command = connection.CreateCommand())
+                {
+                    command.CommandText = createQuery;
+                    command.CommandTimeout = CommandTimeout;
+                    await command.ExecuteNonQueryAsync();
+                    Log($"Database {connectionInfo.Database} created successfully");
+                }
             }
+        }
+        catch (Exception ex)
+        {
+            // Se il database esiste già, ignora l'errore
+            string errorMessage = ex.Message.ToLower();
+            if (errorMessage.Contains("already exists") || 
+                errorMessage.Contains("esiste già") ||
+                errorMessage.Contains("42P06"))  // PostgreSQL error code for "database already exists"
+            {
+                Log($"Database {connectionInfo.Database} already exists, skipping creation");
+                return;
+            }
+            // Se è un errore diverso, rethrow
+            throw;
         }
     }
 
@@ -234,6 +296,32 @@ public class DatabaseService : IDatabaseService
         {
             await sourceConn.OpenAsync();
             await targetConn.OpenAsync();
+
+            // Tronca la tabella nel target per evitare duplicati
+            Log($"[MigrateTableAsync] Truncating table {table.Schema}.{table.TableName} in target...");
+            try
+            {
+                string truncateQuery = target.DatabaseType switch
+                {
+                    DatabaseType.SqlServer => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
+                    DatabaseType.PostgreSQL => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)} CASCADE",
+                    DatabaseType.Oracle => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
+                    _ => throw new NotSupportedException()
+                };
+                
+                using (var truncateCommand = targetConn.CreateCommand())
+                {
+                    truncateCommand.CommandText = truncateQuery;
+                    truncateCommand.CommandTimeout = CommandTimeout;
+                    await truncateCommand.ExecuteNonQueryAsync();
+                }
+                Log($"[MigrateTableAsync] Table truncated successfully");
+            }
+            catch (Exception ex)
+            {
+                Log($"[MigrateTableAsync] Warning: Could not truncate table: {ex.Message}");
+                // Se TRUNCATE fallisce, continuiamo comunque (potrebbe essere una tabella vuota)
+            }
 
             // Leggi i dati dalla sorgente in batch
             long totalRows = await GetTableRowCountAsync(source, table.Schema, table.TableName);
@@ -370,7 +458,9 @@ public class DatabaseService : IDatabaseService
         }
 
         sb.Append(string.Join(", ", valueSets));
-        return sb.ToString();
+        string result = sb.ToString();
+        Log($"[BuildInsertQuery] Generated INSERT query (first 200 chars): {result.Substring(0, Math.Min(200, result.Length))}");
+        return result;
     }
 
     private string FormatSqlValue(DatabaseType dbType, object? value)
@@ -381,7 +471,14 @@ public class DatabaseService : IDatabaseService
         return value switch
         {
             string s => $"'{EscapeSqlString(s)}'",
-            bool b => dbType == DatabaseType.Oracle ? (b ? "1" : "0") : (b ? "1" : "0"),
+            bool b => b ? "1" : "0",
+            byte[] bytes => dbType switch
+            {
+                DatabaseType.PostgreSQL => $"'\\x{BitConverter.ToString(bytes).Replace("-", "").ToLower()}'",
+                DatabaseType.SqlServer => $"0x{BitConverter.ToString(bytes).Replace("-", "")}",
+                DatabaseType.Oracle => $"hextoraw('{BitConverter.ToString(bytes).Replace("-", "")}')",
+                _ => $"'{BitConverter.ToString(bytes)}'"
+            },
             DateTime dt => dbType switch
             {
                 DatabaseType.SqlServer => $"'{dt:yyyy-MM-dd HH:mm:ss.fff}'",
@@ -424,18 +521,19 @@ public class DatabaseService : IDatabaseService
     private string GetPostgresTableSchema(string schema, string tableName)
     {
         return $@"
-            SELECT 'CREATE TABLE ""{0}"".""{1}"" (' || 
-                   array_to_string(ARRAY_AGG(
-                       '"" ' || a.attname || ' ' || 
+            SELECT 'CREATE TABLE ""{EscapeSqlString(schema)}"" ."" {EscapeSqlString(tableName)} "" (' || 
+                   COALESCE(array_to_string(ARRAY_AGG(
+                       '""' || a.attname || '"" ' || 
                        pg_catalog.format_type(a.atttypid, a.atttypmod) ||
                        CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE '' END
-                   ), ', ') || ')'
+                       ORDER BY a.attnum
+                   ), ', '), '') || ')'
             FROM pg_attribute a
             JOIN pg_class c ON a.attrelid = c.oid
             JOIN pg_namespace n ON c.relnamespace = n.oid
             WHERE n.nspname = '{EscapeSqlString(schema)}'
             AND c.relname = '{EscapeSqlString(tableName)}'
-            AND a.attnum > 0".Replace("{0}", schema).Replace("{1}", tableName);
+            AND a.attnum > 0";
     }
 
     private string GetOracleTableSchema(string schema, string tableName)

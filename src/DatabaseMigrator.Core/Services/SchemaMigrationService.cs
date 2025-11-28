@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
@@ -19,6 +20,25 @@ public class SchemaMigrationService
 {
     private const int CommandTimeout = 300;
 
+    private static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "DatabaseMigrator", "debug.log");
+
+    private static void Log(string message)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(LogPath);
+            if (!Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+            
+            var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}\n";
+            File.AppendAllText(LogPath, fullMessage);
+            System.Diagnostics.Debug.WriteLine(fullMessage);
+        }
+        catch { }
+    }
+
     /// <summary>
     /// Crea lo schema nel database target basato sul database sorgente.
     /// Gestisce il mapping automatico dei tipi dati.
@@ -34,49 +54,112 @@ public class SchemaMigrationService
 
             foreach (var table in tablesToMigrate)
             {
-                // Recupera la definizione della tabella dalla sorgente
-                var columns = await GetTableColumnsAsync(sourceConn, source.DatabaseType, 
-                    table.Schema, table.TableName);
-
-                // Costruisci il DDL per il target
-                string createTableDdl = BuildCreateTableStatement(target.DatabaseType, 
-                    table.Schema, table.TableName, columns);
-
-                // Esegui il DDL nel target
-                using (var command = targetConn.CreateCommand())
+                try
                 {
-                    command.CommandText = createTableDdl;
-                    command.CommandTimeout = CommandTimeout;
-                    await command.ExecuteNonQueryAsync();
-                }
-
-                // Crea gli indici primari e vincoli
-                var constraints = await GetTableConstraintsAsync(sourceConn, source.DatabaseType, 
-                    table.Schema, table.TableName);
-                
-                foreach (var constraint in constraints)
-                {
-                    string constraintDdl = TranslateConstraintDdl(constraint, target.DatabaseType, 
-                        source.DatabaseType, table.Schema, table.TableName);
+                    Log($"[SchemaMigration] Starting migration for table {table.Schema}.{table.TableName}");
                     
-                    if (!string.IsNullOrEmpty(constraintDdl))
+                    // Verifica se la tabella esiste già nel target
+                    Log($"[SchemaMigration] Checking if table exists in target...");
+                    bool tableExists = await TableExistsAsync(targetConn, target.DatabaseType, 
+                        table.Schema, table.TableName);
+                    
+                    if (tableExists)
                     {
+                        Log($"[SchemaMigration] Table {table.Schema}.{table.TableName} already exists in target, skipping creation");
+                    }
+                    else
+                    {
+                        // Recupera la definizione della tabella dalla sorgente
+                        Log($"[SchemaMigration] Fetching columns from source...");
+                        var columns = await GetTableColumnsAsync(sourceConn, source.DatabaseType, 
+                            table.Schema, table.TableName);
+                        Log($"[SchemaMigration] Found {columns.Count} columns");
+
+                        // Costruisci il DDL per il target
+                        Log($"[SchemaMigration] Building CREATE TABLE statement for target...");
+                        string createTableDdl = BuildCreateTableStatement(target.DatabaseType, 
+                            table.Schema, table.TableName, columns);
+                        Log($"[SchemaMigration] DDL:\n{createTableDdl}");
+
+                        // Esegui il DDL nel target
+                        Log($"[SchemaMigration] Executing DDL on target...");
                         using (var command = targetConn.CreateCommand())
                         {
-                            command.CommandText = constraintDdl;
+                            command.CommandText = createTableDdl;
                             command.CommandTimeout = CommandTimeout;
-                            try
+                            await command.ExecuteNonQueryAsync();
+                        }
+                        Log($"[SchemaMigration] Table created successfully");
+                    }
+
+                    // Crea gli indici primari e vincoli
+                    var constraints = await GetTableConstraintsAsync(sourceConn, source.DatabaseType, 
+                        table.Schema, table.TableName);
+                    
+                    foreach (var constraint in constraints)
+                    {
+                        string constraintDdl = TranslateConstraintDdl(constraint, target.DatabaseType, 
+                            source.DatabaseType, table.Schema, table.TableName);
+                        
+                        if (!string.IsNullOrEmpty(constraintDdl))
+                        {
+                            using (var command = targetConn.CreateCommand())
                             {
-                                await command.ExecuteNonQueryAsync();
-                            }
-                            catch
-                            {
-                                // Alcuni vincoli potrebbero fallire, continua
+                                command.CommandText = constraintDdl;
+                                command.CommandTimeout = CommandTimeout;
+                                try
+                                {
+                                    Log($"[SchemaMigration] Executing constraint: {constraintDdl}");
+                                    await command.ExecuteNonQueryAsync();
+                                }
+                                catch (Exception ex)
+                                {
+                                    Log($"[SchemaMigration] Constraint failed (ignored): {ex.Message}");
+                                    // Alcuni vincoli potrebbero fallire, continua
+                                }
                             }
                         }
                     }
+                    Log($"[SchemaMigration] Migration completed for {table.Schema}.{table.TableName}");
+                }
+                catch (Exception ex)
+                {
+                    Log($"[SchemaMigration] ERROR migrating {table.Schema}.{table.TableName}: {ex.Message}");
+                    Log($"[SchemaMigration] Stack trace: {ex.StackTrace}");
+                    throw;
                 }
             }
+        }
+    }
+
+    private async Task<bool> TableExistsAsync(DbConnection connection, DatabaseType dbType, 
+        string schema, string tableName)
+    {
+        try
+        {
+            string query = dbType switch
+            {
+                DatabaseType.SqlServer => 
+                    $"SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{tableName}'",
+                DatabaseType.PostgreSQL => 
+                    $"SELECT 1 FROM information_schema.tables WHERE table_schema = '{schema}' AND table_name = '{tableName}'",
+                DatabaseType.Oracle => 
+                    $"SELECT 1 FROM all_tables WHERE owner = '{schema}' AND table_name = '{tableName}'",
+                _ => throw new NotSupportedException()
+            };
+
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = query;
+                command.CommandTimeout = CommandTimeout;
+                var result = await command.ExecuteScalarAsync();
+                return result != null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"[TableExistsAsync] Error checking if table exists: {ex.Message}");
+            return false;
         }
     }
 
@@ -441,7 +524,7 @@ public class SchemaMigrationService
             SELECT 
                 COLUMN_NAME as ColumnName,
                 DATA_TYPE as DataType,
-                IS_NULLABLE = 'YES' as IsNullable,
+                CASE WHEN IS_NULLABLE = 'YES' THEN 1 ELSE 0 END as IsNullable,
                 CHARACTER_MAXIMUM_LENGTH as MaxLength,
                 NUMERIC_PRECISION as Precision,
                 NUMERIC_SCALE as Scale,
@@ -457,7 +540,7 @@ public class SchemaMigrationService
             SELECT 
                 column_name as ColumnName,
                 data_type as DataType,
-                is_nullable = 'YES' as IsNullable,
+                CASE WHEN is_nullable = 'YES' THEN 1 ELSE 0 END as IsNullable,
                 character_maximum_length as MaxLength,
                 numeric_precision as Precision,
                 numeric_scale as Scale,
@@ -473,7 +556,7 @@ public class SchemaMigrationService
             SELECT 
                 column_name as ColumnName,
                 data_type as DataType,
-                nullable = 'Y' as IsNullable,
+                CASE WHEN nullable = 'Y' THEN 1 ELSE 0 END as IsNullable,
                 data_length as MaxLength,
                 data_precision as Precision,
                 data_scale as Scale,

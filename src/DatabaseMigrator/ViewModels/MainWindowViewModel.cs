@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using ReactiveUI;
 using DatabaseMigrator.Core.Models;
 using DatabaseMigrator.Core.Services;
+using System.IO;
 
 namespace DatabaseMigrator.ViewModels;
 
@@ -13,6 +14,25 @@ public class MainWindowViewModel : ViewModelBase
 {
     private readonly IDatabaseService _databaseService;
     private readonly SchemaMigrationService _schemaMigrationService;
+    
+    private static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "DatabaseMigrator", "debug.log");
+
+    private static void Log(string message)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(LogPath);
+            if (!Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+            
+            var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}";
+            File.AppendAllText(LogPath, fullMessage + "\n");
+            System.Diagnostics.Debug.WriteLine(fullMessage);
+        }
+        catch { }
+    }
 
     private ConnectionViewModel? _sourceConnection;
     private ConnectionViewModel? _targetConnection;
@@ -22,6 +42,9 @@ public class MainWindowViewModel : ViewModelBase
     private string _statusMessage = "Pronto";
     private int _progressPercentage;
     private string _progressText = "0%";
+    private string _errorMessage = "";
+    private int _selectedTablesCount;
+    private long _totalRowsToMigrate;
 
     public ConnectionViewModel? SourceConnection
     {
@@ -71,6 +94,24 @@ public class MainWindowViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _progressText, value);
     }
 
+    public string ErrorMessage
+    {
+        get => _errorMessage;
+        set => this.RaiseAndSetIfChanged(ref _errorMessage, value);
+    }
+
+    public int SelectedTablesCount
+    {
+        get => _selectedTablesCount;
+        set => this.RaiseAndSetIfChanged(ref _selectedTablesCount, value);
+    }
+
+    public long TotalRowsToMigrate
+    {
+        get => _totalRowsToMigrate;
+        set => this.RaiseAndSetIfChanged(ref _totalRowsToMigrate, value);
+    }
+
     public ReactiveCommand<Unit, Unit> ConnectDatabasesCommand { get; }
     public ReactiveCommand<Unit, Unit> StartMigrationCommand { get; }
     public ReactiveCommand<Unit, Unit> SelectAllTablesCommand { get; }
@@ -88,8 +129,14 @@ public class MainWindowViewModel : ViewModelBase
         StartMigrationCommand = ReactiveCommand.CreateFromTask(StartMigrationAsync, 
             this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating, 
                 (connected, migrating) => connected && !migrating));
-        SelectAllTablesCommand = ReactiveCommand.Create(SelectAllTables);
-        DeselectAllTablesCommand = ReactiveCommand.Create(DeselectAllTables);
+        SelectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => SelectAllTablesAsync());
+        DeselectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => DeselectAllTablesAsync());
+    }
+
+    private void SubscribeToTableChanges(TableInfo table)
+    {
+        table.WhenAnyValue(t => t.IsSelected)
+            .Subscribe(_ => UpdateTableStatistics());
     }
 
     private async Task ConnectDatabasesAsync()
@@ -97,36 +144,47 @@ public class MainWindowViewModel : ViewModelBase
         try
         {
             IsMigrating = true;
+            ErrorMessage = "";
             StatusMessage = "Connessione ai database...";
             ProgressPercentage = 0;
 
             if (SourceConnection?.ConnectionInfo == null || TargetConnection?.ConnectionInfo == null)
             {
-                StatusMessage = "Errore: Compilare tutti i campi di connessione";
+                ErrorMessage = "Errore: Compilare Server e Database";
+                StatusMessage = "Errore di validazione";
+                System.Diagnostics.Debug.WriteLine($"Source ConnectionInfo: {SourceConnection?.ConnectionInfo}");
+                System.Diagnostics.Debug.WriteLine($"Target ConnectionInfo: {TargetConnection?.ConnectionInfo}");
+                System.Diagnostics.Debug.WriteLine($"Source Connection - Server: {SourceConnection?.Server}, DB: {SourceConnection?.Database}");
+                System.Diagnostics.Debug.WriteLine($"Target Connection - Server: {TargetConnection?.Server}, DB: {TargetConnection?.Database}");
                 return;
             }
 
             // Test connessione sorgente
             StatusMessage = "Test connessione sorgente...";
+            ProgressPercentage = 20;
+            System.Diagnostics.Debug.WriteLine($"Testing source connection: {SourceConnection.ConnectionInfo.GetConnectionString()}");
             bool sourceOk = await _databaseService.TestConnectionAsync(SourceConnection.ConnectionInfo);
             if (!sourceOk)
             {
-                StatusMessage = "Errore: Impossibile connettersi al database sorgente";
+                ErrorMessage = "Errore: Impossibile connettersi al database sorgente. Verifica server, porta e credenziali.";
+                StatusMessage = "Connessione sorgente fallita";
                 return;
             }
 
-            ProgressPercentage = 33;
+            ProgressPercentage = 40;
 
             // Test connessione target
             StatusMessage = "Test connessione target...";
+            System.Diagnostics.Debug.WriteLine($"Testing target connection: {TargetConnection.ConnectionInfo.GetConnectionString()}");
             bool targetOk = await _databaseService.TestConnectionAsync(TargetConnection.ConnectionInfo);
             if (!targetOk)
             {
-                StatusMessage = "Errore: Impossibile connettersi al database target";
+                ErrorMessage = "Errore: Impossibile connettersi al database target. Verifica server, porta e credenziali.";
+                StatusMessage = "Connessione target fallita";
                 return;
             }
 
-            ProgressPercentage = 66;
+            ProgressPercentage = 60;
 
             // Recupera tabelle dalla sorgente
             StatusMessage = "Recupero tabelle dalla sorgente...";
@@ -136,15 +194,22 @@ public class MainWindowViewModel : ViewModelBase
             foreach (var table in tables)
             {
                 Tables.Add(table);
+                SubscribeToTableChanges(table);
             }
+
+            UpdateTableStatistics();
 
             ProgressPercentage = 100;
             IsConnected = true;
-            StatusMessage = $"Connesso! Trovate {tables.Count} tabelle";
+            ErrorMessage = "";
+            StatusMessage = $"✅ Connesso! Trovate {tables.Count} tabelle";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Errore: {ex.Message}";
+            ErrorMessage = $"❌ Errore: {ex.Message}";
+            StatusMessage = "Errore durante la connessione";
+            IsConnected = false;
+            ProgressPercentage = 0;
         }
         finally
         {
@@ -156,58 +221,71 @@ public class MainWindowViewModel : ViewModelBase
     {
         try
         {
+            Log($"[StartMigrationAsync] Starting migration...");
             IsMigrating = true;
+            ErrorMessage = "";
             ProgressPercentage = 0;
             ProgressText = "0%";
 
             var tablesToMigrate = Tables.Where(t => t.IsSelected).ToList();
+            Log($"[StartMigrationAsync] Tables to migrate: {tablesToMigrate.Count}");
+            
             if (tablesToMigrate.Count == 0)
             {
-                StatusMessage = "Seleziona almeno una tabella da migrare";
+                ErrorMessage = "Seleziona almeno una tabella da migrare";
+                StatusMessage = "Nessuna tabella selezionata";
                 return;
             }
 
             if (SourceConnection?.ConnectionInfo == null || TargetConnection?.ConnectionInfo == null)
             {
-                StatusMessage = "Errore: Connessioni non valide";
+                ErrorMessage = "Errore: Connessioni non valide";
+                StatusMessage = "Connessioni invalide";
                 return;
             }
 
             // Verifica se database target esiste
+            Log($"[StartMigrationAsync] Checking if target database exists...");
             StatusMessage = "Verifica database target...";
             bool dbExists = await _databaseService.DatabaseExistsAsync(TargetConnection.ConnectionInfo);
+            Log($"[StartMigrationAsync] Database exists: {dbExists}");
 
             if (!dbExists)
             {
+                Log($"[StartMigrationAsync] Creating target database...");
                 StatusMessage = "Creazione database target...";
                 await _databaseService.CreateDatabaseAsync(TargetConnection.ConnectionInfo);
+                Log($"[StartMigrationAsync] Database created successfully");
                 StatusMessage = "Database target creato";
             }
 
             ProgressPercentage = 10;
 
             // Migra lo schema
+            Log($"[StartMigrationAsync] Starting schema migration...");
             StatusMessage = "Migrazione schema...";
             await _schemaMigrationService.MigrateSchemaAsync(
                 SourceConnection.ConnectionInfo,
                 TargetConnection.ConnectionInfo,
                 tablesToMigrate);
+            Log($"[StartMigrationAsync] Schema migration completed");
 
             ProgressPercentage = 50;
 
             // Migra i dati
+            Log($"[StartMigrationAsync] Starting data migration...");
             StatusMessage = "Migrazione dati...";
             int tablesProcessed = 0;
 
             foreach (var table in tablesToMigrate)
             {
+                Log($"[StartMigrationAsync] Migrating table {table.Schema}.{table.TableName}...");
                 StatusMessage = $"Migrazione dati: {table.Schema}.{table.TableName}...";
                 
                 var progress = new Progress<int>(percent =>
                 {
-                    int overall = 50 + (percent / (tablesToMigrate.Count * 2));
-                    ProgressPercentage = overall;
-                    ProgressText = $"{overall}% - {table.TableName}";
+                    // Ignoriamo i report interno e usiamo il calcolo basato su tablesProcessed
+                    // Il 50% proviene dalla schema migration, il restante 50% dalla data migration
                 });
 
                 await _databaseService.MigrateTableAsync(
@@ -216,18 +294,26 @@ public class MainWindowViewModel : ViewModelBase
                     table,
                     progress);
 
+                Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} migration completed");
                 tablesProcessed++;
-                ProgressPercentage = 50 + (tablesProcessed * 50 / tablesToMigrate.Count);
+                int progressPercent = 50 + (tablesProcessed * 50 / tablesToMigrate.Count);
+                ProgressPercentage = progressPercent;
+                ProgressText = $"{progressPercent}% - {table.TableName}";
             }
 
+            Log($"[StartMigrationAsync] Migration completed successfully!");
             ProgressPercentage = 100;
             ProgressText = "100%";
-            StatusMessage = $"Migrazione completata! {tablesToMigrate.Count} tabelle migrate";
+            ErrorMessage = "";
+            StatusMessage = $"✅ Migrazione completata! {tablesToMigrate.Count} tabelle migrate";
             IsConnected = false;
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Errore migrazione: {ex.Message}";
+            Log($"[StartMigrationAsync] ERROR: {ex.Message}");
+            Log($"[StartMigrationAsync] Stack trace: {ex.StackTrace}");
+            ErrorMessage = $"❌ Errore migrazione: {ex.Message}";
+            StatusMessage = "Migrazione fallita";
             ProgressPercentage = 0;
         }
         finally
@@ -236,19 +322,84 @@ public class MainWindowViewModel : ViewModelBase
         }
     }
 
-    private void SelectAllTables()
+    private async Task SelectAllTablesAsync()
     {
+        Log($"[SelectAllTables] Starting... Total tables: {Tables.Count}");
         foreach (var table in Tables)
         {
+            Log($"[SelectAllTables] Setting {table.Schema}.{table.TableName} to IsSelected=true");
             table.IsSelected = true;
+            Log($"[SelectAllTables] After setting: IsSelected={table.IsSelected}");
         }
+        
+        // Force UI refresh by reassigning the collection
+        Log($"[SelectAllTables] Forcing collection refresh...");
+        var newCollection = new ObservableCollection<TableInfo>(Tables);
+        Tables = newCollection;
+        
+        UpdateTableStatistics();
+        Log($"[SelectAllTables] Completed. SelectedTablesCount={SelectedTablesCount}");
     }
 
-    private void DeselectAllTables()
+    private async Task DeselectAllTablesAsync()
     {
+        Log($"[DeselectAllTables] Starting... Total tables: {Tables.Count}");
         foreach (var table in Tables)
         {
+            Log($"[DeselectAllTables] Setting {table.Schema}.{table.TableName} to IsSelected=false");
+            table.IsSelected = false;
+            Log($"[DeselectAllTables] After setting: IsSelected={table.IsSelected}");
+        }
+        
+        // Force UI refresh by reassigning the collection
+        Log($"[DeselectAllTables] Forcing collection refresh...");
+        var newCollection = new ObservableCollection<TableInfo>(Tables);
+        Tables = newCollection;
+        
+        UpdateTableStatistics();
+        Log($"[DeselectAllTables] Completed. SelectedTablesCount={SelectedTablesCount}");
+    }
+
+    public void SelectAllTablesDirectly()
+    {
+        Log($"[SelectAllTablesDirectly] Starting... Total tables: {Tables.Count}");
+        foreach (var table in Tables.ToList())
+        {
+            Log($"[SelectAllTablesDirectly] Setting {table.Schema}.{table.TableName} to IsSelected=true");
+            table.IsSelected = true;
+        }
+        
+        // Force UI refresh by reassigning the collection
+        Log($"[SelectAllTablesDirectly] Forcing collection refresh...");
+        var newCollection = new ObservableCollection<TableInfo>(Tables);
+        Tables = newCollection;
+        
+        UpdateTableStatistics();
+        Log($"[SelectAllTablesDirectly] Completed. SelectedTablesCount={SelectedTablesCount}");
+    }
+
+    public void DeselectAllTablesDirectly()
+    {
+        Log($"[DeselectAllTablesDirectly] Starting... Total tables: {Tables.Count}");
+        foreach (var table in Tables.ToList())
+        {
+            Log($"[DeselectAllTablesDirectly] Setting {table.Schema}.{table.TableName} to IsSelected=false");
             table.IsSelected = false;
         }
+        
+        // Force UI refresh by reassigning the collection
+        Log($"[DeselectAllTablesDirectly] Forcing collection refresh...");
+        var newCollection = new ObservableCollection<TableInfo>(Tables);
+        Tables = newCollection;
+        
+        UpdateTableStatistics();
+        Log($"[DeselectAllTablesDirectly] Completed. SelectedTablesCount={SelectedTablesCount}");
+    }
+
+    private void UpdateTableStatistics()
+    {
+        SelectedTablesCount = Tables.Count(t => t.IsSelected);
+        TotalRowsToMigrate = Tables.Where(t => t.IsSelected).Sum(t => t.RowCount);
+        Log($"[UpdateTableStatistics] SelectedCount={SelectedTablesCount}, TotalRows={TotalRowsToMigrate}");
     }
 }

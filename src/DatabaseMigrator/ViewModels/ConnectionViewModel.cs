@@ -63,21 +63,22 @@ public class ConnectionViewModel : ViewModelBase
     {
         get
         {
+            // Server and Database sono obbligatori
             if (string.IsNullOrWhiteSpace(Server) || 
-                string.IsNullOrWhiteSpace(Database) ||
-                string.IsNullOrWhiteSpace(Username))
+                string.IsNullOrWhiteSpace(Database))
             {
                 return null;
             }
 
+            // Username/Password sono opzionali per connessioni trusted
             return new ConnectionInfo
             {
                 DatabaseType = SelectedDatabaseType,
                 Server = Server,
                 Port = Port,
                 Database = Database,
-                Username = Username,
-                Password = Password
+                Username = Username ?? "", // Può essere vuoto
+                Password = Password ?? ""   // Può essere vuoto
             };
         }
     }
