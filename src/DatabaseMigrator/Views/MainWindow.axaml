@@ -1,0 +1,222 @@
+<Window xmlns="https://github.com/avaloniaui" 
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DatabaseMigrator.ViewModels" 
+        x:Class="DatabaseMigrator.Views.MainWindow"
+        Title="Database Migrator - Cross-Platform Database Migration Tool" 
+        Width="1200" 
+        Height="800"
+        WindowStartupLocation="CenterScreen">
+    
+    <DockPanel>
+        <!-- Header -->
+        <Border DockPanel.Dock="Top" Background="#2c3e50" Padding="20">
+            <TextBlock Text="Database Migrator" FontSize="28" FontWeight="Bold" Foreground="White"/>
+        </Border>
+
+        <!-- Main Content -->
+        <Grid RowDefinitions="*,Auto,Auto" Margin="20">
+            <!-- Tab Control -->
+            <TabControl Grid.Row="0">
+                <!-- Tab 1: Connessioni -->
+                <TabItem Header="Connessioni Database">
+                    <Grid RowDefinitions="Auto,*" ColumnDefinitions="*,*" Margin="15">
+                        <!-- Sezione Sorgente -->
+                        <Border Grid.Row="0" Grid.Column="0" Background="#ecf0f1" CornerRadius="5" Padding="15" Margin="0,0,10,0">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="Database Sorgente" FontSize="16" FontWeight="Bold"/>
+                                
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Tipo Database:" FontWeight="Bold"/>
+                                    <ComboBox SelectedItem="{Binding SourceConnection.SelectedDatabaseType}">
+                                        <ComboBoxItem>SqlServer</ComboBoxItem>
+                                        <ComboBoxItem>Oracle</ComboBoxItem>
+                                        <ComboBoxItem>PostgreSQL</ComboBoxItem>
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Server:" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding SourceConnection.Server}" Watermark="localhost or IP address"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Porta:" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding SourceConnection.Port}" Watermark="1433"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Database:" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding SourceConnection.Database}" Watermark="database name"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Username:" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding SourceConnection.Username}" Watermark="sa or user"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Password:" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding SourceConnection.Password}" PasswordChar="•" Watermark="password"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Sezione Target -->
+                        <Border Grid.Row="0" Grid.Column="1" Background="#ecf0f1" CornerRadius="5" Padding="15" Margin="10,0,0,0">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="Database Target" FontSize="16" FontWeight="Bold"/>
+                                
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Tipo Database:" FontWeight="Bold"/>
+                                    <ComboBox SelectedItem="{Binding TargetConnection.SelectedDatabaseType}">
+                                        <ComboBoxItem>SqlServer</ComboBoxItem>
+                                        <ComboBoxItem>Oracle</ComboBoxItem>
+                                        <ComboBoxItem>PostgreSQL</ComboBoxItem>
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Server:" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding TargetConnection.Server}" Watermark="localhost or IP address"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Porta:" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding TargetConnection.Port}" Watermark="5432"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Database:" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding TargetConnection.Database}" Watermark="database name"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Username:" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding TargetConnection.Username}" Watermark="postgres or user"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Password:" FontWeight="Bold"/>
+                                    <TextBox Text="{Binding TargetConnection.Password}" PasswordChar="•" Watermark="password"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Pulsante Connessione -->
+                        <Button Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" 
+                                Command="{Binding ConnectDatabasesCommand}"
+                                IsEnabled="{Binding !IsMigrating}"
+                                Background="#27ae60" 
+                                Foreground="White"
+                                Padding="10" 
+                                Height="40"
+                                FontSize="14"
+                                FontWeight="Bold"
+                                Margin="0,15,0,0">
+                            Connetti ai Database
+                        </Button>
+                    </Grid>
+                </TabItem>
+
+                <!-- Tab 2: Selezione Oggetti -->
+                <TabItem Header="Selezione Tabelle" IsEnabled="{Binding IsConnected}">
+                    <Grid RowDefinitions="Auto,*,Auto" Margin="15">
+                        <!-- Pulsanti Selezione -->
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="0,0,0,10">
+                            <Button Command="{Binding SelectAllTablesCommand}" 
+                                    Background="#3498db" Foreground="White" Padding="10" Height="35">
+                                Seleziona Tutto
+                            </Button>
+                            <Button Command="{Binding DeselectAllTablesCommand}" 
+                                    Background="#95a5a6" Foreground="White" Padding="10" Height="35">
+                                Deseleziona Tutto
+                            </Button>
+                        </StackPanel>
+
+                        <!-- Lista Tabelle -->
+                        <ListBox Grid.Row="1" ItemsSource="{Binding Tables}" Margin="0,10,0,10">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="#bdc3c7" BorderThickness="1" Padding="10" Margin="0,3">
+                                        <Grid ColumnDefinitions="Auto,*">
+                                            <CheckBox Grid.Column="0" 
+                                                      IsChecked="{Binding IsSelected}"
+                                                      VerticalAlignment="Center"
+                                                      Margin="0,0,10,0"/>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="{Binding TableName}" FontWeight="Bold" FontSize="14"/>
+                                                <TextBlock Text="{Binding Schema, StringFormat='Schema: {0}'}" Foreground="#7f8c8d" FontSize="11"/>
+                                                <TextBlock Text="{Binding RowCount, StringFormat='Righe: {0:N0}'}" Foreground="#7f8c8d" FontSize="11"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <!-- Info Selezione -->
+                        <TextBlock Grid.Row="2" 
+                                   Text="{Binding Tables.Count, StringFormat='Totale tabelle: {0}'}"
+                                   Foreground="#7f8c8d"/>
+                    </Grid>
+                </TabItem>
+
+                <!-- Tab 3: Migrazione -->
+                <TabItem Header="Migrazione" IsEnabled="{Binding IsConnected}">
+                    <Grid RowDefinitions="*,Auto,Auto,Auto" Margin="15">
+                        <!-- Status Messages -->
+                        <Border Grid.Row="0" Background="#ecf0f1" CornerRadius="5" Padding="15" Margin="0,0,0,10">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Status Migrazione:" FontWeight="Bold" FontSize="14"/>
+                                    <TextBlock Text="{Binding StatusMessage}" 
+                                               Foreground="#2c3e50" 
+                                               TextWrapping="Wrap"
+                                               FontSize="12"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+
+                        <!-- Progress Bar -->
+                        <StackPanel Grid.Row="1" Spacing="10" Margin="0,0,0,10">
+                            <ProgressBar Value="{Binding ProgressPercentage}" 
+                                       Maximum="100" 
+                                       Height="30"
+                                       Foreground="#27ae60"/>
+                            <TextBlock Text="{Binding ProgressText}" 
+                                     TextAlignment="Center" 
+                                     FontWeight="Bold"
+                                     Foreground="#27ae60"/>
+                        </StackPanel>
+
+                        <!-- Pulsante Start -->
+                        <Button Grid.Row="2" 
+                                Command="{Binding StartMigrationCommand}"
+                                IsEnabled="{Binding IsConnected}"
+                                Background="#e74c3c" 
+                                Foreground="White"
+                                Padding="10" 
+                                Height="45"
+                                FontSize="16"
+                                FontWeight="Bold"
+                                Margin="0,0,0,10">
+                            Avvia Migrazione
+                        </Button>
+
+                        <!-- Info -->
+                        <TextBlock Grid.Row="3" 
+                                   Text="La migrazione copierà lo schema e i dati selezionati. Se il database target non esiste, verrà creato automaticamente."
+                                   Foreground="#7f8c8d"
+                                   TextWrapping="Wrap"
+                                   FontSize="11"/>
+                    </Grid>
+                </TabItem>
+            </TabControl>
+
+            <!-- Status Bar Bottom -->
+            <Border Grid.Row="2" Background="#34495e" Padding="10">
+                <TextBlock Text="{Binding StatusMessage}" Foreground="White" FontSize="12"/>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>
