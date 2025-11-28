@@ -1,0 +1,180 @@
+name: DEV - Test & Release .NET Application
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  test-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check .NET version
+        run: |
+          dotnet --version
+          dotnet --info
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET 8.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore DatabaseMigrator.sln
+
+      - name: Build solution (Release)
+        run: dotnet build DatabaseMigrator.sln --configuration Release --no-restore
+
+      - name: Run unit tests
+        run: dotnet test DatabaseMigrator.sln --configuration Release --no-build --verbosity normal
+        continue-on-error: true
+
+      - name: Publish application (win-x64)
+        run: |
+          dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained `
+            --output ./publish
+
+      - name: Create release notes
+        run: |
+          echo "# DatabaseMigrator - Development Release" > RELEASE_NOTES.txt
+          echo "" >> RELEASE_NOTES.txt
+          echo "## Changes in this release:" >> RELEASE_NOTES.txt
+          echo "See commit history for details." >> RELEASE_NOTES.txt
+          echo "" >> RELEASE_NOTES.txt
+          echo "## Build Information:" >> RELEASE_NOTES.txt
+          echo "- .NET 8.0" >> RELEASE_NOTES.txt
+          echo "- Platform: Windows x64 (win-x64)" >> RELEASE_NOTES.txt
+          echo "- Self-contained executable" >> RELEASE_NOTES.txt
+
+      - name: Get last dev tag and increment
+        id: version
+        shell: pwsh
+        run: |
+          # Recupera tutti i tag
+          git fetch --tags
+          
+          # Trova tutti i tag che corrispondono al pattern vX.Y.Z-dev
+          Write-Output "⚠️ DEBUG: Getting all tags..."
+          $all_tags = git tag --list
+          Write-Output "⚠️ DEBUG: Listing all tags: $($all_tags -join ', ')"
+          
+          # Filtra solo i tag nel formato corretto vX.Y.Z-dev
+          $dev_tags = @()
+          foreach ($tag in $all_tags) {
+            if ($tag -match '^v(\d+)\.(\d+)\.(\d+)-dev$') {
+              $dev_tags += $tag
+            }
+          }
+          
+          Write-Output "⚠️ DEBUG: Found dev tags: $($dev_tags -join ', ')"
+          
+          if ($dev_tags.Count -eq 0) {
+            # Nessun tag dev esistente, inizia da 1.0.0-dev
+            Write-Output "⚠️ No existing dev tags found, starting from 1.0.0-dev"
+            $new_version = "1.0.0"
+          } else {
+            # Trova la versione più alta
+            $highest_version = @{major=0; minor=0; patch=0}
+            
+            foreach ($tag in $dev_tags) {
+              if ($tag -match '^v(\d+)\.(\d+)\.(\d+)-dev$') {
+                $major = [int]$matches[1]
+                $minor = [int]$matches[2] 
+                $patch = [int]$matches[3]
+                
+                if (($major -gt $highest_version.major) -or 
+                    ($major -eq $highest_version.major -and $minor -gt $highest_version.minor) -or
+                    ($major -eq $highest_version.major -and $minor -eq $highest_version.minor -and $patch -gt $highest_version.patch)) {
+                  $highest_version.major = $major
+                  $highest_version.minor = $minor
+                  $highest_version.patch = $patch
+                }
+              }
+            }
+            
+            # Incrementa la patch version
+            $new_patch = $highest_version.patch + 1
+            $new_version = "$($highest_version.major).$($highest_version.minor).$new_patch"
+            Write-Output "✅ Incremented from v$($highest_version.major).$($highest_version.minor).$($highest_version.patch)-dev to v$new_version-dev"
+          }
+          
+          $version_tag = "v$new_version-dev"
+          Write-Output "✅ New version will be: $new_version"
+          Write-Output "✅ New tag created: $version_tag"
+          
+          # Setta le variabili di ambiente
+          "NEWVERSION=$new_version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VERSION_TAG=$version_tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Check the new version
+        run: |
+          if ("${{ env.NEWVERSION }}" -eq "") {
+            echo "❌ ::error::NEWVERSION not set! Stopping the workflow."
+            exit 1
+          }
+          echo "Creating version: ${{ env.NEWVERSION }}"
+          echo "Tag will be: ${{ env.VERSION_TAG }}"
+
+      - name: Create and push tag
+        run: |
+          git config --global user.email "federico.bot@gmail.com"
+          git config --global user.name "Akr0n"
+          git tag ${{ env.VERSION_TAG }}
+          git push origin ${{ env.VERSION_TAG }}
+
+      - name: Fetch tag locally and verify
+        run: |
+          echo "Fetching all tags from remote..."
+          git fetch origin --tags
+          
+          echo "Verifying tag ${{ env.VERSION_TAG }} exists locally..."
+          if (git tag --list | Select-String -Pattern "^${{ env.VERSION_TAG }}$") {
+            Write-Output "✅ Tag ${{ env.VERSION_TAG }} successfully created and available locally"
+          } else {
+            Write-Output "❌ Tag ${{ env.VERSION_TAG }} not found locally"
+            exit 1
+          }
+          
+          echo "All local tags:"
+          git tag --list
+
+      - name: Generate changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          toTag: ${{ env.VERSION_TAG }}
+          configuration: |
+            {
+              "template": "#{{CHANGELOG}}\n\n**Full Changelog**: #{{RELEASE_DIFF}}",
+              "pr_template": "- #{{TITLE}} by @#{{AUTHOR}} in ##{{NUMBER}}"
+            }
+
+      - name: Create release with changelog and assets
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.VERSION_TAG }}
+          name: Release ${{ env.VERSION_TAG }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          prerelease: true
+          draft: false
+          files: |
+            ./publish/DatabaseMigrator.exe
+            ./RELEASE_NOTES.txt
+            ./README.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
