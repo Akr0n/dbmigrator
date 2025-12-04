@@ -37,27 +37,27 @@
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Server:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="SourceServerTextBox" Watermark="localhost" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Text="localhost"/>
+                                        <TextBox x:Name="SourceServerTextBox" Watermark="localhost" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Porta:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="SourcePortTextBox" Watermark="1433" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Text="1433"/>
+                                        <TextBox x:Name="SourcePortTextBox" Watermark="8080" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="SourceDatabaseTextBox" Watermark="mydb" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Text="TestDB"/>
+                                        <TextBox x:Name="SourceDatabaseTextBox" Watermark="database" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Username (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="SourceUsernameTextBox" Watermark="lascia vuoto" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Text="sa"/>
+                                        <TextBox x:Name="SourceUsernameTextBox" Watermark="username" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Password (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="SourcePasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Text="SqlServer@123"/>
+                                        <TextBox x:Name="SourcePasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
                                 </StackPanel>
                             </Border>
@@ -78,27 +78,27 @@
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Server:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="TargetServerTextBox" Watermark="localhost" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Text="localhost"/>
+                                        <TextBox x:Name="TargetServerTextBox" Watermark="localhost" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Porta:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="TargetPortTextBox" Watermark="5432" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Text="5432"/>
+                                        <TextBox x:Name="TargetPortTextBox" Watermark="8080" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="TargetDatabaseTextBox" Watermark="mydb_migrated" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Text="testdb"/>
+                                        <TextBox x:Name="TargetDatabaseTextBox" Watermark="database" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Username (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="TargetUsernameTextBox" Watermark="lascia vuoto" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Text="pguser"/>
+                                        <TextBox x:Name="TargetUsernameTextBox" Watermark="username" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Password (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="TargetPasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Text="pgpass123"/>
+                                        <TextBox x:Name="TargetPasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
                                 </StackPanel>
                             </Border>
