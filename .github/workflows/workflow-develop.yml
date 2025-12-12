@@ -164,7 +164,7 @@ jobs:
             }
 
       - name: Create release with changelog and assets
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION_TAG }}
           name: Release ${{ env.VERSION_TAG }}
