@@ -5,7 +5,8 @@
         Width="1400" 
         Height="900"
         WindowStartupLocation="CenterScreen"
-        Background="#1a1a1a">
+        Background="#1a1a1a"
+        Icon="avares://DatabaseMigrator/Assets/logo.ico">
     
     <DockPanel Background="#1a1a1a">
         <!-- Menu Bar -->

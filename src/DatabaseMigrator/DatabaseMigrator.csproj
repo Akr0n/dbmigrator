@@ -27,4 +27,8 @@
   <ItemGroup>
     <ProjectReference Include="..\DatabaseMigrator.Core\DatabaseMigrator.Core.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\logo.ico" />
+  </ItemGroup>
 </Project>
