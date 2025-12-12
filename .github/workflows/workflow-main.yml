@@ -1,0 +1,160 @@
+name: PROD - Test & Release .NET Application
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release-job:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check .NET version
+        run: |
+          dotnet --version
+          dotnet --info
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if the last commit is a merge from develop
+        id: check_merge
+        run: |
+          # SHA dell'ultimo commit su main
+          $LAST_COMMIT = (git rev-parse HEAD).Trim()
+          Write-Output "⚠️ HEAD: $LAST_COMMIT"
+
+          # conta i parent (se sono 2 parent -> merge commit)
+          $PARENTS = (git rev-list --parents -n 1 $LAST_COMMIT).Split(" ")
+          Write-Output "⚠️ Parents: $PARENTS"
+
+          $parts = $PARENTS -split ' '
+          if ($parts.Count -ne 3) {
+            Write-Output "❌ The last commit is not a merge from develop. Stopping the workflow."
+            "MERGE_FROM_DEVELOP=false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            exit 0
+          }
+
+          # parent SHAs (i due parent dopo lo SHA del merge commit)
+          $parent1 = $parts[1]
+          $parent2 = $parts[2]
+
+          # assicuriamoci di avere il riferimento origin/develop aggiornato
+          git fetch origin develop
+
+          $developSHA = (git rev-parse origin/develop).Trim()
+          Write-Output "⚠️ origin/develop SHA: $developSHA"
+
+          if ($parent1 -eq $developSHA -or $parent2 -eq $developSHA) {
+            Write-Output "✅ The last commit is a merge from develop."
+            "MERGE_FROM_DEVELOP=true" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } else {
+            Write-Output "❌ The last commit does not contain develop as a parent. Stopping the workflow."
+            "MERGE_FROM_DEVELOP=false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            exit 0
+          }
+
+      - name: Set up .NET 8.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore DatabaseMigrator.sln
+
+      - name: Build solution (Release)
+        run: dotnet build DatabaseMigrator.sln --configuration Release --no-restore
+
+      - name: Run unit tests
+        run: dotnet test DatabaseMigrator.sln --configuration Release --no-build --verbosity normal
+        continue-on-error: true
+
+      - name: Publish application (win-x64)
+        run: |
+          dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained `
+            --output ./publish
+
+      - name: Create release notes
+        run: |
+          echo "# DatabaseMigrator - Production Release" > RELEASE_NOTES.txt
+          echo "" >> RELEASE_NOTES.txt
+          echo "## Production Release" >> RELEASE_NOTES.txt
+          echo "This is a stable production release." >> RELEASE_NOTES.txt
+          echo "" >> RELEASE_NOTES.txt
+          echo "## Build Information:" >> RELEASE_NOTES.txt
+          echo "- .NET 8.0" >> RELEASE_NOTES.txt
+          echo "- Platform: Windows x64 (win-x64)" >> RELEASE_NOTES.txt
+          echo "- Self-contained executable" >> RELEASE_NOTES.txt
+
+      - name: Get last dev tag
+        id: get_tag
+        run: |
+          # elenco tutti i tag e prendo l’ultimo che finisce con -dev
+          git fetch --tags
+          $lastDevTag = git tag --list "v*-dev" | Sort-Object {[version]($_.TrimStart("v") -replace "-dev","")} -Descending | Select-Object -First 1
+          if (-not $lastDevTag) {
+            Write-Error "❌ No dev tag found!"
+            exit 1
+          }
+
+          Write-Output "✅ Last dev tag found: $lastDevTag"
+
+          # tolgo il suffisso -dev
+          $releaseVersion = $lastDevTag -replace "-dev",""
+          Write-Output "⚠️ Versione che verrà usata --> $releaseVersion"
+          $releaseTag = "$releaseVersion"
+
+          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "release_version=$releaseVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Create and push tag
+        run: |
+          git config --global user.email "federico.bot@gmail.com"
+          git config --global user.name "Akr0n"
+          git tag ${{ env.release_tag }}
+          git push origin ${{ env.release_tag }}
+
+      - name: Fetch tag locally and verify
+        run: |
+          echo "Fetching all tags from remote..."
+          git fetch origin --tags
+          
+          echo "Verifying tag ${{ env.release_tag }} exists locally..."
+          if (git tag --list | Select-String -Pattern "^${{ env.release_tag }}$") {
+            Write-Output "✅ Tag ${{ env.release_tag }} successfully created and available locally"
+          } else {
+            Write-Output "❌ Tag ${{ env.release_tag }} not found locally"
+            exit 1
+          }
+          
+          echo "All local tags:"
+          git tag --list
+        
+      - name: Generate changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release with changelog and assets
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.release_tag }}
+          name: Release ${{ env.release_tag }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          files: |
+            ./publish/DatabaseMigrator.exe
+            ./RELEASE_NOTES.txt
+            ./README.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

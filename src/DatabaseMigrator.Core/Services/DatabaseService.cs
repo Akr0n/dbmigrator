@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
@@ -15,19 +16,46 @@ public class DatabaseService : IDatabaseService
 {
     private const int BatchSize = 1000;
     private const int CommandTimeout = 300; // 5 minuti
+    
+    private static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "DatabaseMigrator", "debug.log");
+
+    private static void Log(string message)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(LogPath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+            
+            var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}\n";
+            File.AppendAllText(LogPath, fullMessage);
+            System.Diagnostics.Debug.WriteLine(fullMessage);
+        }
+        catch { }
+    }
 
     public async Task<bool> TestConnectionAsync(ConnectionInfo connectionInfo)
     {
         try
         {
+            Log($"TestConnectionAsync started for {connectionInfo.DatabaseType}");
+            var connStr = connectionInfo.GetConnectionString();
+            Log($"Connection string: {connStr}");
+            
             using (var connection = CreateConnection(connectionInfo))
             {
+                Log($"Opening connection...");
                 await connection.OpenAsync();
+                Log($"Connection opened successfully!");
                 return connection.State == ConnectionState.Open;
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Log($"Connection error: {ex.Message}");
+            Log($"Stack trace: {ex.StackTrace}");
             return false;
         }
     }
@@ -38,27 +66,29 @@ public class DatabaseService : IDatabaseService
         
         try
         {
+            Log($"GetTablesAsync started for {connectionInfo.DatabaseType}");
+            
             using (var connection = CreateConnection(connectionInfo))
             {
                 await connection.OpenAsync();
+                Log($"Connection opened for GetTablesAsync");
 
                 string query = connectionInfo.DatabaseType switch
                 {
                     DatabaseType.SqlServer => @"
-                        SELECT TABLE_SCHEMA, TABLE_NAME, 
-                               (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = t.TABLE_SCHEMA AND TABLE_NAME = t.TABLE_NAME) as RowCount
+                        SELECT TABLE_SCHEMA, TABLE_NAME
                         FROM INFORMATION_SCHEMA.TABLES t
                         WHERE TABLE_TYPE = 'BASE TABLE'
                         ORDER BY TABLE_SCHEMA, TABLE_NAME",
                     
                     DatabaseType.PostgreSQL => @"
-                        SELECT schemaname, tablename, 0 as RowCount
+                        SELECT schemaname, tablename
                         FROM pg_tables
                         WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
                         ORDER BY schemaname, tablename",
                     
                     DatabaseType.Oracle => @"
-                        SELECT owner, table_name, 0 as RowCount
+                        SELECT owner, table_name
                         FROM all_tables
                         WHERE owner NOT IN ('SYS', 'SYSTEM', 'XDB', 'APEX_030200')
                         ORDER BY owner, table_name",
@@ -66,6 +96,8 @@ public class DatabaseService : IDatabaseService
                     _ => throw new NotSupportedException($"Database type {connectionInfo.DatabaseType} not supported")
                 };
 
+                Log($"Executing query for tables...");
+                
                 using (var command = connection.CreateCommand())
                 {
                     command.CommandText = query;
@@ -78,6 +110,8 @@ public class DatabaseService : IDatabaseService
                             string schema = reader[0].ToString() ?? "dbo";
                             string tableName = reader[1].ToString() ?? "";
                             
+                            Log($"Found table: {schema}.{tableName}");
+                            
                             tables.Add(new TableInfo
                             {
                                 Schema = schema,
@@ -89,15 +123,20 @@ public class DatabaseService : IDatabaseService
                     }
                 }
 
+                Log($"Retrieved {tables.Count} tables");
+
                 // Ottieni row count per ogni tabella
                 foreach (var table in tables)
                 {
                     table.RowCount = await GetTableRowCountAsync(connectionInfo, table.Schema, table.TableName);
+                    Log($"Row count for {table.Schema}.{table.TableName}: {table.RowCount}");
                 }
             }
         }
         catch (Exception ex)
         {
+            Log($"GetTablesAsync error: {ex.Message}");
+            Log($"Stack trace: {ex.StackTrace}");
             throw new InvalidOperationException($"Errore nel recupero tabelle: {ex.Message}", ex);
         }
 
@@ -152,44 +191,136 @@ public class DatabaseService : IDatabaseService
         }
     }
 
-    public async Task CreateDatabaseAsync(ConnectionInfo connectionInfo)
+    public async Task<string?> CreateDatabaseAsync(ConnectionInfo connectionInfo)
     {
-        // Crea connessione al sistema database (senza database specifico)
-        var systemConnInfo = new ConnectionInfo
+        try
         {
-            DatabaseType = connectionInfo.DatabaseType,
-            Server = connectionInfo.Server,
-            Port = connectionInfo.Port,
-            Username = connectionInfo.Username,
-            Password = connectionInfo.Password,
-            Database = connectionInfo.DatabaseType == DatabaseType.Oracle ? "XE" : "master"
-        };
-
-        using (var connection = CreateConnection(systemConnInfo))
-        {
-            await connection.OpenAsync();
-
-            string createQuery = connectionInfo.DatabaseType switch
+            // Per Oracle, il "Database" è sempre uno schema/utente, non il SID
+            // Il SID è specificato nella connessione di sistema
+            // Se l'utente non specifica uno schema custom, non creiamo nulla
+            if (connectionInfo.DatabaseType == DatabaseType.Oracle && 
+                string.IsNullOrWhiteSpace(connectionInfo.Database))
             {
-                DatabaseType.SqlServer => 
-                    $"CREATE DATABASE [{connectionInfo.Database}]",
-                
-                DatabaseType.PostgreSQL => 
-                    $"CREATE DATABASE \"{connectionInfo.Database}\"",
-                
-                DatabaseType.Oracle => 
-                    $"CREATE DATABASE {connectionInfo.Database}",
-                
-                _ => throw new NotSupportedException()
+                Log($"Oracle: Database/Schema not specified, assuming existing schema");
+                return null;
+            }
+
+            // Crea connessione al sistema database (senza database specifico)
+            var systemConnInfo = new ConnectionInfo
+            {
+                DatabaseType = connectionInfo.DatabaseType,
+                Server = connectionInfo.Server,
+                Port = connectionInfo.Port,
+                Username = connectionInfo.Username,
+                Password = connectionInfo.Password,
+                Database = connectionInfo.DatabaseType switch
+                {
+                    DatabaseType.Oracle => "XE",  // SID di sistema per Oracle
+                    DatabaseType.PostgreSQL => "postgres",  // PostgreSQL system database
+                    _ => "master"  // SQL Server system database
+                }
             };
 
-            using (var command = connection.CreateCommand())
+            using (var connection = CreateConnection(systemConnInfo))
             {
-                command.CommandText = createQuery;
-                command.CommandTimeout = CommandTimeout;
-                await command.ExecuteNonQueryAsync();
+                await connection.OpenAsync();
+
+                string createQuery = "";
+                string? usedPassword = null;  // Traccia la password usata
+                
+                if (connectionInfo.DatabaseType == DatabaseType.Oracle)
+                {
+                    // Per Oracle, valida e escapa correttamente la password
+                    var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
+                    usedPassword = oraclePassword;  // Salva la password originale per la connessione
+                    // Usa doppi apici per supportare caratteri speciali come @, !, #, etc
+                    createQuery = $"CREATE USER {connectionInfo.Database} IDENTIFIED BY \"{oraclePassword}\"";
+                    Log($"Oracle: Creating user {connectionInfo.Database} with escaped password");
+                }
+                else
+                {
+                    createQuery = connectionInfo.DatabaseType switch
+                    {
+                        DatabaseType.SqlServer => 
+                            $"CREATE DATABASE [{connectionInfo.Database}]",
+                        
+                        DatabaseType.PostgreSQL => 
+                            $"CREATE DATABASE \"{connectionInfo.Database}\"",
+                        
+                        _ => throw new NotSupportedException()
+                    };
+                }
+
+                using (var command = connection.CreateCommand())
+                {
+                    command.CommandText = createQuery;
+                    command.CommandTimeout = CommandTimeout;
+                    await command.ExecuteNonQueryAsync();
+                    Log($"Database {connectionInfo.Database} created successfully");
+                    
+                    // Per Oracle, dopo aver creato l'utente, assegna i privilegi necessari
+                    if (connectionInfo.DatabaseType == DatabaseType.Oracle)
+                    {
+                        var grantQuery = $"GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE TO {connectionInfo.Database}";
+                        command.CommandText = grantQuery;
+                        await command.ExecuteNonQueryAsync();
+                        Log($"Privileges granted to user {connectionInfo.Database}");
+                    }
+                }
+                
+                // Retorna la password usata (per Oracle) o null (per altri database)
+                return usedPassword;
             }
         }
+        catch (Exception ex)
+        {
+            // Se il database esiste già, ignora l'errore
+            string errorMessage = ex.Message.ToLower();
+            if (errorMessage.Contains("already exists") || 
+                errorMessage.Contains("esiste già") ||
+                errorMessage.Contains("42P06") ||  // PostgreSQL error code for "database already exists"
+                errorMessage.Contains("ORA-01501") || // Oracle user already exists
+                errorMessage.Contains("ora-01920") ||  // Oracle name already used by another object
+                errorMessage.Contains("already exists as another object type"))  // Oracle generic exists
+            {
+                Log($"Database {connectionInfo.Database} already exists, skipping creation");
+                // Se è Oracle e lo user esiste già, ritorna la password comunque
+                if (connectionInfo.DatabaseType == DatabaseType.Oracle)
+                {
+                    return PrepareOraclePassword(connectionInfo.Password);
+                }
+                return null;
+            }
+            // Se è un errore diverso, rethrow
+            throw;
+        }
+    }
+
+    private string PrepareOraclePassword(string password)
+    {
+        // Oracle supporta tutti i caratteri nella password
+        // Devo fare proper escaping per i caratteri speciali nella sintassi SQL
+        
+        if (string.IsNullOrWhiteSpace(password))
+        {
+            // Se password vuota, usa una di default
+            Log($"Oracle: Password empty, using default secure password");
+            return "Oracle2025Pass";
+        }
+        
+        if (password.Length < 4)
+        {
+            // Oracle consente password di almeno 4 caratteri (default, può variare)
+            Log($"Oracle: Password too short (needs at least 4 chars), using default secure password");
+            return "Oracle2025Pass";
+        }
+        
+        // Escapa gli apostrofi (raddoppiandoli) per la sintassi SQL
+        // Quando usiamo doppi apici nel CREATE USER, gli apostrofi devono essere escapati
+        var escaped = password.Replace("'", "''");
+        
+        Log($"Oracle: Using provided password with proper SQL escaping");
+        return escaped;
     }
 
     public async Task<string> GetTableSchemaAsync(ConnectionInfo connectionInfo, string tableName, string schema)
@@ -235,67 +366,225 @@ public class DatabaseService : IDatabaseService
             await sourceConn.OpenAsync();
             await targetConn.OpenAsync();
 
-            // Leggi i dati dalla sorgente in batch
-            long totalRows = await GetTableRowCountAsync(source, table.Schema, table.TableName);
-            long migratedRows = 0;
-
-            string sourceQuery = $"SELECT * FROM {FormatTableName(source.DatabaseType, table.Schema, table.TableName)}";
-
-            using (var sourceCommand = sourceConn.CreateCommand())
+            // Diagnostica: logga lo schema e l'utente per Oracle
+            if (target.DatabaseType == DatabaseType.Oracle && targetConn is OracleConnection oracleConn)
             {
-                sourceCommand.CommandText = sourceQuery;
-                sourceCommand.CommandTimeout = CommandTimeout;
-
-                using (var reader = await sourceCommand.ExecuteReaderAsync())
+                try
                 {
-                    var batch = new DataTable();
-                    batch.Load(reader);
-
-                    if (batch.Rows.Count == 0)
+                    using (var diagCmd = targetConn.CreateCommand())
                     {
-                        progress?.Report(100);
-                        return;
+                        diagCmd.CommandText = "SELECT USER FROM DUAL";
+                        var currentUser = await diagCmd.ExecuteScalarAsync();
+                        Log($"[MigrateTableAsync] Oracle current user: {currentUser}");
                     }
+                }
+                catch (Exception ex)
+                {
+                    Log($"[MigrateTableAsync] Could not get current user: {ex.Message}");
+                }
+            }
 
-                    int columnCount = batch.Columns.Count;
-                    int processedBatches = 0;
-                    int totalBatches = (int)Math.Ceiling((double)batch.Rows.Count / BatchSize);
+            DbTransaction transaction = null;
+            if (target.DatabaseType != DatabaseType.Oracle)
+            {
+                // Per SQL Server e PostgreSQL: usa la transazione del driver
+                transaction = targetConn.BeginTransaction();
+                Log($"[MigrateTableAsync] {target.DatabaseType} transaction started");
+            }
 
-                    // Inserisci i dati nel target in batch
-                    using (var targetCommand = targetConn.CreateCommand())
+            try
+            {
+                // Tronca la tabella nel target per evitare duplicati
+                Log($"[MigrateTableAsync] Truncating table {table.Schema}.{table.TableName} in target...");
+                try
+                {
+                    string truncateQuery = target.DatabaseType switch
                     {
-                        targetCommand.CommandTimeout = CommandTimeout;
+                        DatabaseType.SqlServer => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
+                        DatabaseType.PostgreSQL => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)} CASCADE",
+                        DatabaseType.Oracle => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
+                        _ => throw new NotSupportedException()
+                    };
+                    
+                    using (var truncateCommand = targetConn.CreateCommand())
+                    {
+                        truncateCommand.CommandText = truncateQuery;
+                        if (transaction != null)
+                            truncateCommand.Transaction = transaction;
+                        truncateCommand.CommandTimeout = CommandTimeout;
+                        await truncateCommand.ExecuteNonQueryAsync();
+                    }
+                    Log($"[MigrateTableAsync] Table truncated successfully");
+                }
+                catch (Exception ex)
+                {
+                    Log($"[MigrateTableAsync] Warning: Could not truncate table: {ex.Message}");
+                    // Se TRUNCATE fallisce, continuiamo comunque (potrebbe essere una tabella vuota)
+                }
 
-                        for (int i = 0; i < batch.Rows.Count; i += BatchSize)
+                // Leggi i dati dalla sorgente in batch
+                long totalRows = await GetTableRowCountAsync(source, table.Schema, table.TableName);
+                long migratedRows = 0;
+
+                string sourceQuery = $"SELECT * FROM {FormatTableName(source.DatabaseType, table.Schema, table.TableName)}";
+
+                using (var sourceCommand = sourceConn.CreateCommand())
+                {
+                    sourceCommand.CommandText = sourceQuery;
+                    sourceCommand.CommandTimeout = CommandTimeout;
+
+                    using (var reader = await sourceCommand.ExecuteReaderAsync())
+                    {
+                        var batch = new DataTable();
+                        batch.Load(reader);
+
+                        if (batch.Rows.Count == 0)
                         {
-                            var batchRows = batch.Rows.Cast<DataRow>()
-                                .Skip(i)
-                                .Take(BatchSize)
-                                .ToList();
+                            progress?.Report(100);
+                            await FinalizeTransactionAsync(targetConn, transaction, target.DatabaseType, true);
+                            return;
+                        }
 
-                            string insertQuery = BuildInsertQuery(target.DatabaseType, table.Schema, table.TableName, batch.Columns, batchRows);
-                            targetCommand.CommandText = insertQuery;
+                        int columnCount = batch.Columns.Count;
+                        int processedBatches = 0;
+                        int totalBatches = (int)Math.Ceiling((double)batch.Rows.Count / BatchSize);
 
-                            try
+                        // Inserisci i dati nel target in batch
+                        using (var targetCommand = targetConn.CreateCommand())
+                        {
+                            targetCommand.CommandTimeout = CommandTimeout;
+                            if (transaction != null)
+                                targetCommand.Transaction = transaction;
+
+                            for (int i = 0; i < batch.Rows.Count; i += BatchSize)
                             {
-                                await targetCommand.ExecuteNonQueryAsync();
-                                migratedRows += batchRows.Count;
-                                processedBatches++;
+                                var batchRows = batch.Rows.Cast<DataRow>()
+                                    .Skip(i)
+                                    .Take(BatchSize)
+                                    .ToList();
 
-                                int percentage = (int)((processedBatches / (double)totalBatches) * 100);
-                                progress?.Report(Math.Min(percentage, 100));
-                            }
-                            catch (Exception ex)
-                            {
-                                throw new InvalidOperationException(
-                                    $"Errore durante l'inserimento batch per {table.Schema}.{table.TableName}: {ex.Message}", ex);
+                                string insertQuery = BuildInsertQuery(target.DatabaseType, table.Schema, table.TableName, batch.Columns, batchRows);
+                                
+                                try
+                                {
+                                    // Per Oracle: esegui ogni INSERT singolarmente e committo subito dopo
+                                    if (target.DatabaseType == DatabaseType.Oracle)
+                                    {
+                                        // Dividi i query separati da "; " ed esegui uno per uno
+                                        var queries = insertQuery.Split(new[] { "; " }, StringSplitOptions.RemoveEmptyEntries);
+                                        Log($"[MigrateTableAsync] Oracle batch: {batchRows.Count} rows, {queries.Length} INSERT statements");
+                                        
+                                        int rowsInserted = 0;
+                                        foreach (var query in queries)
+                                        {
+                                            var cleanQuery = query.TrimEnd(';').Trim();
+                                            if (!string.IsNullOrEmpty(cleanQuery))
+                                            {
+                                                targetCommand.CommandText = cleanQuery;
+                                                var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
+                                                Log($"[MigrateTableAsync] Oracle INSERT executed, rows affected: {rowsAffected}");
+                                                rowsInserted += rowsAffected;
+                                            }
+                                        }
+                                        
+                                        // Dopo ogni batch di INSERT, esegui un COMMIT immediato
+                                        using (var commitCmd = targetConn.CreateCommand())
+                                        {
+                                            commitCmd.CommandText = "COMMIT";
+                                            commitCmd.CommandTimeout = CommandTimeout;
+                                            await commitCmd.ExecuteNonQueryAsync();
+                                            Log($"[MigrateTableAsync] Oracle batch COMMIT executed ({rowsInserted} rows)");
+                                            
+                                            // Verifica quanti dati ci sono adesso nella tabella
+                                            try
+                                            {
+                                                using (var countCmd = targetConn.CreateCommand())
+                                                {
+                                                    countCmd.CommandText = $"SELECT COUNT(*) FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}";
+                                                    countCmd.CommandTimeout = CommandTimeout;
+                                                    var countResult = await countCmd.ExecuteScalarAsync();
+                                                    Log($"[MigrateTableAsync] Table {table.TableName} now has {countResult} rows");
+                                                }
+                                            }
+                                            catch (Exception ex)
+                                            {
+                                                Log($"[MigrateTableAsync] Could not verify row count: {ex.Message}");
+                                            }
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // Per SQL Server e PostgreSQL: esegui il batch
+                                        targetCommand.CommandText = insertQuery;
+                                        var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
+                                        Log($"[MigrateTableAsync] Batch INSERT executed, rows affected: {rowsAffected}");
+                                    }
+                                    
+                                    migratedRows += batchRows.Count;
+                                    processedBatches++;
+
+                                    int percentage = (int)((processedBatches / (double)totalBatches) * 100);
+                                    progress?.Report(Math.Min(percentage, 100));
+                                }
+                                catch (Exception ex)
+                                {
+                                    throw new InvalidOperationException(
+                                        $"Errore durante l'inserimento batch per {table.Schema}.{table.TableName}: {ex.Message}", ex);
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            progress?.Report(100);
+                progress?.Report(100);
+                await FinalizeTransactionAsync(targetConn, transaction, target.DatabaseType, true);
+                Log($"[MigrateTableAsync] Transaction finalized successfully");
+            }
+            catch (Exception ex)
+            {
+                Log($"[MigrateTableAsync] Transaction rolled back due to error: {ex.Message}");
+                await FinalizeTransactionAsync(targetConn, transaction, target.DatabaseType, false);
+                throw;
+            }
+        }
+    }
+
+    private async Task FinalizeTransactionAsync(DbConnection connection, DbTransaction transaction, DatabaseType dbType, bool commit)
+    {
+        try
+        {
+            if (dbType == DatabaseType.Oracle)
+            {
+                // Per Oracle: esegui COMMIT o ROLLBACK via SQL
+                using (var cmd = connection.CreateCommand())
+                {
+                    cmd.CommandText = commit ? "COMMIT" : "ROLLBACK";
+                    cmd.CommandTimeout = CommandTimeout;
+                    await cmd.ExecuteNonQueryAsync();
+                    Log($"[FinalizeTransactionAsync] Oracle {(commit ? "COMMIT" : "ROLLBACK")} executed");
+                }
+            }
+            else
+            {
+                // Per SQL Server e PostgreSQL: usa la transazione del driver
+                if (transaction != null)
+                {
+                    if (commit)
+                    {
+                        await transaction.CommitAsync();
+                        Log($"[FinalizeTransactionAsync] {dbType} transaction committed");
+                    }
+                    else
+                    {
+                        await transaction.RollbackAsync();
+                        Log($"[FinalizeTransactionAsync] {dbType} transaction rolled back");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"[FinalizeTransactionAsync] Error finalizing transaction: {ex.Message}");
         }
     }
 
@@ -330,7 +619,7 @@ public class DatabaseService : IDatabaseService
         {
             DatabaseType.SqlServer => $"[{schema}].[{tableName}]",
             DatabaseType.PostgreSQL => $"\"{schema}\".\"{tableName}\"",
-            DatabaseType.Oracle => $"{schema}.{tableName}",
+            DatabaseType.Oracle => tableName,  // Per Oracle, usa solo il nome tabella (senza schema)
             _ => throw new NotSupportedException()
         };
     }
@@ -355,22 +644,48 @@ public class DatabaseService : IDatabaseService
             });
         }
 
-        sb.Append($"INSERT INTO {tableRef} ({string.Join(", ", columnNames)}) VALUES ");
-
-        var valueSets = new List<string>();
-        for (int rowIdx = 0; rowIdx < rows.Count; rowIdx++)
+        // Per Oracle: inserisci una riga per volta (non supporta INSERT batch)
+        // Per altri DB: batch INSERT con multiple rows
+        if (dbType == DatabaseType.Oracle)
         {
-            var values = new List<string>();
-            for (int colIdx = 0; colIdx < columns.Count; colIdx++)
+            var queries = new List<string>();
+            for (int rowIdx = 0; rowIdx < rows.Count; rowIdx++)
             {
-                var value = rows[rowIdx][colIdx];
-                values.Add(FormatSqlValue(dbType, value));
+                var values = new List<string>();
+                for (int colIdx = 0; colIdx < columns.Count; colIdx++)
+                {
+                    var value = rows[rowIdx][colIdx];
+                    values.Add(FormatSqlValue(dbType, value));
+                }
+                queries.Add($"INSERT INTO {tableRef} ({string.Join(", ", columnNames)}) VALUES ({string.Join(", ", values)})");
             }
-            valueSets.Add($"({string.Join(", ", values)})");
+            var result = string.Join("; ", queries) + ";";
+            Log($"[BuildInsertQuery] Generated Oracle INSERT queries (full length: {result.Length} chars)");
+            Log($"[BuildInsertQuery] Oracle query: {result}");
+            return result;
         }
+        else
+        {
+            // Batch INSERT per SQL Server e PostgreSQL
+            sb.Append($"INSERT INTO {tableRef} ({string.Join(", ", columnNames)}) VALUES ");
 
-        sb.Append(string.Join(", ", valueSets));
-        return sb.ToString();
+            var valueSets = new List<string>();
+            for (int rowIdx = 0; rowIdx < rows.Count; rowIdx++)
+            {
+                var values = new List<string>();
+                for (int colIdx = 0; colIdx < columns.Count; colIdx++)
+                {
+                    var value = rows[rowIdx][colIdx];
+                    values.Add(FormatSqlValue(dbType, value));
+                }
+                valueSets.Add($"({string.Join(", ", values)})");
+            }
+
+            sb.Append(string.Join(", ", valueSets));
+            string result = sb.ToString();
+            Log($"[BuildInsertQuery] Generated INSERT query (full length: {result.Length} chars)");
+            return result;
+        }
     }
 
     private string FormatSqlValue(DatabaseType dbType, object? value)
@@ -381,12 +696,19 @@ public class DatabaseService : IDatabaseService
         return value switch
         {
             string s => $"'{EscapeSqlString(s)}'",
-            bool b => dbType == DatabaseType.Oracle ? (b ? "1" : "0") : (b ? "1" : "0"),
+            bool b => b ? "1" : "0",
+            byte[] bytes => dbType switch
+            {
+                DatabaseType.PostgreSQL => $"'\\x{BitConverter.ToString(bytes).Replace("-", "").ToLower()}'",
+                DatabaseType.SqlServer => $"0x{BitConverter.ToString(bytes).Replace("-", "")}",
+                DatabaseType.Oracle => $"hextoraw('{BitConverter.ToString(bytes).Replace("-", "").ToUpper()}')",
+                _ => $"'{BitConverter.ToString(bytes)}'"
+            },
             DateTime dt => dbType switch
             {
                 DatabaseType.SqlServer => $"'{dt:yyyy-MM-dd HH:mm:ss.fff}'",
                 DatabaseType.PostgreSQL => $"'{dt:yyyy-MM-dd HH:mm:ss.fff}'",
-                DatabaseType.Oracle => $"TO_DATE('{dt:yyyy-MM-dd HH:mm:ss}', 'YYYY-MM-DD HH24:MI:SS')",
+                DatabaseType.Oracle => $"TO_DATE('{dt:yyyy-MM-dd HH:mm:ss}','YYYY-MM-DD HH24:MI:SS')",
                 _ => $"'{dt:yyyy-MM-dd HH:mm:ss}'"
             },
             decimal d => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -424,18 +746,19 @@ public class DatabaseService : IDatabaseService
     private string GetPostgresTableSchema(string schema, string tableName)
     {
         return $@"
-            SELECT 'CREATE TABLE ""{0}"".""{1}"" (' || 
-                   array_to_string(ARRAY_AGG(
-                       '"" ' || a.attname || ' ' || 
+            SELECT 'CREATE TABLE ""{EscapeSqlString(schema)}"" ."" {EscapeSqlString(tableName)} "" (' || 
+                   COALESCE(array_to_string(ARRAY_AGG(
+                       '""' || a.attname || '"" ' || 
                        pg_catalog.format_type(a.atttypid, a.atttypmod) ||
                        CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE '' END
-                   ), ', ') || ')'
+                       ORDER BY a.attnum
+                   ), ', '), '') || ')'
             FROM pg_attribute a
             JOIN pg_class c ON a.attrelid = c.oid
             JOIN pg_namespace n ON c.relnamespace = n.oid
             WHERE n.nspname = '{EscapeSqlString(schema)}'
             AND c.relname = '{EscapeSqlString(tableName)}'
-            AND a.attnum > 0".Replace("{0}", schema).Replace("{1}", tableName);
+            AND a.attnum > 0";
     }
 
     private string GetOracleTableSchema(string schema, string tableName)
