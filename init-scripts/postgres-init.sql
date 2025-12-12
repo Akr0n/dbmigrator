@@ -81,7 +81,7 @@ INSERT INTO migration_test.orders (user_id, product_id, quantity, total_price, s
     (4, 4, 1, 149.99, 'completed');
 
 INSERT INTO migration_test.audit_log (table_name, operation, record_id, changed_by, change_data) VALUES
-    ('users', 'INSERT', 1, 'system', '\x7b226e616d65223a22416c696365227d'::bytea),
-    ('products', 'INSERT', 1, 'system', '\x7b226e616d65223a224c6170746f7020506f72227d'::bytea),
-    ('orders', 'INSERT', 1, 'system', '\x7b2273746174757320223a20226f70656e227d'::bytea),
-    ('orders', 'UPDATE', 1, 'system', '\x7b2273746174757320223a20226f726465726564227d'::bytea);
+    ('users', 'INSERT', 1, 'system', decode('7b226e616d65223a22416c696365227d', 'hex')),
+    ('products', 'INSERT', 1, 'system', decode('7b226e616d65223a224c6170746f7020506f72227d', 'hex')),
+    ('orders', 'INSERT', 1, 'system', decode('7b2273746174757320223a20226f70656e227d', 'hex')),
+    ('orders', 'UPDATE', 1, 'system', decode('7b2273746174757320223a20226f726465726564227d', 'hex'));

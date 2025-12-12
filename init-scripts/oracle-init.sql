@@ -4,7 +4,7 @@
 -- Create test user
 ALTER SESSION SET "_ORACLE_SCRIPT"=true;
 
-CREATE USER migration_test IDENTIFIED BY oraclepass123;
+CREATE USER migration_test IDENTIFIED BY "oraclepass123";
 GRANT CONNECT, RESOURCE, UNLIMITED TABLESPACE TO migration_test;
 
 -- Connect as migration_test user (commands will run in their schema)

@@ -7,6 +7,9 @@ using ReactiveUI;
 using DatabaseMigrator.Core.Models;
 using DatabaseMigrator.Core.Services;
 using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Reactive.Linq;
 
 namespace DatabaseMigrator.ViewModels;
 
@@ -24,7 +27,7 @@ public class MainWindowViewModel : ViewModelBase
         try
         {
             var dir = Path.GetDirectoryName(LogPath);
-            if (!Directory.Exists(dir))
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
             
             var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}";
@@ -45,6 +48,7 @@ public class MainWindowViewModel : ViewModelBase
     private string _errorMessage = "";
     private int _selectedTablesCount;
     private long _totalRowsToMigrate;
+    private bool _canStartMigration;
 
     public ConnectionViewModel? SourceConnection
     {
@@ -112,6 +116,14 @@ public class MainWindowViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _totalRowsToMigrate, value);
     }
 
+    public bool CanStartMigration
+    {
+        get => _canStartMigration;
+        set => this.RaiseAndSetIfChanged(ref _canStartMigration, value);
+    }
+
+    public IObservable<bool> CanStartMigrationObservable { get; }
+
     public ReactiveCommand<Unit, Unit> ConnectDatabasesCommand { get; }
     public ReactiveCommand<Unit, Unit> StartMigrationCommand { get; }
     public ReactiveCommand<Unit, Unit> SelectAllTablesCommand { get; }
@@ -125,12 +137,20 @@ public class MainWindowViewModel : ViewModelBase
         SourceConnection = new ConnectionViewModel();
         TargetConnection = new ConnectionViewModel();
 
+        // Inizializza CanStartMigration al valore corretto
+        CanStartMigration = IsConnected && !IsMigrating;
+
+        // Observable per CanStartMigration
+        CanStartMigrationObservable = this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating,
+            (connected, migrating) => connected && !migrating)
+            .Do(canStart => CanStartMigration = canStart);
+
         ConnectDatabasesCommand = ReactiveCommand.CreateFromTask(ConnectDatabasesAsync);
         StartMigrationCommand = ReactiveCommand.CreateFromTask(StartMigrationAsync, 
             this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating, 
                 (connected, migrating) => connected && !migrating));
-        SelectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => SelectAllTablesAsync());
-        DeselectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => DeselectAllTablesAsync());
+        SelectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => Task.Run(() => SelectAllTablesDirectly()));
+        DeselectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => Task.Run(() => DeselectAllTablesDirectly()));
     }
 
     private void SubscribeToTableChanges(TableInfo table)
@@ -254,7 +274,24 @@ public class MainWindowViewModel : ViewModelBase
             {
                 Log($"[StartMigrationAsync] Creating target database...");
                 StatusMessage = "Creazione database target...";
-                await _databaseService.CreateDatabaseAsync(TargetConnection.ConnectionInfo);
+                var usedPassword = await _databaseService.CreateDatabaseAsync(TargetConnection.ConnectionInfo);
+                
+                // Se è Oracle, aggiorna sia username che password per la nuova connessione
+                if (TargetConnection.ConnectionInfo.DatabaseType == DatabaseType.Oracle)
+                {
+                    // Lo username diventa lo schema/database che abbiamo creato
+                    var schemaName = TargetConnection.ConnectionInfo.Database;
+                    TargetConnection.ConnectionInfo.Username = schemaName;
+                    
+                    // Aggiorna anche la password se è stata escappata
+                    if (!string.IsNullOrWhiteSpace(usedPassword))
+                    {
+                        TargetConnection.ConnectionInfo.Password = usedPassword;
+                    }
+                    
+                    Log($"[StartMigrationAsync] Updated target connection for Oracle: Username={schemaName}, Password updated");
+                }
+                
                 Log($"[StartMigrationAsync] Database created successfully");
                 StatusMessage = "Database target creato";
             }
@@ -322,44 +359,6 @@ public class MainWindowViewModel : ViewModelBase
         }
     }
 
-    private async Task SelectAllTablesAsync()
-    {
-        Log($"[SelectAllTables] Starting... Total tables: {Tables.Count}");
-        foreach (var table in Tables)
-        {
-            Log($"[SelectAllTables] Setting {table.Schema}.{table.TableName} to IsSelected=true");
-            table.IsSelected = true;
-            Log($"[SelectAllTables] After setting: IsSelected={table.IsSelected}");
-        }
-        
-        // Force UI refresh by reassigning the collection
-        Log($"[SelectAllTables] Forcing collection refresh...");
-        var newCollection = new ObservableCollection<TableInfo>(Tables);
-        Tables = newCollection;
-        
-        UpdateTableStatistics();
-        Log($"[SelectAllTables] Completed. SelectedTablesCount={SelectedTablesCount}");
-    }
-
-    private async Task DeselectAllTablesAsync()
-    {
-        Log($"[DeselectAllTables] Starting... Total tables: {Tables.Count}");
-        foreach (var table in Tables)
-        {
-            Log($"[DeselectAllTables] Setting {table.Schema}.{table.TableName} to IsSelected=false");
-            table.IsSelected = false;
-            Log($"[DeselectAllTables] After setting: IsSelected={table.IsSelected}");
-        }
-        
-        // Force UI refresh by reassigning the collection
-        Log($"[DeselectAllTables] Forcing collection refresh...");
-        var newCollection = new ObservableCollection<TableInfo>(Tables);
-        Tables = newCollection;
-        
-        UpdateTableStatistics();
-        Log($"[DeselectAllTables] Completed. SelectedTablesCount={SelectedTablesCount}");
-    }
-
     public void SelectAllTablesDirectly()
     {
         Log($"[SelectAllTablesDirectly] Starting... Total tables: {Tables.Count}");
@@ -401,5 +400,127 @@ public class MainWindowViewModel : ViewModelBase
         SelectedTablesCount = Tables.Count(t => t.IsSelected);
         TotalRowsToMigrate = Tables.Where(t => t.IsSelected).Sum(t => t.RowCount);
         Log($"[UpdateTableStatistics] SelectedCount={SelectedTablesCount}, TotalRows={TotalRowsToMigrate}");
+    }
+
+    /// <summary>
+    /// Salva la configurazione corrente in un file JSON
+    /// </summary>
+    public async Task<bool> SaveConfigurationAsync(string filePath)
+    {
+        try
+        {
+            if (SourceConnection?.ConnectionInfo == null || TargetConnection?.ConnectionInfo == null)
+            {
+                ErrorMessage = "Errore: configurazioni di connessione non complete";
+                Log("[SaveConfigurationAsync] Errore: configurazioni incomplete");
+                return false;
+            }
+
+            var config = new ConnectionConfig
+            {
+                Name = Path.GetFileNameWithoutExtension(filePath),
+                Source = DatabaseConnectionData.FromConnectionInfo(SourceConnection.ConnectionInfo),
+                Target = DatabaseConnectionData.FromConnectionInfo(TargetConnection.ConnectionInfo),
+                Timestamp = DateTime.Now
+            };
+
+            var options = new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            };
+
+            var json = JsonSerializer.Serialize(config, options);
+            await File.WriteAllTextAsync(filePath, json);
+
+            StatusMessage = $"Configurazione salvata: {Path.GetFileName(filePath)}";
+            Log($"[SaveConfigurationAsync] Configurazione salvata in {filePath}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Errore nel salvataggio: {ex.Message}";
+            Log($"[SaveConfigurationAsync] Errore: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Carica una configurazione da file JSON
+    /// </summary>
+    public async Task<bool> LoadConfigurationAsync(string filePath)
+    {
+        try
+        {
+            if (!File.Exists(filePath))
+            {
+                ErrorMessage = $"File non trovato: {filePath}";
+                Log("[LoadConfigurationAsync] File non trovato");
+                return false;
+            }
+
+            var json = await File.ReadAllTextAsync(filePath);
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
+            var config = JsonSerializer.Deserialize<ConnectionConfig>(json, options);
+            if (config?.Source == null || config.Target == null)
+            {
+                ErrorMessage = "Errore: configurazione non valida";
+                Log("[LoadConfigurationAsync] Errore: configurazione non valida");
+                return false;
+            }
+
+            // Carica source connection
+            var sourceInfo = config.Source.ToConnectionInfo();
+            SourceConnection = new ConnectionViewModel
+            {
+                Server = sourceInfo.Server,
+                Port = sourceInfo.Port,
+                Database = sourceInfo.Database,
+                Username = sourceInfo.Username,
+                Password = sourceInfo.Password,
+                SelectedDatabaseType = sourceInfo.DatabaseType
+            };
+
+            // Carica target connection
+            var targetInfo = config.Target.ToConnectionInfo();
+            TargetConnection = new ConnectionViewModel
+            {
+                Server = targetInfo.Server,
+                Port = targetInfo.Port,
+                Database = targetInfo.Database,
+                Username = targetInfo.Username,
+                Password = targetInfo.Password,
+                SelectedDatabaseType = targetInfo.DatabaseType
+            };
+
+            StatusMessage = $"Configurazione caricata: {Path.GetFileName(filePath)}";
+            Log($"[LoadConfigurationAsync] Configurazione caricata da {filePath}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Errore nel caricamento: {ex.Message}";
+            Log($"[LoadConfigurationAsync] Errore: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Ottiene la directory predefinita per i file di configurazione
+    /// </summary>
+    public static string GetConfigDirectory()
+    {
+        var configDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DatabaseMigrator", "Configurations");
+        
+        if (!Directory.Exists(configDir))
+            Directory.CreateDirectory(configDir);
+        
+        return configDir;
     }
 }

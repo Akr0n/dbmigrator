@@ -29,7 +29,7 @@ public class SchemaMigrationService
         try
         {
             var dir = Path.GetDirectoryName(LogPath);
-            if (!Directory.Exists(dir))
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
             
             var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}\n";
@@ -144,7 +144,9 @@ public class SchemaMigrationService
                 DatabaseType.PostgreSQL => 
                     $"SELECT 1 FROM information_schema.tables WHERE table_schema = '{schema}' AND table_name = '{tableName}'",
                 DatabaseType.Oracle => 
-                    $"SELECT 1 FROM all_tables WHERE owner = '{schema}' AND table_name = '{tableName}'",
+                    // Per Oracle: cerca solo per nome tabella (indipendente dallo schema sorgente)
+                    // perché le tabelle migrare vanno nello schema dell'utente connesso
+                    $"SELECT 1 FROM all_tables WHERE table_name = '{tableName.ToUpper()}'",
                 _ => throw new NotSupportedException()
             };
 
@@ -254,8 +256,20 @@ public class SchemaMigrationService
             columnDefs.Add(colDef);
         }
 
-        sb.AppendLine(string.Join(",\n    ", columnDefs));
-        sb.AppendLine(");");
+        // Crea le righe con indentazione corretta
+        for (int i = 0; i < columnDefs.Count; i++)
+        {
+            sb.Append("    " + columnDefs[i]);
+            if (i < columnDefs.Count - 1)
+                sb.Append(",");
+            sb.AppendLine();
+        }
+        
+        // Oracle non ama il semicolon alla fine del CREATE TABLE in questo contesto
+        if (targetDbType == DatabaseType.Oracle)
+            sb.AppendLine(")");
+        else
+            sb.AppendLine(");");
 
         return sb.ToString();
     }
@@ -265,12 +279,38 @@ public class SchemaMigrationService
         string colName = FormatColumnName(dbType, column.Name);
         string dataType = MapDataType(column.SourceDbType, dbType, column.DataType, 
             column.MaxLength, column.NumericPrecision, column.NumericScale);
-        string nullable = column.IsNullable ? "NULL" : "NOT NULL";
-        string defaultValue = string.IsNullOrEmpty(column.DefaultValue) 
-            ? "" 
-            : $" DEFAULT {column.DefaultValue}";
+        
+        // Per Oracle: non specificare NULL/NOT NULL (è implicito)
+        // Per altri DB: specifica sempre
+        string nullable = "";
+        if (dbType != DatabaseType.Oracle)
+        {
+            nullable = column.IsNullable ? " NULL" : " NOT NULL";
+        }
+        else if (!column.IsNullable)
+        {
+            nullable = " NOT NULL";  // Oracle: specifica solo se NOT NULL
+        }
+        
+        // Per Oracle: ignora i DEFAULT che sono funzioni SQL Server
+        string defaultValue = "";
+        if (dbType != DatabaseType.Oracle && !string.IsNullOrEmpty(column.DefaultValue))
+        {
+            // Per SQL Server e PostgreSQL, mantieni il default
+            defaultValue = $" DEFAULT {column.DefaultValue}";
+        }
+        else if (dbType == DatabaseType.Oracle && !string.IsNullOrEmpty(column.DefaultValue))
+        {
+            // Per Oracle: accetta solo literal values, non funzioni come (getutcdate())
+            var defaultVal = column.DefaultValue.Trim();
+            if (!defaultVal.Contains("(") && !defaultVal.Contains(")"))
+            {
+                defaultValue = $" DEFAULT {defaultVal}";
+            }
+            // Se contiene parentesi (è una funzione), ignoralo
+        }
 
-        return $"{colName} {dataType} {nullable}{defaultValue}";
+        return $"{colName} {dataType}{nullable}{defaultValue}";
     }
 
     private string MapDataType(DatabaseType sourceDbType, DatabaseType targetDbType, 
@@ -347,11 +387,11 @@ public class SchemaMigrationService
                     : "NCHAR(10)",
                 "text" => "CLOB",
                 "ntext" => "NCLOB",
-                "datetime" => "TIMESTAMP",
-                "datetime2" => "TIMESTAMP",
-                "smalldatetime" => "TIMESTAMP",
+                "datetime" => "TIMESTAMP(6)",
+                "datetime2" => "TIMESTAMP(6)",
+                "smalldatetime" => "TIMESTAMP(0)",
                 "date" => "DATE",
-                "time" => "TIMESTAMP",
+                "time" => "TIMESTAMP(0)",
                 "bit" => "NUMBER(1)",
                 "binary" => "RAW",
                 "varbinary" => "BLOB",
@@ -502,7 +542,7 @@ public class SchemaMigrationService
         {
             DatabaseType.SqlServer => $"[{schema}].[{tableName}]",
             DatabaseType.PostgreSQL => $"\"{schema}\".\"{tableName}\"",
-            DatabaseType.Oracle => $"{schema}.{tableName}",
+            DatabaseType.Oracle => tableName,  // Oracle: usa solo il table name, non schema.table
             _ => throw new NotSupportedException()
         };
     }

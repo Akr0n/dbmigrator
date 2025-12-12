@@ -8,6 +8,19 @@
         Background="#1a1a1a">
     
     <DockPanel Background="#1a1a1a">
+        <!-- Menu Bar -->
+        <Menu DockPanel.Dock="Top" Background="#0d47a1" Foreground="White">
+            <MenuItem Header="📁 File">
+                <MenuItem Header="💾 Salva Configurazione..." x:Name="SaveConfigMenuItem"/>
+                <MenuItem Header="📂 Carica Configurazione..." x:Name="LoadConfigMenuItem"/>
+                <Separator/>
+                <MenuItem Header="❌ Esci" x:Name="ExitMenuItem"/>
+            </MenuItem>
+            <MenuItem Header="❓ Aiuto">
+                <MenuItem Header="📖 Informazioni" x:Name="AboutMenuItem"/>
+            </MenuItem>
+        </Menu>
+
         <Border DockPanel.Dock="Top" Background="#0d47a1" Padding="20">
             <TextBlock Text="🗄️ Database Migrator" FontSize="32" FontWeight="Bold" Foreground="White"/>
         </Border>
@@ -116,19 +129,19 @@
                     <TabItem.Header>
                         <TextBlock Text="📋 Selezione Tabelle" FontSize="13" Foreground="White"/>
                     </TabItem.Header>
-                    <Grid RowDefinitions="Auto,*,Auto" ColumnDefinitions="*,*" Margin="20" Background="#1a1a1a">
+                    <Grid RowDefinitions="Auto,*,Auto" ColumnDefinitions="*,*" Margin="20,20,20,40" Background="#1a1a1a">
                         <!-- Sorgente: Buttons row -->
-                        <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="10" Margin="0,0,15,15">
-                            <Button x:Name="SelectAllButton" Click="SelectAllButton_Click" Background="#43a047" Foreground="White" Padding="12" Height="40" FontSize="12" FontWeight="Bold" CornerRadius="4">
+                        <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="10" Margin="15,10,15,15">
+                            <Button x:Name="SelectAllButton" Click="SelectAllButton_Click" Background="#1976d2" Foreground="White" Padding="12" Height="40" FontSize="12" FontWeight="Bold" CornerRadius="4">
                                 ✓ Seleziona Tutto
                             </Button>
-                            <Button x:Name="DeselectAllButton" Click="DeselectAllButton_Click" Background="#e53935" Foreground="White" Padding="12" Height="40" FontSize="12" FontWeight="Bold" CornerRadius="4">
+                            <Button x:Name="DeselectAllButton" Click="DeselectAllButton_Click" Background="#455a64" Foreground="White" Padding="12" Height="40" FontSize="12" FontWeight="Bold" CornerRadius="4">
                                 ✗ Deseleziona Tutto
                             </Button>
                         </StackPanel>
 
                         <!-- Target: Placeholder row -->
-                        <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="10" Margin="15,0,0,15">
+                        <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="10" Margin="35,0,0,15">
                             <TextBlock Text="📊 Tabelle Destinazione (Create Automaticamente)" FontWeight="Bold" Foreground="#64b5f6" FontSize="12" VerticalAlignment="Center"/>
                         </StackPanel>
 
@@ -172,7 +185,7 @@
                         </Border>
 
                         <!-- Statistics -->
-                        <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" ColumnDefinitions="*,*" Margin="0,15,0,0">
+                        <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" ColumnDefinitions="*,*" Margin="15,5,0,0">
                             <StackPanel Grid.Column="0" Spacing="5">
                                 <TextBlock x:Name="SourceCountTextBlock" Foreground="#9e9e9e" FontWeight="Bold" FontSize="12" Text="📋 Tabelle sorgente: 0"/>
                                 <TextBlock x:Name="SelectedCountTextBlock" Foreground="#64b5f6" FontWeight="Bold" FontSize="12" Text="✓ Tabelle selezionate: 0"/>
@@ -222,7 +235,7 @@
                             <TextBlock x:Name="ProgressTextBlock" TextAlignment="Center" FontWeight="Bold" Foreground="#43a047" FontSize="12" Text="0%"/>
                         </StackPanel>
                         
-                        <Button x:Name="StartMigrationButton" Grid.Row="3" Background="#d32f2f" Foreground="White" Padding="12" Height="50" FontSize="16" FontWeight="Bold" Margin="0,15,0,0" CornerRadius="4" IsEnabled="False">
+                        <Button x:Name="StartMigrationButton" Grid.Row="3" Background="#1976d2" Foreground="White" Padding="12" Height="50" FontSize="16" FontWeight="Bold" Margin="15,15,0,0" CornerRadius="4" IsEnabled="False">
                             🚀 Avvia Migrazione
                         </Button>
                         
