@@ -4,6 +4,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.11.4" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.0" />
     <PackageReference Include="Npgsql" Version="8.0.3" />
     <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.4.0" />
