@@ -352,6 +352,11 @@ public class DatabaseService : IDatabaseService
     {
         // Use RandomNumberGenerator for cryptographically secure random numbers
         // Use rejection sampling to ensure uniform distribution
+        if (maxValue <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxValue), "maxValue must be greater than 0");
+        }
+        
         var bytes = new byte[4];
         
         // Calculate the maximum value that avoids modulo bias
