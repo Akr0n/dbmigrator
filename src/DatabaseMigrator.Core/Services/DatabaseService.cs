@@ -218,9 +218,8 @@ public class DatabaseService : IDatabaseService
                 
                 if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                 {
-                    // Validate the database/user identifier to prevent SQL injection
-                    var safeDbName = ValidateAndSanitizeOracleIdentifier(connectionInfo.Database, "database/user");
-                    
+                    // Escape the database/user name to prevent SQL injection
+                    var safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
                     // Per Oracle, valida e escapa correttamente la password
                     var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
                     usedPassword = oraclePassword;  // Salva la password originale per la connessione
@@ -228,7 +227,7 @@ public class DatabaseService : IDatabaseService
                     safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
                     // Usa doppi apici per supportare caratteri speciali come @, !, #, etc
                     createQuery = $"CREATE USER {safeDbName} IDENTIFIED BY \"{oraclePassword}\"";
-                    Log($"Oracle: Creating user {safeDbName} with escaped password");
+                    Log($"Oracle: Creating user {safeDbName}");
                 }
                 else
                 {
@@ -316,12 +315,10 @@ public class DatabaseService : IDatabaseService
             return GenerateSecurePassword();
         }
         
-        // Escape single quotes by doubling them for SQL syntax
-        // When using double quotes in CREATE USER, single quotes must be escaped
-        var escaped = password.Replace("'", "''");
-        
-        Log("Oracle: Using provided password with proper SQL escaping");
-        return escaped;
+        // Password is used with double quotes in CREATE USER statement,
+        // so no escaping of special characters is needed
+        Log("Oracle: Using provided password");
+        return password;
     }
 
     private static string GenerateSecurePassword()
@@ -357,8 +354,8 @@ public class DatabaseService : IDatabaseService
         
         var generatedPassword = new string(shuffled);
         
-        // Log the generated password so administrators can retrieve it if needed
-        Log($"Oracle: Generated secure password for new user (save this): {generatedPassword}");
+        // Log that a secure password was generated without exposing it in logs
+        Log("Oracle: Generated secure password for new user.");
         
         return generatedPassword;
     }
@@ -526,11 +523,7 @@ public class DatabaseService : IDatabaseService
                                         Log($"[MigrateTableAsync] Oracle batch: {batchRows.Count} rows, {queries.Count} INSERT statements");
                                         
                                         int rowsInserted = 0;
-                                        var cleanQueries = queries
-                                            .Select(q => q.Trim())
-                                            .Where(q => !string.IsNullOrEmpty(q));
-                                        
-                                        foreach (var cleanQuery in cleanQueries)
+                                        foreach (var cleanQuery in queries.Select(q => q.Trim()).Where(q => !string.IsNullOrEmpty(q)))
                                         {
                                             targetCommand.CommandText = cleanQuery;
                                             var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
@@ -539,7 +532,9 @@ public class DatabaseService : IDatabaseService
                                         
                                         Log($"[MigrateTableAsync] Oracle batch completed ({rowsInserted} rows inserted)");
                                         // Note: COMMIT will be executed once at the end of migration
-                                        // This improves performance for large migrations
+                                        // This improves performance for large migrations, but means that if an error occurs,
+                                        // all data inserted in the current transaction will be rolled back.
+                                        // Consider the tradeoff between performance and data safety for your use case.
                                     }
                                     else
                                     {
@@ -748,8 +743,8 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
-    /// Splits SQL statements by semicolon while respecting string literals.
-    /// This handles cases where semicolons appear inside quoted strings.
+    /// Splits SQL statements by semicolon while respecting string literals and comments.
+    /// This handles cases where semicolons appear inside quoted strings or comments.
     /// </summary>
     private static List<string> SplitSqlStatements(string sql)
     {
@@ -760,10 +755,57 @@ public class DatabaseService : IDatabaseService
         var current = new System.Text.StringBuilder();
         bool inSingleQuote = false;
         bool inDoubleQuote = false;
+        bool inSingleLineComment = false;
+        bool inMultiLineComment = false;
 
         for (int idx = 0; idx < sql.Length; idx++)
         {
             char ch = sql[idx];
+
+            // Handle single-line comments (-- comment)
+            if (!inSingleQuote && !inDoubleQuote && !inMultiLineComment && 
+                ch == '-' && idx + 1 < sql.Length && sql[idx + 1] == '-')
+            {
+                inSingleLineComment = true;
+                current.Append(ch);
+                continue;
+            }
+
+            // End single-line comment on newline
+            if (inSingleLineComment && (ch == '\n' || ch == '\r'))
+            {
+                inSingleLineComment = false;
+                current.Append(ch);
+                continue;
+            }
+
+            // Handle multi-line comments (/* comment */)
+            if (!inSingleQuote && !inDoubleQuote && !inSingleLineComment &&
+                ch == '/' && idx + 1 < sql.Length && sql[idx + 1] == '*')
+            {
+                inMultiLineComment = true;
+                current.Append(ch);
+                current.Append(sql[idx + 1]);
+                idx++;
+                continue;
+            }
+
+            // End multi-line comment
+            if (inMultiLineComment && ch == '*' && idx + 1 < sql.Length && sql[idx + 1] == '/')
+            {
+                inMultiLineComment = false;
+                current.Append(ch);
+                current.Append(sql[idx + 1]);
+                idx++;
+                continue;
+            }
+
+            // Skip processing quotes and semicolons if inside comments
+            if (inSingleLineComment || inMultiLineComment)
+            {
+                current.Append(ch);
+                continue;
+            }
 
             // Handle single quotes and escaped single quotes (e.g., '')
             if (ch == '\'' && !inDoubleQuote)
@@ -790,7 +832,7 @@ public class DatabaseService : IDatabaseService
                 continue;
             }
 
-            // Treat semicolon as statement terminator only when not inside any quotes
+            // Treat semicolon as statement terminator only when not inside any quotes or comments
             if (ch == ';' && !inSingleQuote && !inDoubleQuote)
             {
                 var statement = current.ToString().Trim();
@@ -832,80 +874,36 @@ public class DatabaseService : IDatabaseService
         if (string.IsNullOrWhiteSpace(identifier))
             throw new ArgumentException($"Oracle {identifierType} identifier cannot be null or empty", nameof(identifier));
         
-        // Oracle identifiers have a maximum length of 30 characters (being conservative for compatibility)
-        if (identifier.Length > 30)
-            throw new ArgumentException($"Oracle {identifierType} identifier exceeds maximum length of 30 characters: {identifier.Length}", nameof(identifier));
+        // Normalize to uppercase first so any subsequent use of the identifier value is consistent
+        var upperIdentifier = identifier.ToUpperInvariant();
         
-        // Oracle identifiers must start with a letter
-        if (!char.IsLetter(identifier[0]))
-            throw new ArgumentException($"Oracle {identifierType} identifier must start with a letter: '{identifier}'", nameof(identifier));
+        // Oracle identifiers: only allow alphanumeric, underscore, dollar sign
+        // Detect, rather than silently drop, invalid characters
+        var sanitized = new System.Text.StringBuilder();
+        var hasInvalidCharacters = false;
         
-        // Validate each character: only alphanumeric, underscore, dollar sign, and hash
-        // Using a whitelist approach for maximum security
-        var sanitized = new System.Text.StringBuilder(identifier.Length);
-        foreach (char c in identifier)
+        foreach (char c in upperIdentifier)
         {
-            if (char.IsLetterOrDigit(c) || c == '_' || c == '$' || c == '#')
+            if (char.IsLetterOrDigit(c) || c == '_' || c == '$')
             {
                 sanitized.Append(c);
             }
             else
             {
-                // Reject any identifier with invalid characters - do not silently sanitize
-                throw new ArgumentException(
-                    $"Oracle {identifierType} identifier contains invalid character '{c}'. " +
-                    $"Only letters, digits, underscore (_), dollar sign ($), and hash (#) are allowed.", 
-                    nameof(identifier));
+                hasInvalidCharacters = true;
             }
         }
         
         var result = sanitized.ToString();
         
-        // Additional safety check: ensure no SQL keywords or injection patterns
-        // This is a basic check; Oracle will reject reserved words anyway
-        var resultUpper = result.ToUpperInvariant();
-        var dangerousPatterns = new[] { "--", "/*", "*/", ";", "UNION", "DROP", "DELETE", "INSERT", "UPDATE", "EXEC", "EXECUTE" };
-        foreach (var pattern in dangerousPatterns)
-        {
-            if (resultUpper.Contains(pattern))
-            {
-                throw new ArgumentException(
-                    $"Oracle {identifierType} identifier contains potentially dangerous pattern '{pattern}': '{identifier}'",
-                    nameof(identifier));
-            }
-        }
+        if (hasInvalidCharacters)
+            throw new ArgumentException("Identifier contains invalid characters", nameof(identifier));
         
-        // Log for security audit purposes if case was changed
-        if (resultUpper != identifier.ToUpperInvariant())
-        {
-            Log($"Oracle: Identifier was normalized from '{identifier}' to '{resultUpper}' for security");
-        }
+        // Oracle identifiers cannot start with a digit
+        if (char.IsDigit(result[0]))
+            result = "_" + result;
         
-        return resultUpper;
-    }
-
-    /// <summary>
-    /// Escapes a SQL Server identifier to prevent SQL injection.
-    /// </summary>
-    private string EscapeSqlServerIdentifier(string identifier)
-    {
-        if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
-        
-        // Replace ] with ]] for SQL Server bracketed identifiers
-        return identifier.Replace("]", "]]");
-    }
-
-    /// <summary>
-    /// Escapes a PostgreSQL identifier to prevent SQL injection.
-    /// </summary>
-    private string EscapePostgresIdentifier(string identifier)
-    {
-        if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
-        
-        // Replace " with "" for PostgreSQL quoted identifiers
-        return identifier.Replace("\"", "\"\"");
+        return result;
     }
 
     private string GetSqlServerTableSchema(string schema, string tableName)

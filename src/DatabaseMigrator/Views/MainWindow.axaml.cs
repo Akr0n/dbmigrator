@@ -97,11 +97,6 @@ namespace DatabaseMigrator.Views;
                 OnMigrationModeChanged(ModeDataOnly, new RoutedEventArgs());
             }
             
-            // Ensure initial migration mode is applied after handlers are wired
-            // This fixes the race condition where InitializeComponent() fires IsCheckedChanged
-            // before handlers are attached
-            OnMigrationModeChanged(ModeSchemaAndData, new RoutedEventArgs());
-            
             // Wire up window closing event
             Closing += OnWindowClosing;
         }
