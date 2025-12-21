@@ -269,7 +269,10 @@ namespace DatabaseMigrator.Views;
         {
             // Fallback in case all radio buttons are unchecked: enforce a safe default
             _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
-            ModeSchemaAndData.IsChecked = true;
+            if (ModeSchemaAndData.IsChecked != true)
+            {
+                ModeSchemaAndData.IsChecked = true;
+            }
             MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
             Log("[OnMigrationModeChanged] No mode checked; defaulting to SchemaAndData");
         }
