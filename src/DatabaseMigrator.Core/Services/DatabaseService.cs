@@ -741,6 +741,48 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
+    /// Escapes PostgreSQL identifiers by replacing double quotes with two double quotes.
+    /// PostgreSQL uses double quotes to delimit identifiers, and internal double quotes
+    /// must be escaped as "".
+    /// </summary>
+    /// <param name="identifier">The identifier to escape</param>
+    /// <returns>The escaped identifier</returns>
+    private string EscapePostgresIdentifier(string identifier)
+    {
+        if (string.IsNullOrEmpty(identifier))
+            return identifier;
+        
+        return identifier.Replace("\"", "\"\"");
+    }
+
+    /// <summary>
+    /// Escapes SQL Server identifiers by replacing closing square brackets with two closing brackets.
+    /// SQL Server uses square brackets to delimit identifiers, and internal closing brackets
+    /// must be escaped as ]].
+    /// </summary>
+    /// <param name="identifier">The identifier to escape</param>
+    /// <returns>The escaped identifier</returns>
+    private string EscapeSqlServerIdentifier(string identifier)
+    {
+        if (string.IsNullOrEmpty(identifier))
+            return identifier;
+        
+        return identifier.Replace("]", "]]");
+    }
+
+    /// <summary>
+    /// Escapes Oracle identifiers using the existing validation and sanitization logic.
+    /// This delegates to ValidateAndSanitizeOracleIdentifier for consistency with
+    /// the existing Oracle identifier handling.
+    /// </summary>
+    /// <param name="identifier">The identifier to escape</param>
+    /// <returns>The escaped and validated identifier</returns>
+    private string EscapeOracleIdentifier(string identifier)
+    {
+        return ValidateAndSanitizeOracleIdentifier(identifier, "database");
+    }
+
+    /// <summary>
     /// Splits SQL statements by semicolon while respecting string literals and comments.
     /// This handles cases where semicolons appear inside quoted strings or comments.
     /// </summary>
