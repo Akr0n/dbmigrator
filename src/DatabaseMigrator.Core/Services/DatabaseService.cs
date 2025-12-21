@@ -214,6 +214,7 @@ public class DatabaseService : IDatabaseService
 
                 string createQuery = "";
                 string? usedPassword = null;  // Traccia la password usata
+                string? safeDbName = null;  // Store escaped database name for reuse
                 
                 if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                 {
@@ -222,6 +223,8 @@ public class DatabaseService : IDatabaseService
                     // Per Oracle, valida e escapa correttamente la password
                     var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
                     usedPassword = oraclePassword;  // Salva la password originale per la connessione
+                    // Escape the database/user name to prevent SQL injection
+                    safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
                     // Usa doppi apici per supportare caratteri speciali come @, !, #, etc
                     createQuery = $"CREATE USER {safeDbName} IDENTIFIED BY \"{oraclePassword}\"";
                     Log($"Oracle: Creating user {safeDbName}");
@@ -231,10 +234,10 @@ public class DatabaseService : IDatabaseService
                     createQuery = connectionInfo.DatabaseType switch
                     {
                         DatabaseType.SqlServer => 
-                            $"CREATE DATABASE [{connectionInfo.Database}]",
+                            $"CREATE DATABASE [{EscapeSqlServerIdentifier(connectionInfo.Database)}]",
                         
                         DatabaseType.PostgreSQL => 
-                            $"CREATE DATABASE \"{connectionInfo.Database}\"",
+                            $"CREATE DATABASE \"{EscapePostgresIdentifier(connectionInfo.Database)}\"",
                         
                         _ => throw new NotSupportedException()
                     };
@@ -250,8 +253,14 @@ public class DatabaseService : IDatabaseService
                     // For Oracle, after creating the user, assign necessary privileges
                     if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                     {
-                        // Escape the database/user name to prevent SQL injection
-                        var safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
+                        // Validate and sanitize the database/user name to prevent SQL injection
+                        // Oracle GRANT statements do not support parameterized queries, so we must
+                        // validate that the identifier comes from a trusted source and follows strict rules
+                        var safeDbName = ValidateAndSanitizeOracleIdentifier(connectionInfo.Database, "database/user");
+                        
+                        // Log for security audit trail
+                        Log($"Oracle: Granting privileges to validated user identifier: {safeDbName}");
+                        
                         var grantQuery = $"GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE TO {safeDbName}";
                         command.CommandText = grantQuery;
                         await command.ExecuteNonQueryAsync();
@@ -629,8 +638,8 @@ public class DatabaseService : IDatabaseService
     {
         return dbType switch
         {
-            DatabaseType.SqlServer => $"[{schema}].[{tableName}]",
-            DatabaseType.PostgreSQL => $"\"{schema}\".\"{tableName}\"",
+            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
+            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(tableName)}\"",
             DatabaseType.Oracle => tableName,  // Per Oracle, usa solo il nome tabella (senza schema)
             _ => throw new NotSupportedException()
         };
@@ -649,8 +658,8 @@ public class DatabaseService : IDatabaseService
             string colName = columns[i].ColumnName;
             columnNames.Add(dbType switch
             {
-                DatabaseType.SqlServer => $"[{colName}]",
-                DatabaseType.PostgreSQL => $"\"{colName}\"",
+                DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(colName)}]",
+                DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(colName)}\"",
                 DatabaseType.Oracle => colName,
                 _ => colName
             });
@@ -845,13 +854,25 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
-    /// Escapes an Oracle identifier to prevent SQL injection.
-    /// Oracle identifiers can only contain alphanumeric characters, underscores, and dollar signs.
+    /// Validates and sanitizes an Oracle identifier to prevent SQL injection.
+    /// Since Oracle GRANT statements do not support parameterized queries, this method
+    /// enforces strict validation rules to ensure the identifier is safe for use in
+    /// dynamically constructed SQL statements.
+    /// 
+    /// Oracle identifier rules:
+    /// - Must start with a letter (A-Z, a-z)
+    /// - Can contain only letters, digits, underscore (_), dollar sign ($), and hash (#)
+    /// - Maximum length is 30 characters (Oracle 12.1 and earlier) or 128 characters (Oracle 12.2+)
+    /// - Reserved words are not validated here as they would cause Oracle errors
     /// </summary>
-    private string EscapeOracleIdentifier(string identifier)
+    /// <param name="identifier">The identifier to validate and sanitize</param>
+    /// <param name="identifierType">Description of what the identifier represents (for error messages)</param>
+    /// <returns>The validated and sanitized identifier in uppercase</returns>
+    /// <exception cref="ArgumentException">Thrown if the identifier fails validation</exception>
+    private string ValidateAndSanitizeOracleIdentifier(string identifier, string identifierType)
     {
         if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+            throw new ArgumentException($"Oracle {identifierType} identifier cannot be null or empty", nameof(identifier));
         
         // Normalize to uppercase first so any subsequent use of the identifier value is consistent
         var upperIdentifier = identifier.ToUpperInvariant();
@@ -874,8 +895,6 @@ public class DatabaseService : IDatabaseService
         }
         
         var result = sanitized.ToString();
-        if (string.IsNullOrEmpty(result))
-            throw new ArgumentException("Identifier contains no valid characters", nameof(identifier));
         
         if (hasInvalidCharacters)
             throw new ArgumentException("Identifier contains invalid characters", nameof(identifier));
