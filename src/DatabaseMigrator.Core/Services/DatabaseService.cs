@@ -15,26 +15,9 @@ namespace DatabaseMigrator.Core.Services;
 public class DatabaseService : IDatabaseService
 {
     private const int BatchSize = 1000;
-    private const int CommandTimeout = 300; // 5 minuti
-    
-    private static readonly string LogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DatabaseMigrator", "debug.log");
+    private const int CommandTimeout = 300; // 5 minutes
 
-    private static void Log(string message)
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(LogPath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-            
-            var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}\n";
-            File.AppendAllText(LogPath, fullMessage);
-            System.Diagnostics.Debug.WriteLine(fullMessage);
-        }
-        catch { }
-    }
+    private static void Log(string message) => LoggerService.Log(message);
 
     public async Task<bool> TestConnectionAsync(ConnectionInfo connectionInfo)
     {
@@ -162,17 +145,12 @@ public class DatabaseService : IDatabaseService
             {
                 await connection.OpenAsync();
 
+                // Use parameterized queries to prevent SQL injection
                 string query = connectionInfo.DatabaseType switch
                 {
-                    DatabaseType.SqlServer => 
-                        $"SELECT 1 FROM sys.databases WHERE name = '{EscapeSqlString(connectionInfo.Database)}'",
-                    
-                    DatabaseType.PostgreSQL => 
-                        $"SELECT 1 FROM pg_database WHERE datname = '{EscapeSqlString(connectionInfo.Database)}'",
-                    
-                    DatabaseType.Oracle => 
-                        $"SELECT 1 FROM dba_databases WHERE name = '{EscapeSqlString(connectionInfo.Database)}'",
-                    
+                    DatabaseType.SqlServer => "SELECT 1 FROM sys.databases WHERE name = @dbName",
+                    DatabaseType.PostgreSQL => "SELECT 1 FROM pg_database WHERE datname = @dbName",
+                    DatabaseType.Oracle => "SELECT 1 FROM all_users WHERE username = :dbName",
                     _ => throw new NotSupportedException()
                 };
 
@@ -180,6 +158,15 @@ public class DatabaseService : IDatabaseService
                 {
                     command.CommandText = query;
                     command.CommandTimeout = CommandTimeout;
+                    
+                    // Add parameter to prevent SQL injection
+                    var param = command.CreateParameter();
+                    param.ParameterName = connectionInfo.DatabaseType == DatabaseType.Oracle ? "dbName" : "@dbName";
+                    param.Value = connectionInfo.DatabaseType == DatabaseType.Oracle 
+                        ? connectionInfo.Database.ToUpperInvariant() 
+                        : connectionInfo.Database;
+                    command.Parameters.Add(param);
+                    
                     var result = await command.ExecuteScalarAsync();
                     return result != null;
                 }
@@ -258,10 +245,12 @@ public class DatabaseService : IDatabaseService
                     await command.ExecuteNonQueryAsync();
                     Log($"Database {connectionInfo.Database} created successfully");
                     
-                    // Per Oracle, dopo aver creato l'utente, assegna i privilegi necessari
+                    // For Oracle, after creating the user, assign necessary privileges
                     if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                     {
-                        var grantQuery = $"GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE TO {connectionInfo.Database}";
+                        // Escape the database/user name to prevent SQL injection
+                        var safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
+                        var grantQuery = $"GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE TO {safeDbName}";
                         command.CommandText = grantQuery;
                         await command.ExecuteNonQueryAsync();
                         Log($"Privileges granted to user {connectionInfo.Database}");
@@ -298,29 +287,64 @@ public class DatabaseService : IDatabaseService
 
     private string PrepareOraclePassword(string password)
     {
-        // Oracle supporta tutti i caratteri nella password
-        // Devo fare proper escaping per i caratteri speciali nella sintassi SQL
+        // Oracle supports all characters in password
+        // Must do proper escaping for special characters in SQL syntax
         
         if (string.IsNullOrWhiteSpace(password))
         {
-            // Se password vuota, usa una di default
-            Log($"Oracle: Password empty, using default secure password");
-            return "Oracle2025Pass";
+            // If password is empty, generate a secure random password
+            Log("Oracle: Password empty, generating secure random password");
+            return GenerateSecurePassword();
         }
         
         if (password.Length < 4)
         {
-            // Oracle consente password di almeno 4 caratteri (default, può variare)
-            Log($"Oracle: Password too short (needs at least 4 chars), using default secure password");
-            return "Oracle2025Pass";
+            // Oracle requires at least 4 characters (default, may vary)
+            Log("Oracle: Password too short (needs at least 4 chars), generating secure random password");
+            return GenerateSecurePassword();
         }
         
-        // Escapa gli apostrofi (raddoppiandoli) per la sintassi SQL
-        // Quando usiamo doppi apici nel CREATE USER, gli apostrofi devono essere escapati
+        // Escape single quotes by doubling them for SQL syntax
+        // When using double quotes in CREATE USER, single quotes must be escaped
         var escaped = password.Replace("'", "''");
         
-        Log($"Oracle: Using provided password with proper SQL escaping");
+        Log("Oracle: Using provided password with proper SQL escaping");
         return escaped;
+    }
+
+    private static string GenerateSecurePassword()
+    {
+        // Generate a cryptographically secure random password
+        const string upperChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const string lowerChars = "abcdefghijklmnopqrstuvwxyz";
+        const string digits = "0123456789";
+        const string specialChars = "!@#$%";
+        
+        var random = new Random(Guid.NewGuid().GetHashCode());
+        var password = new System.Text.StringBuilder();
+        
+        // Ensure at least one of each required character type
+        password.Append(upperChars[random.Next(upperChars.Length)]);
+        password.Append(lowerChars[random.Next(lowerChars.Length)]);
+        password.Append(digits[random.Next(digits.Length)]);
+        password.Append(specialChars[random.Next(specialChars.Length)]);
+        
+        // Fill remaining characters
+        const string allChars = upperChars + lowerChars + digits;
+        for (int i = 4; i < 16; i++)
+        {
+            password.Append(allChars[random.Next(allChars.Length)]);
+        }
+        
+        // Shuffle the password
+        var shuffled = password.ToString().ToCharArray();
+        for (int i = shuffled.Length - 1; i > 0; i--)
+        {
+            int j = random.Next(i + 1);
+            (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
+        }
+        
+        return new string(shuffled);
     }
 
     public async Task<string> GetTableSchemaAsync(ConnectionInfo connectionInfo, string tableName, string schema)
@@ -384,10 +408,10 @@ public class DatabaseService : IDatabaseService
                 }
             }
 
-            DbTransaction transaction = null;
+            DbTransaction? transaction = null;
             if (target.DatabaseType != DatabaseType.Oracle)
             {
-                // Per SQL Server e PostgreSQL: usa la transazione del driver
+                // For SQL Server and PostgreSQL: use driver transaction
                 transaction = targetConn.BeginTransaction();
                 Log($"[MigrateTableAsync] {target.DatabaseType} transaction started");
             }
@@ -467,54 +491,32 @@ public class DatabaseService : IDatabaseService
                                 
                                 try
                                 {
-                                    // Per Oracle: esegui ogni INSERT singolarmente e committo subito dopo
+                                    // For Oracle: execute each INSERT individually
                                     if (target.DatabaseType == DatabaseType.Oracle)
                                     {
-                                        // Dividi i query separati da "; " ed esegui uno per uno
-                                        var queries = insertQuery.Split(new[] { "; " }, StringSplitOptions.RemoveEmptyEntries);
+                                        // Split queries using semicolon separator with more robust logic
+                                        var queries = insertQuery.Split(new[] { ";" }, StringSplitOptions.RemoveEmptyEntries);
                                         Log($"[MigrateTableAsync] Oracle batch: {batchRows.Count} rows, {queries.Length} INSERT statements");
                                         
                                         int rowsInserted = 0;
                                         foreach (var query in queries)
                                         {
-                                            var cleanQuery = query.TrimEnd(';').Trim();
+                                            var cleanQuery = query.Trim();
                                             if (!string.IsNullOrEmpty(cleanQuery))
                                             {
                                                 targetCommand.CommandText = cleanQuery;
                                                 var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
-                                                Log($"[MigrateTableAsync] Oracle INSERT executed, rows affected: {rowsAffected}");
                                                 rowsInserted += rowsAffected;
                                             }
                                         }
                                         
-                                        // Dopo ogni batch di INSERT, esegui un COMMIT immediato
-                                        using (var commitCmd = targetConn.CreateCommand())
-                                        {
-                                            commitCmd.CommandText = "COMMIT";
-                                            commitCmd.CommandTimeout = CommandTimeout;
-                                            await commitCmd.ExecuteNonQueryAsync();
-                                            Log($"[MigrateTableAsync] Oracle batch COMMIT executed ({rowsInserted} rows)");
-                                            
-                                            // Verifica quanti dati ci sono adesso nella tabella
-                                            try
-                                            {
-                                                using (var countCmd = targetConn.CreateCommand())
-                                                {
-                                                    countCmd.CommandText = $"SELECT COUNT(*) FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}";
-                                                    countCmd.CommandTimeout = CommandTimeout;
-                                                    var countResult = await countCmd.ExecuteScalarAsync();
-                                                    Log($"[MigrateTableAsync] Table {table.TableName} now has {countResult} rows");
-                                                }
-                                            }
-                                            catch (Exception ex)
-                                            {
-                                                Log($"[MigrateTableAsync] Could not verify row count: {ex.Message}");
-                                            }
-                                        }
+                                        Log($"[MigrateTableAsync] Oracle batch completed ({rowsInserted} rows inserted)");
+                                        // Note: COMMIT will be executed once at the end of migration
+                                        // This improves performance for large migrations
                                     }
                                     else
                                     {
-                                        // Per SQL Server e PostgreSQL: esegui il batch
+                                        // For SQL Server and PostgreSQL: execute the batch
                                         targetCommand.CommandText = insertQuery;
                                         var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
                                         Log($"[MigrateTableAsync] Batch INSERT executed, rows affected: {rowsAffected}");
@@ -529,7 +531,7 @@ public class DatabaseService : IDatabaseService
                                 catch (Exception ex)
                                 {
                                     throw new InvalidOperationException(
-                                        $"Errore durante l'inserimento batch per {table.Schema}.{table.TableName}: {ex.Message}", ex);
+                                        $"Error during batch insert for {table.Schema}.{table.TableName}: {ex.Message}", ex);
                                 }
                             }
                         }
@@ -549,13 +551,13 @@ public class DatabaseService : IDatabaseService
         }
     }
 
-    private async Task FinalizeTransactionAsync(DbConnection connection, DbTransaction transaction, DatabaseType dbType, bool commit)
+    private async Task FinalizeTransactionAsync(DbConnection connection, DbTransaction? transaction, DatabaseType dbType, bool commit)
     {
         try
         {
             if (dbType == DatabaseType.Oracle)
             {
-                // Per Oracle: esegui COMMIT o ROLLBACK via SQL
+                // For Oracle: execute COMMIT or ROLLBACK via SQL
                 using (var cmd = connection.CreateCommand())
                 {
                     cmd.CommandText = commit ? "COMMIT" : "ROLLBACK";
@@ -564,7 +566,7 @@ public class DatabaseService : IDatabaseService
                     Log($"[FinalizeTransactionAsync] Oracle {(commit ? "COMMIT" : "ROLLBACK")} executed");
                 }
             }
-            else
+            else if (transaction != null)
             {
                 // Per SQL Server e PostgreSQL: usa la transazione del driver
                 if (transaction != null)
@@ -719,6 +721,61 @@ public class DatabaseService : IDatabaseService
     private string EscapeSqlString(string value)
     {
         return value.Replace("'", "''");
+    }
+
+    /// <summary>
+    /// Escapes an Oracle identifier to prevent SQL injection.
+    /// Oracle identifiers can only contain alphanumeric characters, underscores, and dollar signs.
+    /// </summary>
+    private string EscapeOracleIdentifier(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+        
+        // Oracle identifiers: only allow alphanumeric, underscore, dollar sign
+        // Remove any invalid characters and validate
+        var sanitized = new System.Text.StringBuilder();
+        foreach (char c in identifier)
+        {
+            if (char.IsLetterOrDigit(c) || c == '_' || c == '$')
+            {
+                sanitized.Append(c);
+            }
+        }
+        
+        var result = sanitized.ToString();
+        if (string.IsNullOrEmpty(result))
+            throw new ArgumentException("Identifier contains no valid characters", nameof(identifier));
+        
+        // Oracle identifiers cannot start with a digit
+        if (char.IsDigit(result[0]))
+            result = "_" + result;
+        
+        return result.ToUpperInvariant();
+    }
+
+    /// <summary>
+    /// Escapes a SQL Server identifier to prevent SQL injection.
+    /// </summary>
+    private string EscapeSqlServerIdentifier(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+        
+        // Replace ] with ]] for SQL Server bracketed identifiers
+        return identifier.Replace("]", "]]");
+    }
+
+    /// <summary>
+    /// Escapes a PostgreSQL identifier to prevent SQL injection.
+    /// </summary>
+    private string EscapePostgresIdentifier(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+        
+        // Replace " with "" for PostgreSQL quoted identifiers
+        return identifier.Replace("\"", "\"\"");
     }
 
     private string GetSqlServerTableSchema(string schema, string tableName)

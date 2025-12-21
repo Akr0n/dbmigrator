@@ -46,11 +46,18 @@ public class ConnectionInfo
     private string BuildOracleConnectionString()
     {
         // Oracle connection string using TNS format
-        // For SYS user, we need to add DBA Privilege=SYSDBA
         // For XE: Server=localhost, Port=1521, Database=XE (the SID)
         // Escape password if it contains special characters like ;
         string escapedPassword = EscapeOraclePassword(Password);
-        var cs = $"Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={Server})(PORT={Port}))(CONNECT_DATA=(SERVICE_NAME={Database})));User Id={Username};Password={escapedPassword};DBA Privilege=SYSDBA;";
+        var cs = $"Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={Server})(PORT={Port}))(CONNECT_DATA=(SERVICE_NAME={Database})));User Id={Username};Password={escapedPassword};";
+        
+        // Only add SYSDBA privilege if connecting as SYS user
+        // SYSDBA provides full database control and should not be used for regular operations
+        if (string.Equals(Username, "SYS", StringComparison.OrdinalIgnoreCase))
+        {
+            cs += "DBA Privilege=SYSDBA;";
+        }
+        
         System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] Oracle: {cs}");
         return cs;
     }

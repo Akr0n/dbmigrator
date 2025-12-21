@@ -13,31 +13,14 @@ using DatabaseMigrator.Core.Models;
 namespace DatabaseMigrator.Core.Services;
 
 /// <summary>
-/// Servizio per migrazione dello schema (DDL) tra database di tipo diverso.
-/// Gestisce il mapping dei tipi dati cross-database.
+/// Service for schema migration (DDL) between different database types.
+/// Handles cross-database data type mapping.
 /// </summary>
 public class SchemaMigrationService
 {
     private const int CommandTimeout = 300;
 
-    private static readonly string LogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DatabaseMigrator", "debug.log");
-
-    private static void Log(string message)
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(LogPath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-            
-            var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}\n";
-            File.AppendAllText(LogPath, fullMessage);
-            System.Diagnostics.Debug.WriteLine(fullMessage);
-        }
-        catch { }
-    }
+    private static void Log(string message) => LoggerService.Log(message);
 
     /// <summary>
     /// Crea lo schema nel database target basato sul database sorgente.
@@ -137,16 +120,17 @@ public class SchemaMigrationService
     {
         try
         {
+            // Use parameterized queries to prevent SQL injection
             string query = dbType switch
             {
                 DatabaseType.SqlServer => 
-                    $"SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{tableName}'",
+                    "SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = @schema AND TABLE_NAME = @tableName",
                 DatabaseType.PostgreSQL => 
-                    $"SELECT 1 FROM information_schema.tables WHERE table_schema = '{schema}' AND table_name = '{tableName}'",
+                    "SELECT 1 FROM information_schema.tables WHERE table_schema = @schema AND table_name = @tableName",
                 DatabaseType.Oracle => 
-                    // Per Oracle: cerca solo per nome tabella (indipendente dallo schema sorgente)
-                    // perché le tabelle migrare vanno nello schema dell'utente connesso
-                    $"SELECT 1 FROM all_tables WHERE table_name = '{tableName.ToUpper()}'",
+                    // For Oracle: search only by table name (independent of source schema)
+                    // because migrated tables go into the connected user's schema
+                    "SELECT 1 FROM all_tables WHERE table_name = :tableName",
                 _ => throw new NotSupportedException()
             };
 
@@ -154,6 +138,21 @@ public class SchemaMigrationService
             {
                 command.CommandText = query;
                 command.CommandTimeout = CommandTimeout;
+                
+                // Add parameters to prevent SQL injection
+                if (dbType != DatabaseType.Oracle)
+                {
+                    var schemaParam = command.CreateParameter();
+                    schemaParam.ParameterName = "@schema";
+                    schemaParam.Value = schema;
+                    command.Parameters.Add(schemaParam);
+                }
+                
+                var tableParam = command.CreateParameter();
+                tableParam.ParameterName = dbType == DatabaseType.Oracle ? "tableName" : "@tableName";
+                tableParam.Value = dbType == DatabaseType.Oracle ? tableName.ToUpperInvariant() : tableName;
+                command.Parameters.Add(tableParam);
+                
                 var result = await command.ExecuteScalarAsync();
                 return result != null;
             }
@@ -265,7 +264,7 @@ public class SchemaMigrationService
             sb.AppendLine();
         }
         
-        // Oracle non ama il semicolon alla fine del CREATE TABLE in questo contesto
+        // Oracle doesn't like semicolon at the end of CREATE TABLE in this context
         if (targetDbType == DatabaseType.Oracle)
             sb.AppendLine(")");
         else
@@ -280,8 +279,10 @@ public class SchemaMigrationService
         string dataType = MapDataType(column.SourceDbType, dbType, column.DataType, 
             column.MaxLength, column.NumericPrecision, column.NumericScale);
         
-        // Per Oracle: non specificare NULL/NOT NULL (è implicito)
-        // Per altri DB: specifica sempre
+        // Oracle has different NULL/NOT NULL semantics:
+        // - Columns are nullable by default in Oracle
+        // - Only specify NOT NULL explicitly when needed
+        // For other databases: always specify NULL/NOT NULL explicitly
         string nullable = "";
         if (dbType != DatabaseType.Oracle)
         {
@@ -289,25 +290,33 @@ public class SchemaMigrationService
         }
         else if (!column.IsNullable)
         {
-            nullable = " NOT NULL";  // Oracle: specifica solo se NOT NULL
+            nullable = " NOT NULL";  // Oracle: only specify if NOT NULL
         }
         
-        // Per Oracle: ignora i DEFAULT che sono funzioni SQL Server
+        // For Oracle: ignore DEFAULT values that are SQL Server functions
         string defaultValue = "";
         if (dbType != DatabaseType.Oracle && !string.IsNullOrEmpty(column.DefaultValue))
         {
-            // Per SQL Server e PostgreSQL, mantieni il default
+            // For SQL Server and PostgreSQL, keep the default
             defaultValue = $" DEFAULT {column.DefaultValue}";
         }
         else if (dbType == DatabaseType.Oracle && !string.IsNullOrEmpty(column.DefaultValue))
         {
-            // Per Oracle: accetta solo literal values, non funzioni come (getutcdate())
+            // For Oracle: accept only literal values, not functions like (getutcdate())
             var defaultVal = column.DefaultValue.Trim();
-            if (!defaultVal.Contains("(") && !defaultVal.Contains(")"))
+            
+            // More robust function detection:
+            // - Contains parentheses (function calls)
+            // - Contains common SQL Server function names
+            var sqlServerFunctions = new[] { "getdate", "getutcdate", "newid", "sysdatetime", "sysutcdatetime" };
+            bool isFunction = defaultVal.Contains("(") || defaultVal.Contains(")") ||
+                             sqlServerFunctions.Any(f => defaultVal.ToLowerInvariant().Contains(f));
+            
+            if (!isFunction)
             {
                 defaultValue = $" DEFAULT {defaultVal}";
             }
-            // Se contiene parentesi (è una funzione), ignoralo
+            // If it's a function, skip it - Oracle doesn't support SQL Server functions
         }
 
         return $"{colName} {dataType}{nullable}{defaultValue}";

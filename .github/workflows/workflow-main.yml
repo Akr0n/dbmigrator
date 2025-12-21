@@ -40,25 +40,25 @@ jobs:
             Write-Output "❌ The last commit is not a merge from develop. Stopping the workflow."
             "MERGE_FROM_DEVELOP=false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
             exit 0
-          }
-
-          # parent SHAs (i due parent dopo lo SHA del merge commit)
-          $parent1 = $parts[1]
-          $parent2 = $parts[2]
-
-          # assicuriamoci di avere il riferimento origin/develop aggiornato
-          git fetch origin develop
-
-          $developSHA = (git rev-parse origin/develop).Trim()
-          Write-Output "⚠️ origin/develop SHA: $developSHA"
-
-          if ($parent1 -eq $developSHA -or $parent2 -eq $developSHA) {
-            Write-Output "✅ The last commit is a merge from develop."
-            "MERGE_FROM_DEVELOP=true" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           } else {
-            Write-Output "❌ The last commit does not contain develop as a parent. Stopping the workflow."
-            "MERGE_FROM_DEVELOP=false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            exit 0
+            # parent SHAs (the two parents after the merge commit SHA)
+            $parent1 = $parts[1]
+            $parent2 = $parts[2]
+
+            # ensure we have the updated origin/develop reference
+            git fetch origin develop
+
+            $developSHA = (git rev-parse origin/develop).Trim()
+            Write-Output "⚠️ origin/develop SHA: $developSHA"
+
+            if ($parent1 -eq $developSHA -or $parent2 -eq $developSHA) {
+              Write-Output "✅ The last commit is a merge from develop."
+              "MERGE_FROM_DEVELOP=true" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            } else {
+              Write-Output "❌ The last commit does not contain develop as a parent. Stopping the workflow."
+              "MERGE_FROM_DEVELOP=false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+              exit 0
+            }
           }
 
       - name: Set up .NET 8.0
@@ -119,8 +119,8 @@ jobs:
 
       - name: Create and push tag
         run: |
-          git config --global user.email "federico.bot@gmail.com"
-          git config --global user.name "Akr0n"
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
           git tag ${{ env.release_tag }}
           git push origin ${{ env.release_tag }}
 

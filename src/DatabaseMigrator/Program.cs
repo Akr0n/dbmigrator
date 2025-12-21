@@ -1,6 +1,7 @@
 using Avalonia;
 using System;
 using System.IO;
+using DatabaseMigrator.Core.Services;
 
 namespace DatabaseMigrator;
 
@@ -15,19 +16,15 @@ class Program
         }
         catch (Exception ex)
         {
-            // Scrivi errore in file di log
-            string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), 
-                "DatabaseMigrator");
-            string logPath = Path.Combine(logDir, "error.log");
+            // Log error using centralized logger
+            LoggerService.LogError("FATAL ERROR in Main", ex);
             
-            if (!Directory.Exists(logDir))
-                Directory.CreateDirectory(logDir);
-            
-            File.AppendAllText(logPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {ex}\n\n");
-            
-            // Mostra errore in console
+            // Show error in console for debugging
             Console.WriteLine($"FATAL ERROR: {ex}");
-            throw;
+            
+            // Exit gracefully with error code instead of re-throwing
+            // This prevents ugly crash dialogs while still indicating an error occurred
+            Environment.Exit(1);
         }
     }
 

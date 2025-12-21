@@ -204,9 +204,38 @@
                     <TabItem.Header>
                         <TextBlock Text="🚀 Migrazione" FontSize="13" Foreground="White"/>
                     </TabItem.Header>
-                    <Grid RowDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="20" Background="#1a1a1a">
+                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto" Margin="20" Background="#1a1a1a">
+                        <!-- Migration Mode Selection -->
+                        <Border Grid.Row="0" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#ff9800" BorderThickness="2" Margin="0,0,0,15">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="⚙️ Modalità Migrazione:" FontWeight="Bold" FontSize="14" Foreground="#ffb74d"/>
+                                <StackPanel Orientation="Horizontal" Spacing="20">
+                                    <RadioButton x:Name="ModeSchemaAndData" GroupName="MigrationMode" IsChecked="True" Foreground="#e0e0e0" FontSize="12">
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <TextBlock Text="📦" FontSize="14"/>
+                                            <TextBlock Text="Schema + Dati" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </RadioButton>
+                                    <RadioButton x:Name="ModeSchemaOnly" GroupName="MigrationMode" Foreground="#e0e0e0" FontSize="12">
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <TextBlock Text="🏗️" FontSize="14"/>
+                                            <TextBlock Text="Solo Schema" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </RadioButton>
+                                    <RadioButton x:Name="ModeDataOnly" GroupName="MigrationMode" Foreground="#e0e0e0" FontSize="12">
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <TextBlock Text="📊" FontSize="14"/>
+                                            <TextBlock Text="Solo Dati" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </RadioButton>
+                                </StackPanel>
+                                <TextBlock x:Name="MigrationModeDescription" Foreground="#9e9e9e" FontSize="11" TextWrapping="Wrap" 
+                                           Text="Crea le tabelle nel database di destinazione e copia tutti i dati."/>
+                            </StackPanel>
+                        </Border>
+
                         <!-- Selected Tables Summary -->
-                        <StackPanel Grid.Row="0" Spacing="8" Margin="0,0,0,15">
+                        <StackPanel Grid.Row="1" Spacing="8" Margin="0,0,0,15">
                             <TextBlock Text="📊 Tabelle da migrare:" FontWeight="Bold" FontSize="13" Foreground="#64b5f6"/>
                             <TextBlock Text="{Binding SelectedTablesCount, StringFormat='Tabelle selezionate: {0}'}" Foreground="#e0e0e0" FontSize="12"/>
                             <TextBlock Text="{Binding TotalRowsToMigrate, StringFormat='Righe totali: {0}'}" Foreground="#e0e0e0" FontSize="12"/>
@@ -222,7 +251,7 @@
                             </ListBox>
                         </StackPanel>
                         
-                        <Border Grid.Row="1" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="1" Margin="0,15,0,0">
+                        <Border Grid.Row="2" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="1" Margin="0,15,0,0">
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
                                 <StackPanel Spacing="10">
                                     <TextBlock Text="📝 Status:" FontWeight="Bold" FontSize="13" Foreground="#64b5f6"/>
@@ -231,18 +260,18 @@
                             </ScrollViewer>
                         </Border>
                         
-                        <StackPanel Grid.Row="2" Spacing="8" Margin="0,15,0,0">
+                        <StackPanel Grid.Row="3" Spacing="8" Margin="0,15,0,0">
                             <ProgressBar x:Name="ProgressBar" Value="0" Maximum="100" Height="30" Foreground="#43a047" Background="#3a3a3a"/>
                             <TextBlock x:Name="ProgressTextBlock" TextAlignment="Center" FontWeight="Bold" Foreground="#43a047" FontSize="12" Text="0%"/>
                         </StackPanel>
                         
-                        <Button x:Name="StartMigrationButton" Grid.Row="3" Background="#1976d2" Foreground="White" Padding="12" Height="50" FontSize="16" FontWeight="Bold" Margin="15,15,0,0" CornerRadius="4" IsEnabled="False">
+                        <Button x:Name="StartMigrationButton" Grid.Row="4" Background="#1976d2" Foreground="White" Padding="12" Height="50" FontSize="16" FontWeight="Bold" Margin="15,15,0,0" CornerRadius="4" IsEnabled="False">
                             🚀 Avvia Migrazione
                         </Button>
                         
-                        <TextBlock Grid.Row="4" Foreground="#9e9e9e" TextWrapping="Wrap" FontSize="11" Margin="0,15,0,0" Text="ℹ️ La migrazione copierà lo schema e i dati."/>
+                        <TextBlock Grid.Row="5" Foreground="#9e9e9e" TextWrapping="Wrap" FontSize="11" Margin="0,15,0,0" Text="ℹ️ Seleziona le tabelle nel tab 'Selezione Tabelle' e scegli la modalità di migrazione."/>
                         
-                        <Border Grid.Row="5" Background="#1b5e20" CornerRadius="5" Padding="12" BorderBrush="#43a047" BorderThickness="1" Margin="0,15,0,0">
+                        <Border Grid.Row="6" Background="#1b5e20" CornerRadius="5" Padding="12" BorderBrush="#43a047" BorderThickness="1" Margin="0,15,0,0">
                             <TextBlock x:Name="ErrorTextBlock" Foreground="#a5d6a7" TextWrapping="Wrap" FontSize="11" Text=""/>
                         </Border>
                     </Grid>

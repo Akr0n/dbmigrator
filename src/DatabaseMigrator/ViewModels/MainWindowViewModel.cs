@@ -17,25 +17,8 @@ public class MainWindowViewModel : ViewModelBase
 {
     private readonly IDatabaseService _databaseService;
     private readonly SchemaMigrationService _schemaMigrationService;
-    
-    private static readonly string LogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DatabaseMigrator", "debug.log");
 
-    private static void Log(string message)
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(LogPath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-            
-            var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}";
-            File.AppendAllText(LogPath, fullMessage + "\n");
-            System.Diagnostics.Debug.WriteLine(fullMessage);
-        }
-        catch { }
-    }
+    private static void Log(string message) => LoggerService.Log(message);
 
     private ConnectionViewModel? _sourceConnection;
     private ConnectionViewModel? _targetConnection;
@@ -49,6 +32,7 @@ public class MainWindowViewModel : ViewModelBase
     private int _selectedTablesCount;
     private long _totalRowsToMigrate;
     private bool _canStartMigration;
+    private MigrationMode _selectedMigrationMode = MigrationMode.SchemaAndData;
 
     public ConnectionViewModel? SourceConnection
     {
@@ -120,6 +104,12 @@ public class MainWindowViewModel : ViewModelBase
     {
         get => _canStartMigration;
         set => this.RaiseAndSetIfChanged(ref _canStartMigration, value);
+    }
+
+    public MigrationMode SelectedMigrationMode
+    {
+        get => _selectedMigrationMode;
+        set => this.RaiseAndSetIfChanged(ref _selectedMigrationMode, value);
     }
 
     public IObservable<bool> CanStartMigrationObservable { get; }
@@ -298,51 +288,73 @@ public class MainWindowViewModel : ViewModelBase
 
             ProgressPercentage = 10;
 
-            // Migra lo schema
-            Log($"[StartMigrationAsync] Starting schema migration...");
-            StatusMessage = "Migrazione schema...";
-            await _schemaMigrationService.MigrateSchemaAsync(
-                SourceConnection.ConnectionInfo,
-                TargetConnection.ConnectionInfo,
-                tablesToMigrate);
-            Log($"[StartMigrationAsync] Schema migration completed");
+            // Migrate schema if needed
+            if (SelectedMigrationMode == MigrationMode.SchemaAndData || SelectedMigrationMode == MigrationMode.SchemaOnly)
+            {
+                Log($"[StartMigrationAsync] Starting schema migration (Mode: {SelectedMigrationMode})...");
+                StatusMessage = "Migrazione schema...";
+                await _schemaMigrationService.MigrateSchemaAsync(
+                    SourceConnection.ConnectionInfo,
+                    TargetConnection.ConnectionInfo,
+                    tablesToMigrate);
+                Log($"[StartMigrationAsync] Schema migration completed");
+            }
+            else
+            {
+                Log($"[StartMigrationAsync] Skipping schema migration (Mode: {SelectedMigrationMode})");
+            }
 
             ProgressPercentage = 50;
 
-            // Migra i dati
-            Log($"[StartMigrationAsync] Starting data migration...");
-            StatusMessage = "Migrazione dati...";
-            int tablesProcessed = 0;
-
-            foreach (var table in tablesToMigrate)
+            // Migrate data if needed
+            if (SelectedMigrationMode == MigrationMode.SchemaAndData || SelectedMigrationMode == MigrationMode.DataOnly)
             {
-                Log($"[StartMigrationAsync] Migrating table {table.Schema}.{table.TableName}...");
-                StatusMessage = $"Migrazione dati: {table.Schema}.{table.TableName}...";
-                
-                var progress = new Progress<int>(percent =>
+                Log($"[StartMigrationAsync] Starting data migration (Mode: {SelectedMigrationMode})...");
+                StatusMessage = "Migrazione dati...";
+                int tablesProcessed = 0;
+
+                foreach (var table in tablesToMigrate)
                 {
-                    // Ignoriamo i report interno e usiamo il calcolo basato su tablesProcessed
-                    // Il 50% proviene dalla schema migration, il restante 50% dalla data migration
-                });
+                    Log($"[StartMigrationAsync] Migrating table {table.Schema}.{table.TableName}...");
+                    StatusMessage = $"Migrazione dati: {table.Schema}.{table.TableName}...";
+                    
+                    var progress = new Progress<int>(percent =>
+                    {
+                        // Progress is calculated based on tablesProcessed
+                    });
 
-                await _databaseService.MigrateTableAsync(
-                    SourceConnection.ConnectionInfo,
-                    TargetConnection.ConnectionInfo,
-                    table,
-                    progress);
+                    await _databaseService.MigrateTableAsync(
+                        SourceConnection.ConnectionInfo,
+                        TargetConnection.ConnectionInfo,
+                        table,
+                        progress);
 
-                Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} migration completed");
-                tablesProcessed++;
-                int progressPercent = 50 + (tablesProcessed * 50 / tablesToMigrate.Count);
-                ProgressPercentage = progressPercent;
-                ProgressText = $"{progressPercent}% - {table.TableName}";
+                    Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} migration completed");
+                    tablesProcessed++;
+                    int progressPercent = 50 + (tablesProcessed * 50 / tablesToMigrate.Count);
+                    ProgressPercentage = progressPercent;
+                    ProgressText = $"{progressPercent}% - {table.TableName}";
+                }
+            }
+            else
+            {
+                Log($"[StartMigrationAsync] Skipping data migration (Mode: {SelectedMigrationMode})");
+                ProgressPercentage = 100;
+                ProgressText = "100%";
             }
 
             Log($"[StartMigrationAsync] Migration completed successfully!");
             ProgressPercentage = 100;
             ProgressText = "100%";
             ErrorMessage = "";
-            StatusMessage = $"✅ Migrazione completata! {tablesToMigrate.Count} tabelle migrate";
+            
+            string modeDescription = SelectedMigrationMode switch
+            {
+                MigrationMode.SchemaOnly => "schema",
+                MigrationMode.DataOnly => "dati",
+                _ => "schema e dati"
+            };
+            StatusMessage = $"✅ Migrazione completata! {tablesToMigrate.Count} tabelle ({modeDescription})";
             IsConnected = false;
         }
         catch (Exception ex)
@@ -361,38 +373,36 @@ public class MainWindowViewModel : ViewModelBase
 
     public void SelectAllTablesDirectly()
     {
-        Log($"[SelectAllTablesDirectly] Starting... Total tables: {Tables.Count}");
-        foreach (var table in Tables.ToList())
-        {
-            Log($"[SelectAllTablesDirectly] Setting {table.Schema}.{table.TableName} to IsSelected=true");
-            table.IsSelected = true;
-        }
-        
-        // Force UI refresh by reassigning the collection
-        Log($"[SelectAllTablesDirectly] Forcing collection refresh...");
-        var newCollection = new ObservableCollection<TableInfo>(Tables);
-        Tables = newCollection;
-        
-        UpdateTableStatistics();
-        Log($"[SelectAllTablesDirectly] Completed. SelectedTablesCount={SelectedTablesCount}");
+        SetAllTablesSelection(true);
     }
 
     public void DeselectAllTablesDirectly()
     {
-        Log($"[DeselectAllTablesDirectly] Starting... Total tables: {Tables.Count}");
+        SetAllTablesSelection(false);
+    }
+
+    /// <summary>
+    /// Sets the selection state for all tables.
+    /// </summary>
+    /// <param name="isSelected">True to select all, false to deselect all.</param>
+    private void SetAllTablesSelection(bool isSelected)
+    {
+        string operation = isSelected ? "SelectAll" : "DeselectAll";
+        Log($"[{operation}TablesDirectly] Starting... Total tables: {Tables.Count}");
+        
         foreach (var table in Tables.ToList())
         {
-            Log($"[DeselectAllTablesDirectly] Setting {table.Schema}.{table.TableName} to IsSelected=false");
-            table.IsSelected = false;
+            Log($"[{operation}TablesDirectly] Setting {table.Schema}.{table.TableName} to IsSelected={isSelected}");
+            table.IsSelected = isSelected;
         }
         
         // Force UI refresh by reassigning the collection
-        Log($"[DeselectAllTablesDirectly] Forcing collection refresh...");
+        Log($"[{operation}TablesDirectly] Forcing collection refresh...");
         var newCollection = new ObservableCollection<TableInfo>(Tables);
         Tables = newCollection;
         
         UpdateTableStatistics();
-        Log($"[DeselectAllTablesDirectly] Completed. SelectedTablesCount={SelectedTablesCount}");
+        Log($"[{operation}TablesDirectly] Completed. SelectedTablesCount={SelectedTablesCount}");
     }
 
     private void UpdateTableStatistics()
