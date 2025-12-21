@@ -741,6 +741,39 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
+    /// Escapes SQL Server identifiers by replacing ] with ]].
+    /// SQL Server uses brackets [] for identifiers, and closing brackets need to be escaped.
+    /// </summary>
+    private string EscapeSqlServerIdentifier(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("SQL Server identifier cannot be null or empty", nameof(identifier));
+        
+        return identifier.Replace("]", "]]");
+    }
+
+    /// <summary>
+    /// Escapes PostgreSQL identifiers by replacing " with "".
+    /// PostgreSQL uses double quotes for identifiers, and quotes need to be escaped.
+    /// </summary>
+    private string EscapePostgresIdentifier(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("PostgreSQL identifier cannot be null or empty", nameof(identifier));
+        
+        return identifier.Replace("\"", "\"\"");
+    }
+
+    /// <summary>
+    /// Escapes Oracle identifiers by validating and sanitizing them.
+    /// Oracle identifiers have specific rules about allowed characters.
+    /// </summary>
+    private string EscapeOracleIdentifier(string identifier)
+    {
+        return ValidateAndSanitizeOracleIdentifier(identifier, "database");
+    }
+
+    /// <summary>
     /// Splits SQL statements by semicolon while respecting string literals and comments.
     /// This handles cases where semicolons appear inside quoted strings or comments.
     /// </summary>
