@@ -773,11 +773,14 @@ public class DatabaseService : IDatabaseService
             throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
         
         // Oracle identifiers: only allow alphanumeric, underscore, dollar sign
-        // Remove any invalid characters and validate using LINQ
+        // Remove any invalid characters
         var sanitized = new System.Text.StringBuilder();
-        foreach (char c in identifier.Where(c => char.IsLetterOrDigit(c) || c == '_' || c == '$'))
+        foreach (char c in identifier)
         {
-            sanitized.Append(c);
+            if (char.IsLetterOrDigit(c) || c == '_' || c == '$')
+            {
+                sanitized.Append(c);
+            }
         }
         
         var result = sanitized.ToString().ToUpperInvariant();
