@@ -23,8 +23,8 @@ public class SchemaMigrationService
     private static void Log(string message) => LoggerService.Log(message);
 
     /// <summary>
-    /// Crea lo schema nel database target basato sul database sorgente.
-    /// Gestisce il mapping automatico dei tipi dati.
+    /// Creates the schema in the target database based on the source database.
+    /// Handles automatic data type mapping.
     /// </summary>
     public async Task MigrateSchemaAsync(ConnectionInfo source, ConnectionInfo target, 
         List<TableInfo> tablesToMigrate)
@@ -41,7 +41,7 @@ public class SchemaMigrationService
                 {
                     Log($"[SchemaMigration] Starting migration for table {table.Schema}.{table.TableName}");
                     
-                    // Verifica se la tabella esiste già nel target
+                    // Check if the table already exists in the target
                     Log($"[SchemaMigration] Checking if table exists in target...");
                     bool tableExists = await TableExistsAsync(targetConn, target.DatabaseType, 
                         table.Schema, table.TableName);
@@ -52,19 +52,19 @@ public class SchemaMigrationService
                     }
                     else
                     {
-                        // Recupera la definizione della tabella dalla sorgente
+                        // Retrieve the table definition from the source
                         Log($"[SchemaMigration] Fetching columns from source...");
                         var columns = await GetTableColumnsAsync(sourceConn, source.DatabaseType, 
                             table.Schema, table.TableName);
                         Log($"[SchemaMigration] Found {columns.Count} columns");
 
-                        // Costruisci il DDL per il target
+                        // Build the DDL for the target
                         Log($"[SchemaMigration] Building CREATE TABLE statement for target...");
                         string createTableDdl = BuildCreateTableStatement(target.DatabaseType, 
                             table.Schema, table.TableName, columns);
                         Log($"[SchemaMigration] DDL:\n{createTableDdl}");
 
-                        // Esegui il DDL nel target
+                        // Execute the DDL in the target
                         Log($"[SchemaMigration] Executing DDL on target...");
                         using (var command = targetConn.CreateCommand())
                         {
@@ -75,7 +75,7 @@ public class SchemaMigrationService
                         Log($"[SchemaMigration] Table created successfully");
                     }
 
-                    // Crea gli indici primari e vincoli
+                    // Create primary indexes and constraints
                     var constraints = await GetTableConstraintsAsync(sourceConn, source.DatabaseType, 
                         table.Schema, table.TableName);
                     
@@ -98,7 +98,7 @@ public class SchemaMigrationService
                                 catch (Exception ex)
                                 {
                                     Log($"[SchemaMigration] Constraint failed (ignored): {ex.Message}");
-                                    // Alcuni vincoli potrebbero fallire, continua
+                                    // Some constraints may fail, continue
                                 }
                             }
                         }
@@ -255,7 +255,7 @@ public class SchemaMigrationService
             columnDefs.Add(colDef);
         }
 
-        // Crea le righe con indentazione corretta
+        // Create rows with correct indentation
         for (int i = 0; i < columnDefs.Count; i++)
         {
             sb.Append("    " + columnDefs[i]);
@@ -328,7 +328,7 @@ public class SchemaMigrationService
     private string MapDataType(DatabaseType sourceDbType, DatabaseType targetDbType, 
         string sourceDataType, int? maxLength, int? precision, int? scale)
     {
-        // Normalizza il tipo di dato sorgente
+        // Normalize the source data type
         string normalized = sourceDataType.ToLowerInvariant().Trim();
 
         // Mapping cross-database
@@ -543,8 +543,8 @@ public class SchemaMigrationService
     private string TranslateConstraintDdl(string sourceDdl, DatabaseType targetDbType, 
         DatabaseType sourceDbType, string schema, string tableName)
     {
-        // Questa è una semplificazione. In produzione, parseremmo il DDL completo
-        // Per ora ritorniamo una stringa vuota per vincoli complessi
+        // This is a simplification. In production, we would parse the complete DDL
+        // For now we return an empty string for complex constraints
         return "";
     }
 
@@ -655,7 +655,7 @@ public class SchemaMigrationService
 }
 
 /// <summary>
-/// Definizione di una colonna per schema migration
+/// Column definition for schema migration
 /// </summary>
 internal class ColumnDefinition
 {
