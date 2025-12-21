@@ -238,38 +238,53 @@ namespace DatabaseMigrator.Views;
         }
     }
 
+    private bool _isUpdatingMigrationMode;
+
     private void OnMigrationModeChanged(object? sender, RoutedEventArgs e)
     {
-        if (_vm == null) return;
-        
-        if (ModeSchemaAndData.IsChecked is true)
+        if (_isUpdatingMigrationMode)
         {
-            _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
-            MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
-            Log("[OnMigrationModeChanged] Mode set to SchemaAndData");
+            return;
         }
-        else if (ModeSchemaOnly.IsChecked is true)
+
+        _isUpdatingMigrationMode = true;
+        try
         {
-            _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaOnly;
-            MigrationModeDescription.Text = "Crea solo la struttura delle tabelle nel database di destinazione, senza copiare i dati.";
-            Log("[OnMigrationModeChanged] Mode set to SchemaOnly");
-        }
-        else if (ModeDataOnly.IsChecked is true)
-        {
-            _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.DataOnly;
-            MigrationModeDescription.Text = "Copia solo i dati nelle tabelle esistenti. Le tabelle devono già esistere nel database di destinazione.";
-            Log("[OnMigrationModeChanged] Mode set to DataOnly");
-        }
-        else
-        {
-            // Fallback in case all radio buttons are unchecked: enforce a safe default
-            _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
-            if (ModeSchemaAndData.IsChecked is not true)
+            if (_vm == null) return;
+
+            if (ModeSchemaAndData.IsChecked is true)
             {
-                ModeSchemaAndData.IsChecked = true;
+                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
+                MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
+                Log("[OnMigrationModeChanged] Mode set to SchemaAndData");
             }
-            MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
-            Log("[OnMigrationModeChanged] No mode checked; defaulting to SchemaAndData");
+            else if (ModeSchemaOnly.IsChecked is true)
+            {
+                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaOnly;
+                MigrationModeDescription.Text = "Crea solo la struttura delle tabelle nel database di destinazione, senza copiare i dati.";
+                Log("[OnMigrationModeChanged] Mode set to SchemaOnly");
+            }
+            else if (ModeDataOnly.IsChecked is true)
+            {
+                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.DataOnly;
+                MigrationModeDescription.Text = "Copia solo i dati nelle tabelle esistenti. Le tabelle devono già esistere nel database di destinazione.";
+                Log("[OnMigrationModeChanged] Mode set to DataOnly");
+            }
+            else
+            {
+                // Fallback in case all radio buttons are unchecked: enforce a safe default
+                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
+                if (ModeSchemaAndData.IsChecked != true)
+                {
+                    ModeSchemaAndData.IsChecked = true;
+                }
+                MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
+                Log("[OnMigrationModeChanged] No mode checked; defaulting to SchemaAndData");
+            }
+        }
+        finally
+        {
+            _isUpdatingMigrationMode = false;
         }
     }
 
