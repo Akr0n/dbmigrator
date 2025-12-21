@@ -4,6 +4,7 @@ using System.Data;
 using System.Data.Common;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
@@ -320,31 +321,40 @@ public class DatabaseService : IDatabaseService
         const string digits = "0123456789";
         const string specialChars = "!@#$%";
         
-        var random = new Random(Guid.NewGuid().GetHashCode());
         var password = new System.Text.StringBuilder();
         
         // Ensure at least one of each required character type
-        password.Append(upperChars[random.Next(upperChars.Length)]);
-        password.Append(lowerChars[random.Next(lowerChars.Length)]);
-        password.Append(digits[random.Next(digits.Length)]);
-        password.Append(specialChars[random.Next(specialChars.Length)]);
+        password.Append(upperChars[GetSecureRandomIndex(upperChars.Length)]);
+        password.Append(lowerChars[GetSecureRandomIndex(lowerChars.Length)]);
+        password.Append(digits[GetSecureRandomIndex(digits.Length)]);
+        password.Append(specialChars[GetSecureRandomIndex(specialChars.Length)]);
         
         // Fill remaining characters
         const string allChars = upperChars + lowerChars + digits;
         for (int i = 4; i < 16; i++)
         {
-            password.Append(allChars[random.Next(allChars.Length)]);
+            password.Append(allChars[GetSecureRandomIndex(allChars.Length)]);
         }
         
         // Shuffle the password
         var shuffled = password.ToString().ToCharArray();
         for (int i = shuffled.Length - 1; i > 0; i--)
         {
-            int j = random.Next(i + 1);
+            int j = GetSecureRandomIndex(i + 1);
             (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
         }
         
         return new string(shuffled);
+    }
+
+    private static int GetSecureRandomIndex(int maxValue)
+    {
+        // Use RandomNumberGenerator for cryptographically secure random numbers
+        using var rng = RandomNumberGenerator.Create();
+        var bytes = new byte[4];
+        rng.GetBytes(bytes);
+        var randomValue = BitConverter.ToUInt32(bytes, 0);
+        return (int)(randomValue % (uint)maxValue);
     }
 
     public async Task<string> GetTableSchemaAsync(ConnectionInfo connectionInfo, string tableName, string schema)
