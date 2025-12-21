@@ -150,7 +150,7 @@ public class DatabaseService : IDatabaseService
                 {
                     DatabaseType.SqlServer => "SELECT 1 FROM sys.databases WHERE name = @dbName",
                     DatabaseType.PostgreSQL => "SELECT 1 FROM pg_database WHERE datname = @dbName",
-                    DatabaseType.Oracle => "SELECT 1 FROM all_users WHERE username = :dbName",
+                    DatabaseType.Oracle => "SELECT 1 FROM dba_users WHERE username = :dbName",
                     _ => throw new NotSupportedException()
                 };
 
