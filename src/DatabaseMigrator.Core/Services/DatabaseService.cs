@@ -526,15 +526,15 @@ public class DatabaseService : IDatabaseService
                                         Log($"[MigrateTableAsync] Oracle batch: {batchRows.Count} rows, {queries.Count} INSERT statements");
                                         
                                         int rowsInserted = 0;
-                                        foreach (var query in queries)
+                                        var cleanQueries = queries
+                                            .Select(q => q.Trim())
+                                            .Where(q => !string.IsNullOrEmpty(q));
+                                        
+                                        foreach (var cleanQuery in cleanQueries)
                                         {
-                                            var cleanQuery = query.Trim();
-                                            if (!string.IsNullOrEmpty(cleanQuery))
-                                            {
-                                                targetCommand.CommandText = cleanQuery;
-                                                var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
-                                                rowsInserted += rowsAffected;
-                                            }
+                                            targetCommand.CommandText = cleanQuery;
+                                            var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
+                                            rowsInserted += rowsAffected;
                                         }
                                         
                                         Log($"[MigrateTableAsync] Oracle batch completed ({rowsInserted} rows inserted)");
