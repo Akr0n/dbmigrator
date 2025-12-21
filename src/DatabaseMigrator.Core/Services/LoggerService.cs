@@ -104,9 +104,21 @@ public static class LoggerService
         {
             Directory.CreateDirectory(LogDirectory);
         }
+        catch (UnauthorizedAccessException)
+        {
+            // Insufficient permissions to create or access the directory - logging will be disabled
+        }
+        catch (PathTooLongException)
+        {
+            // Log path is too long for the current platform - logging will be disabled
+        }
+        catch (NotSupportedException)
+        {
+            // Log path format is not supported - logging will be disabled
+        }
         catch (IOException)
         {
-            // Directory may have been created by another thread - this is acceptable
+            // Directory may have been created by another thread or other IO error - this is acceptable
         }
     }
 }

@@ -304,12 +304,10 @@ public class DatabaseService : IDatabaseService
             return GenerateSecurePassword();
         }
         
-        // Escape single quotes by doubling them for SQL syntax
-        // When using double quotes in CREATE USER, single quotes must be escaped
-        var escaped = password.Replace("'", "''");
-        
-        Log("Oracle: Using provided password with proper SQL escaping");
-        return escaped;
+        // Password is used with double quotes in CREATE USER statement,
+        // so no escaping of special characters is needed
+        Log("Oracle: Using provided password");
+        return password;
     }
 
     private static string GenerateSecurePassword()
@@ -345,8 +343,8 @@ public class DatabaseService : IDatabaseService
         
         var generatedPassword = new string(shuffled);
         
-        // Log the generated password so administrators can retrieve it if needed
-        Log($"Oracle: Generated secure password for new user (save this): {generatedPassword}");
+        // Log that a secure password was generated without exposing it in logs
+        Log("Oracle: Generated secure password for new user.");
         
         return generatedPassword;
     }
@@ -514,20 +512,18 @@ public class DatabaseService : IDatabaseService
                                         Log($"[MigrateTableAsync] Oracle batch: {batchRows.Count} rows, {queries.Count} INSERT statements");
                                         
                                         int rowsInserted = 0;
-                                        foreach (var query in queries)
+                                        foreach (var cleanQuery in queries.Select(q => q.Trim()).Where(q => !string.IsNullOrEmpty(q)))
                                         {
-                                            var cleanQuery = query.Trim();
-                                            if (!string.IsNullOrEmpty(cleanQuery))
-                                            {
-                                                targetCommand.CommandText = cleanQuery;
-                                                var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
-                                                rowsInserted += rowsAffected;
-                                            }
+                                            targetCommand.CommandText = cleanQuery;
+                                            var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
+                                            rowsInserted += rowsAffected;
                                         }
                                         
                                         Log($"[MigrateTableAsync] Oracle batch completed ({rowsInserted} rows inserted)");
                                         // Note: COMMIT will be executed once at the end of migration
-                                        // This improves performance for large migrations
+                                        // This improves performance for large migrations, but means that if an error occurs,
+                                        // all data inserted in the current transaction will be rolled back.
+                                        // Consider the tradeoff between performance and data safety for your use case.
                                     }
                                     else
                                     {
@@ -736,8 +732,8 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
-    /// Splits SQL statements by semicolon while respecting string literals.
-    /// This handles cases where semicolons appear inside quoted strings.
+    /// Splits SQL statements by semicolon while respecting string literals and comments.
+    /// This handles cases where semicolons appear inside quoted strings or comments.
     /// </summary>
     private static List<string> SplitSqlStatements(string sql)
     {
@@ -748,10 +744,57 @@ public class DatabaseService : IDatabaseService
         var current = new System.Text.StringBuilder();
         bool inSingleQuote = false;
         bool inDoubleQuote = false;
+        bool inSingleLineComment = false;
+        bool inMultiLineComment = false;
 
         for (int idx = 0; idx < sql.Length; idx++)
         {
             char ch = sql[idx];
+
+            // Handle single-line comments (-- comment)
+            if (!inSingleQuote && !inDoubleQuote && !inMultiLineComment && 
+                ch == '-' && idx + 1 < sql.Length && sql[idx + 1] == '-')
+            {
+                inSingleLineComment = true;
+                current.Append(ch);
+                continue;
+            }
+
+            // End single-line comment on newline
+            if (inSingleLineComment && (ch == '\n' || ch == '\r'))
+            {
+                inSingleLineComment = false;
+                current.Append(ch);
+                continue;
+            }
+
+            // Handle multi-line comments (/* comment */)
+            if (!inSingleQuote && !inDoubleQuote && !inSingleLineComment &&
+                ch == '/' && idx + 1 < sql.Length && sql[idx + 1] == '*')
+            {
+                inMultiLineComment = true;
+                current.Append(ch);
+                current.Append(sql[idx + 1]);
+                idx++;
+                continue;
+            }
+
+            // End multi-line comment
+            if (inMultiLineComment && ch == '*' && idx + 1 < sql.Length && sql[idx + 1] == '/')
+            {
+                inMultiLineComment = false;
+                current.Append(ch);
+                current.Append(sql[idx + 1]);
+                idx++;
+                continue;
+            }
+
+            // Skip processing quotes and semicolons if inside comments
+            if (inSingleLineComment || inMultiLineComment)
+            {
+                current.Append(ch);
+                continue;
+            }
 
             // Handle single quotes and escaped single quotes (e.g., '')
             if (ch == '\'' && !inDoubleQuote)
@@ -778,7 +821,7 @@ public class DatabaseService : IDatabaseService
                 continue;
             }
 
-            // Treat semicolon as statement terminator only when not inside any quotes
+            // Treat semicolon as statement terminator only when not inside any quotes or comments
             if (ch == ';' && !inSingleQuote && !inDoubleQuote)
             {
                 var statement = current.ToString().Trim();
@@ -808,47 +851,38 @@ public class DatabaseService : IDatabaseService
         if (string.IsNullOrWhiteSpace(identifier))
             throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
         
+        // Normalize to uppercase first so any subsequent use of the identifier value is consistent
+        var upperIdentifier = identifier.ToUpperInvariant();
+        
         // Oracle identifiers: only allow alphanumeric, underscore, dollar sign
-        // Remove any invalid characters and validate using LINQ
+        // Detect, rather than silently drop, invalid characters
         var sanitized = new System.Text.StringBuilder();
-        foreach (char c in identifier.Where(c => char.IsLetterOrDigit(c) || c == '_' || c == '$'))
+        var hasInvalidCharacters = false;
+        
+        foreach (char c in upperIdentifier)
         {
-            sanitized.Append(c);
+            if (char.IsLetterOrDigit(c) || c == '_' || c == '$')
+            {
+                sanitized.Append(c);
+            }
+            else
+            {
+                hasInvalidCharacters = true;
+            }
         }
         
         var result = sanitized.ToString();
         if (string.IsNullOrEmpty(result))
             throw new ArgumentException("Identifier contains no valid characters", nameof(identifier));
         
+        if (hasInvalidCharacters)
+            throw new ArgumentException("Identifier contains invalid characters", nameof(identifier));
+        
         // Oracle identifiers cannot start with a digit
         if (char.IsDigit(result[0]))
             result = "_" + result;
         
-        return result.ToUpperInvariant();
-    }
-
-    /// <summary>
-    /// Escapes a SQL Server identifier to prevent SQL injection.
-    /// </summary>
-    private string EscapeSqlServerIdentifier(string identifier)
-    {
-        if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
-        
-        // Replace ] with ]] for SQL Server bracketed identifiers
-        return identifier.Replace("]", "]]");
-    }
-
-    /// <summary>
-    /// Escapes a PostgreSQL identifier to prevent SQL injection.
-    /// </summary>
-    private string EscapePostgresIdentifier(string identifier)
-    {
-        if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
-        
-        // Replace " with "" for PostgreSQL quoted identifiers
-        return identifier.Replace("\"", "\"\"");
+        return result;
     }
 
     private string GetSqlServerTableSchema(string schema, string tableName)
