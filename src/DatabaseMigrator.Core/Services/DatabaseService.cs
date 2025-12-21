@@ -353,12 +353,13 @@ public class DatabaseService : IDatabaseService
 
     private static int GetSecureRandomInt(int maxValue)
     {
-        // Use cryptographically secure random number generator
-        using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
-        var randomBytes = new byte[4];
-        rng.GetBytes(randomBytes);
-        var randomInt = Math.Abs(BitConverter.ToInt32(randomBytes, 0));
-        return randomInt % maxValue;
+        if (maxValue <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxValue), "maxValue must be positive.");
+        }
+
+        // Use cryptographically secure random number generator without modulo bias
+        return System.Security.Cryptography.RandomNumberGenerator.GetInt32(maxValue);
     }
 
     public async Task<string> GetTableSchemaAsync(ConnectionInfo connectionInfo, string tableName, string schema)
