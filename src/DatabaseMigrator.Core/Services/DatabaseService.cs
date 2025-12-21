@@ -898,7 +898,7 @@ public class DatabaseService : IDatabaseService
             throw new ArgumentException("Identifier contains invalid characters", nameof(identifier));
         
         // Oracle identifiers cannot start with a digit
-        if (char.IsDigit(result[0]))
+        if (result.Length > 0 && char.IsDigit(result[0]))
             result = "_" + result;
         
         return result;
