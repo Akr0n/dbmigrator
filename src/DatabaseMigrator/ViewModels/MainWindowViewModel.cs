@@ -341,7 +341,9 @@ public class MainWindowViewModel : ViewModelBase
 
                     Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} migration completed");
                     tablesProcessed++;
-                    int progressPercent = 50 + (tablesProcessed * 50 / tablesToMigrate.Count);
+                    int progressPercent = SelectedMigrationMode == MigrationMode.DataOnly
+                        ? 10 + (tablesProcessed * 90 / tablesToMigrate.Count)
+                        : 50 + (tablesProcessed * 50 / tablesToMigrate.Count);
                     ProgressPercentage = progressPercent;
                     ProgressText = $"{progressPercent}% - {table.TableName}";
                 }
