@@ -633,8 +633,8 @@ public class DatabaseService : IDatabaseService
     {
         return dbType switch
         {
-            DatabaseType.SqlServer => $"[{schema}].[{tableName}]",
-            DatabaseType.PostgreSQL => $"\"{schema}\".\"{tableName}\"",
+            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
+            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(tableName)}\"",
             DatabaseType.Oracle => tableName,  // Per Oracle, usa solo il nome tabella (senza schema)
             _ => throw new NotSupportedException()
         };
@@ -653,8 +653,8 @@ public class DatabaseService : IDatabaseService
             string colName = columns[i].ColumnName;
             columnNames.Add(dbType switch
             {
-                DatabaseType.SqlServer => $"[{colName}]",
-                DatabaseType.PostgreSQL => $"\"{colName}\"",
+                DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(colName)}]",
+                DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(colName)}\"",
                 DatabaseType.Oracle => colName,
                 _ => colName
             });
