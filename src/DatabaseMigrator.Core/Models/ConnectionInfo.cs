@@ -63,8 +63,8 @@ public class ConnectionInfo
         
         // Only add SYSDBA privilege if connecting as SYS user
         // SYSDBA provides full database control and should not be used for regular operations
-        // Note: SYS username must be uppercase as per Oracle requirements
-        if (string.Equals(Username, "SYS", StringComparison.Ordinal))
+        // Note: Oracle usernames are case-insensitive, so both 'SYS' and 'sys' should be treated as SYS user
+        if (string.Equals(Username, "SYS", StringComparison.OrdinalIgnoreCase))
         {
             cs += "DBA Privilege=SYSDBA;";
         }
