@@ -306,11 +306,14 @@ public class SchemaMigrationService
             var defaultVal = column.DefaultValue.Trim();
             
             // More robust function detection:
-            // - Contains parentheses (function calls)
-            // - Contains common SQL Server function names
+            // - Look for known SQL Server function names used as function calls
+            //   (function name followed by optional whitespace and an opening parenthesis)
             var sqlServerFunctions = new[] { "getdate", "getutcdate", "newid", "sysdatetime", "sysutcdatetime" };
-            bool isFunction = defaultVal.Contains("(") || defaultVal.Contains(")") ||
-                             sqlServerFunctions.Any(f => defaultVal.ToLowerInvariant().Contains(f));
+            var lowerDefaultVal = defaultVal.ToLowerInvariant();
+            bool isFunction = sqlServerFunctions.Any(f =>
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    lowerDefaultVal,
+                    "\\b" + System.Text.RegularExpressions.Regex.Escape(f) + "\\s*\\("));
             
             if (!isFunction)
             {
