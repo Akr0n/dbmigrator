@@ -219,7 +219,7 @@ public class DatabaseService : IDatabaseService
                 if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                 {
                     // Escape the database/user name to prevent SQL injection
-                    safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
+                    safeDbName = EscapeOracleIdentifier(connectionInfo.Database, "database/user");
                     // Per Oracle, valida e escapa correttamente la password
                     var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
                     usedPassword = oraclePassword;  // Salva la password originale per la connessione
@@ -251,11 +251,7 @@ public class DatabaseService : IDatabaseService
                     // For Oracle, after creating the user, assign necessary privileges
                     if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                     {
-                        // Validate and sanitize the database/user name to prevent SQL injection
-                        // Oracle GRANT statements do not support parameterized queries, so we must
-                        // validate that the identifier comes from a trusted source and follows strict rules
-                        safeDbName = ValidateAndSanitizeOracleIdentifier(connectionInfo.Database, "database/user");
-                        
+                        // safeDbName was already validated and sanitized above using EscapeOracleIdentifier
                         // Log for security audit trail
                         Log($"Oracle: Granting privileges to validated user identifier: {safeDbName}");
                         
@@ -776,10 +772,11 @@ public class DatabaseService : IDatabaseService
     /// the existing Oracle identifier handling.
     /// </summary>
     /// <param name="identifier">The identifier to escape</param>
+    /// <param name="identifierType">Description of what the identifier represents (for error messages)</param>
     /// <returns>The escaped and validated identifier</returns>
-    private string EscapeOracleIdentifier(string identifier)
+    private string EscapeOracleIdentifier(string identifier, string identifierType = "identifier")
     {
-        return ValidateAndSanitizeOracleIdentifier(identifier, "database");
+        return ValidateAndSanitizeOracleIdentifier(identifier, identifierType);
     }
 
     /// <summary>
