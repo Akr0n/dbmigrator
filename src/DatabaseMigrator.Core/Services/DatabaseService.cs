@@ -770,7 +770,7 @@ public class DatabaseService : IDatabaseService
     /// </summary>
     private string EscapeOracleIdentifier(string identifier)
     {
-        return ValidateAndSanitizeOracleIdentifier(identifier, "database");
+        return ValidateAndSanitizeOracleIdentifier(identifier, "database/user");
     }
 
     /// <summary>
