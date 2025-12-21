@@ -817,15 +817,15 @@ public class DatabaseService : IDatabaseService
             sanitized.Append(c);
         }
         
-        var result = sanitized.ToString();
+        var result = sanitized.ToString().ToUpperInvariant();
         if (string.IsNullOrEmpty(result))
             throw new ArgumentException("Identifier contains no valid characters", nameof(identifier));
         
-        // Oracle identifiers cannot start with a digit
+        // Oracle identifiers cannot start with a digit (check after uppercase conversion)
         if (char.IsDigit(result[0]))
             result = "_" + result;
         
-        return result.ToUpperInvariant();
+        return result;
     }
 
     /// <summary>
