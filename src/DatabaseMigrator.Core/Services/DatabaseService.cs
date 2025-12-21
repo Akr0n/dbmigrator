@@ -217,12 +217,15 @@ public class DatabaseService : IDatabaseService
                 
                 if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                 {
+                    // Validate the database/user identifier to prevent SQL injection
+                    var safeDbName = ValidateAndSanitizeOracleIdentifier(connectionInfo.Database, "database/user");
+                    
                     // Per Oracle, valida e escapa correttamente la password
                     var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
                     usedPassword = oraclePassword;  // Salva la password originale per la connessione
                     // Usa doppi apici per supportare caratteri speciali come @, !, #, etc
-                    createQuery = $"CREATE USER {connectionInfo.Database} IDENTIFIED BY \"{oraclePassword}\"";
-                    Log($"Oracle: Creating user {connectionInfo.Database} with escaped password");
+                    createQuery = $"CREATE USER {safeDbName} IDENTIFIED BY \"{oraclePassword}\"";
+                    Log($"Oracle: Creating user {safeDbName} with escaped password");
                 }
                 else
                 {
@@ -869,8 +872,8 @@ public class DatabaseService : IDatabaseService
             }
         }
         
-        // Log for security audit purposes
-        if (result != identifier)
+        // Log for security audit purposes if case was changed
+        if (resultUpper != identifier.ToUpperInvariant())
         {
             Log($"Oracle: Identifier was normalized from '{identifier}' to '{resultUpper}' for security");
         }
