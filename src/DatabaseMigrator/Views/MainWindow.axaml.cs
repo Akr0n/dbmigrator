@@ -269,7 +269,7 @@ namespace DatabaseMigrator.Views;
         {
             // Fallback in case all radio buttons are unchecked: enforce a safe default
             _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
-            if (ModeSchemaAndData.IsChecked != true)
+            if (ModeSchemaAndData.IsChecked is not true)
             {
                 ModeSchemaAndData.IsChecked = true;
             }
