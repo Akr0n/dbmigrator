@@ -214,25 +214,28 @@ public class DatabaseService : IDatabaseService
 
                 string createQuery = "";
                 string? usedPassword = null;  // Traccia la password usata
+                string? safeDbName = null;  // Store escaped database name for reuse
                 
                 if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                 {
                     // Per Oracle, valida e escapa correttamente la password
                     var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
                     usedPassword = oraclePassword;  // Salva la password originale per la connessione
+                    // Escape the database/user name to prevent SQL injection
+                    safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
                     // Usa doppi apici per supportare caratteri speciali come @, !, #, etc
-                    createQuery = $"CREATE USER {connectionInfo.Database} IDENTIFIED BY \"{oraclePassword}\"";
-                    Log($"Oracle: Creating user {connectionInfo.Database} with escaped password");
+                    createQuery = $"CREATE USER {safeDbName} IDENTIFIED BY \"{oraclePassword}\"";
+                    Log($"Oracle: Creating user {safeDbName} with escaped password");
                 }
                 else
                 {
                     createQuery = connectionInfo.DatabaseType switch
                     {
                         DatabaseType.SqlServer => 
-                            $"CREATE DATABASE [{connectionInfo.Database}]",
+                            $"CREATE DATABASE [{EscapeSqlServerIdentifier(connectionInfo.Database)}]",
                         
                         DatabaseType.PostgreSQL => 
-                            $"CREATE DATABASE \"{connectionInfo.Database}\"",
+                            $"CREATE DATABASE \"{EscapePostgresIdentifier(connectionInfo.Database)}\"",
                         
                         _ => throw new NotSupportedException()
                     };
@@ -248,12 +251,11 @@ public class DatabaseService : IDatabaseService
                     // For Oracle, after creating the user, assign necessary privileges
                     if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                     {
-                        // Escape the database/user name to prevent SQL injection
-                        var safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
+                        // Reuse the already escaped database/user name
                         var grantQuery = $"GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE TO {safeDbName}";
                         command.CommandText = grantQuery;
                         await command.ExecuteNonQueryAsync();
-                        Log($"Privileges granted to user {connectionInfo.Database}");
+                        Log($"Privileges granted to user {safeDbName}");
                     }
                 }
                 
@@ -816,15 +818,15 @@ public class DatabaseService : IDatabaseService
             sanitized.Append(c);
         }
         
-        var result = sanitized.ToString();
+        var result = sanitized.ToString().ToUpperInvariant();
         if (string.IsNullOrEmpty(result))
             throw new ArgumentException("Identifier contains no valid characters", nameof(identifier));
         
-        // Oracle identifiers cannot start with a digit
+        // Oracle identifiers cannot start with a digit (check after uppercase conversion)
         if (char.IsDigit(result[0]))
             result = "_" + result;
         
-        return result.ToUpperInvariant();
+        return result;
     }
 
     /// <summary>
