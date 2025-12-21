@@ -161,7 +161,7 @@ public class DatabaseService : IDatabaseService
                     
                     // Add parameter to prevent SQL injection
                     var param = command.CreateParameter();
-                    param.ParameterName = connectionInfo.DatabaseType == DatabaseType.Oracle ? "dbName" : "@dbName";
+                    param.ParameterName = connectionInfo.DatabaseType == DatabaseType.Oracle ? ":dbName" : "@dbName";
                     param.Value = connectionInfo.DatabaseType == DatabaseType.Oracle 
                         ? connectionInfo.Database.ToUpperInvariant() 
                         : connectionInfo.Database;
@@ -314,37 +314,51 @@ public class DatabaseService : IDatabaseService
 
     private static string GenerateSecurePassword()
     {
-        // Generate a cryptographically secure random password
+        // Generate a cryptographically secure random password using RandomNumberGenerator
         const string upperChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         const string lowerChars = "abcdefghijklmnopqrstuvwxyz";
         const string digits = "0123456789";
         const string specialChars = "!@#$%";
         
-        var random = new Random(Guid.NewGuid().GetHashCode());
         var password = new System.Text.StringBuilder();
         
         // Ensure at least one of each required character type
-        password.Append(upperChars[random.Next(upperChars.Length)]);
-        password.Append(lowerChars[random.Next(lowerChars.Length)]);
-        password.Append(digits[random.Next(digits.Length)]);
-        password.Append(specialChars[random.Next(specialChars.Length)]);
+        password.Append(upperChars[GetSecureRandomInt(upperChars.Length)]);
+        password.Append(lowerChars[GetSecureRandomInt(lowerChars.Length)]);
+        password.Append(digits[GetSecureRandomInt(digits.Length)]);
+        password.Append(specialChars[GetSecureRandomInt(specialChars.Length)]);
         
         // Fill remaining characters
         const string allChars = upperChars + lowerChars + digits;
         for (int i = 4; i < 16; i++)
         {
-            password.Append(allChars[random.Next(allChars.Length)]);
+            password.Append(allChars[GetSecureRandomInt(allChars.Length)]);
         }
         
-        // Shuffle the password
+        // Shuffle the password using Fisher-Yates with secure random
         var shuffled = password.ToString().ToCharArray();
         for (int i = shuffled.Length - 1; i > 0; i--)
         {
-            int j = random.Next(i + 1);
+            int j = GetSecureRandomInt(i + 1);
             (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
         }
         
-        return new string(shuffled);
+        var generatedPassword = new string(shuffled);
+        
+        // Log the generated password so administrators can retrieve it if needed
+        Log($"Oracle: Generated secure password for new user (save this): {generatedPassword}");
+        
+        return generatedPassword;
+    }
+
+    private static int GetSecureRandomInt(int maxValue)
+    {
+        // Use cryptographically secure random number generator
+        using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
+        var randomBytes = new byte[4];
+        rng.GetBytes(randomBytes);
+        var randomInt = Math.Abs(BitConverter.ToInt32(randomBytes, 0));
+        return randomInt % maxValue;
     }
 
     public async Task<string> GetTableSchemaAsync(ConnectionInfo connectionInfo, string tableName, string schema)
@@ -494,9 +508,9 @@ public class DatabaseService : IDatabaseService
                                     // For Oracle: execute each INSERT individually
                                     if (target.DatabaseType == DatabaseType.Oracle)
                                     {
-                                        // Split queries using semicolon separator with more robust logic
-                                        var queries = insertQuery.Split(new[] { ";" }, StringSplitOptions.RemoveEmptyEntries);
-                                        Log($"[MigrateTableAsync] Oracle batch: {batchRows.Count} rows, {queries.Length} INSERT statements");
+                                        // Split queries using robust parser that respects string literals
+                                        var queries = SplitSqlStatements(insertQuery);
+                                        Log($"[MigrateTableAsync] Oracle batch: {batchRows.Count} rows, {queries.Count} INSERT statements");
                                         
                                         int rowsInserted = 0;
                                         foreach (var query in queries)
@@ -568,19 +582,16 @@ public class DatabaseService : IDatabaseService
             }
             else if (transaction != null)
             {
-                // Per SQL Server e PostgreSQL: usa la transazione del driver
-                if (transaction != null)
+                // For SQL Server and PostgreSQL: use driver transaction
+                if (commit)
                 {
-                    if (commit)
-                    {
-                        await transaction.CommitAsync();
-                        Log($"[FinalizeTransactionAsync] {dbType} transaction committed");
-                    }
-                    else
-                    {
-                        await transaction.RollbackAsync();
-                        Log($"[FinalizeTransactionAsync] {dbType} transaction rolled back");
-                    }
+                    await transaction.CommitAsync();
+                    Log($"[FinalizeTransactionAsync] {dbType} transaction committed");
+                }
+                else
+                {
+                    await transaction.RollbackAsync();
+                    Log($"[FinalizeTransactionAsync] {dbType} transaction rolled back");
                 }
             }
         }
@@ -724,6 +735,70 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
+    /// Splits SQL statements by semicolon while respecting string literals.
+    /// This handles cases where semicolons appear inside quoted strings.
+    /// </summary>
+    private static List<string> SplitSqlStatements(string sql)
+    {
+        var statements = new List<string>();
+        if (string.IsNullOrWhiteSpace(sql))
+            return statements;
+
+        var current = new System.Text.StringBuilder();
+        bool inSingleQuote = false;
+        bool inDoubleQuote = false;
+
+        for (int idx = 0; idx < sql.Length; idx++)
+        {
+            char ch = sql[idx];
+
+            // Handle single quotes and escaped single quotes (e.g., '')
+            if (ch == '\'' && !inDoubleQuote)
+            {
+                if (inSingleQuote && idx + 1 < sql.Length && sql[idx + 1] == '\'')
+                {
+                    // Escaped single quote inside string literal
+                    current.Append(ch);
+                    current.Append(sql[idx + 1]);
+                    idx++;
+                    continue;
+                }
+
+                inSingleQuote = !inSingleQuote;
+                current.Append(ch);
+                continue;
+            }
+
+            // Handle double quotes (e.g., quoted identifiers)
+            if (ch == '"' && !inSingleQuote)
+            {
+                inDoubleQuote = !inDoubleQuote;
+                current.Append(ch);
+                continue;
+            }
+
+            // Treat semicolon as statement terminator only when not inside any quotes
+            if (ch == ';' && !inSingleQuote && !inDoubleQuote)
+            {
+                var statement = current.ToString().Trim();
+                if (statement.Length > 0)
+                    statements.Add(statement);
+                current.Clear();
+            }
+            else
+            {
+                current.Append(ch);
+            }
+        }
+
+        var lastStatement = current.ToString().Trim();
+        if (lastStatement.Length > 0)
+            statements.Add(lastStatement);
+
+        return statements;
+    }
+
+    /// <summary>
     /// Escapes an Oracle identifier to prevent SQL injection.
     /// Oracle identifiers can only contain alphanumeric characters, underscores, and dollar signs.
     /// </summary>
@@ -733,14 +808,11 @@ public class DatabaseService : IDatabaseService
             throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
         
         // Oracle identifiers: only allow alphanumeric, underscore, dollar sign
-        // Remove any invalid characters and validate
+        // Remove any invalid characters and validate using LINQ
         var sanitized = new System.Text.StringBuilder();
-        foreach (char c in identifier)
+        foreach (char c in identifier.Where(c => char.IsLetterOrDigit(c) || c == '_' || c == '$'))
         {
-            if (char.IsLetterOrDigit(c) || c == '_' || c == '$')
-            {
-                sanitized.Append(c);
-            }
+            sanitized.Append(c);
         }
         
         var result = sanitized.ToString();

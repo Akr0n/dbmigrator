@@ -304,7 +304,17 @@ public class MainWindowViewModel : ViewModelBase
                 Log($"[StartMigrationAsync] Skipping schema migration (Mode: {SelectedMigrationMode})");
             }
 
-            ProgressPercentage = 50;
+            // For SchemaOnly mode, schema represents 100% of the work
+            // For other modes, schema represents 50% (data migration is the other 50%)
+            if (SelectedMigrationMode == MigrationMode.SchemaOnly)
+            {
+                ProgressPercentage = 100;
+                ProgressText = "100% - Migrazione schema completata";
+            }
+            else
+            {
+                ProgressPercentage = 50;
+            }
 
             // Migrate data if needed
             if (SelectedMigrationMode == MigrationMode.SchemaAndData || SelectedMigrationMode == MigrationMode.DataOnly)

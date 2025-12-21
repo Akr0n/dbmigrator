@@ -230,7 +230,7 @@
                                     </RadioButton>
                                 </StackPanel>
                                 <TextBlock x:Name="MigrationModeDescription" Foreground="#9e9e9e" FontSize="11" TextWrapping="Wrap" 
-                                           Text="Crea le tabelle nel database di destinazione e copia tutti i dati."/>
+                                           Text="Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati."/>
                             </StackPanel>
                         </Border>
 

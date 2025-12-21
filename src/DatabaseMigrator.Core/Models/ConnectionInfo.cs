@@ -48,6 +48,12 @@ public class ConnectionInfo
         // Oracle connection string using TNS format
         // For XE: Server=localhost, Port=1521, Database=XE (the SID)
         // Escape password if it contains special characters like ;
+        //
+        // IMPORTANT: Database creation operations (CREATE USER, GRANT privileges) require
+        // elevated privileges. If connecting with a non-SYS user, ensure that user has:
+        // - CREATE USER privilege for creating new schema users
+        // - GRANT ANY PRIVILEGE for assigning privileges to new users
+        // Without these, database creation operations will fail with ORA-01031.
         string escapedPassword = EscapeOraclePassword(Password);
         var cs = $"Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={Server})(PORT={Port}))(CONNECT_DATA=(SERVICE_NAME={Database})));User Id={Username};Password={escapedPassword};";
         

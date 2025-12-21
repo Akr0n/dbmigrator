@@ -97,9 +97,16 @@ public static class LoggerService
 
     private static void EnsureLogDirectoryExists()
     {
-        if (!Directory.Exists(LogDirectory))
+        // Directory.CreateDirectory is idempotent and handles the race condition
+        // where multiple threads check existence simultaneously.
+        // It will succeed if directory exists or create it if not.
+        try
         {
             Directory.CreateDirectory(LogDirectory);
+        }
+        catch (IOException)
+        {
+            // Directory may have been created by another thread - this is acceptable
         }
     }
 }

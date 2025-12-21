@@ -21,10 +21,11 @@ class Program
             
             // Show error in console for debugging
             Console.WriteLine($"FATAL ERROR: {ex}");
+            Console.Error.WriteLine($"Error logged to: {LoggerService.GetErrorLogPath()}");
             
-            // Exit gracefully with error code instead of re-throwing
-            // This prevents ugly crash dialogs while still indicating an error occurred
-            Environment.Exit(1);
+            // Re-throw to allow proper exception handling and stack trace reporting
+            // This enables proper cleanup via finally blocks and provides better diagnostics
+            throw;
         }
     }
 
