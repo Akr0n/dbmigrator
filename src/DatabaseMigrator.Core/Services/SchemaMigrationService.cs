@@ -313,7 +313,7 @@ public class SchemaMigrationService
             bool isFunction = sqlServerFunctions.Any(f =>
                 System.Text.RegularExpressions.Regex.IsMatch(
                     lowerDefaultVal,
-                    "\\b" + System.Text.RegularExpressions.Regex.Escape(f) + "\\s*\\("));
+                    @"(?<!\w)" + System.Text.RegularExpressions.Regex.Escape(f) + @"\s*\("));
             
             if (!isFunction)
             {
