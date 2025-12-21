@@ -741,6 +741,57 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
+    /// Escapes a SQL Server identifier to prevent SQL injection.
+    /// </summary>
+    private string EscapeSqlServerIdentifier(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+        
+        // Replace ] with ]] for SQL Server bracketed identifiers
+        return identifier.Replace("]", "]]");
+    }
+
+    /// <summary>
+    /// Escapes a PostgreSQL identifier to prevent SQL injection.
+    /// </summary>
+    private string EscapePostgresIdentifier(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+        
+        // Replace " with "" for PostgreSQL quoted identifiers
+        return identifier.Replace("\"", "\"\"");
+    }
+
+    /// <summary>
+    /// Escapes an Oracle identifier to prevent SQL injection.
+    /// </summary>
+    private string EscapeOracleIdentifier(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+        
+        // Oracle identifiers: only allow alphanumeric, underscore, dollar sign
+        // Remove any invalid characters and validate using LINQ
+        var sanitized = new System.Text.StringBuilder();
+        foreach (char c in identifier.Where(c => char.IsLetterOrDigit(c) || c == '_' || c == '$'))
+        {
+            sanitized.Append(c);
+        }
+        
+        var result = sanitized.ToString().ToUpperInvariant();
+        if (string.IsNullOrEmpty(result))
+            throw new ArgumentException("Identifier contains no valid characters", nameof(identifier));
+        
+        // Oracle identifiers cannot start with a digit (check after uppercase conversion)
+        if (char.IsDigit(result[0]))
+            result = "_" + result;
+        
+        return result;
+    }
+
+    /// <summary>
     /// Splits SQL statements by semicolon while respecting string literals and comments.
     /// This handles cases where semicolons appear inside quoted strings or comments.
     /// </summary>
