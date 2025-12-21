@@ -82,6 +82,20 @@ namespace DatabaseMigrator.Views;
             ModeSchemaAndData.IsCheckedChanged += OnMigrationModeChanged;
             ModeSchemaOnly.IsCheckedChanged += OnMigrationModeChanged;
             ModeDataOnly.IsCheckedChanged += OnMigrationModeChanged;
+
+            // Ensure initial migration mode is applied after handlers are wired
+            if (ModeSchemaAndData.IsChecked == true)
+            {
+                OnMigrationModeChanged(ModeSchemaAndData, new RoutedEventArgs());
+            }
+            else if (ModeSchemaOnly.IsChecked == true)
+            {
+                OnMigrationModeChanged(ModeSchemaOnly, new RoutedEventArgs());
+            }
+            else if (ModeDataOnly.IsChecked == true)
+            {
+                OnMigrationModeChanged(ModeDataOnly, new RoutedEventArgs());
+            }
             
             // Ensure initial migration mode is applied after handlers are wired
             // This fixes the race condition where InitializeComponent() fires IsCheckedChanged
