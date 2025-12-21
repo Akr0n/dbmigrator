@@ -128,7 +128,7 @@ jobs:
         run: |
           echo "Fetching all tags from remote..."
           git fetch origin --tags
-          
+
           echo "Verifying tag ${{ env.release_tag }} exists locally..."
           if (git tag --list | Select-String -Pattern "^${{ env.release_tag }}$") {
             Write-Output "✅ Tag ${{ env.release_tag }} successfully created and available locally"
@@ -136,10 +136,10 @@ jobs:
             Write-Output "❌ Tag ${{ env.release_tag }} not found locally"
             exit 1
           }
-          
+
           echo "All local tags:"
           git tag --list
-        
+
       - name: Generate changelog
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v6
