@@ -321,39 +321,49 @@ public class DatabaseService : IDatabaseService
         const string digits = "0123456789";
         const string specialChars = "!@#$%";
         
+        using var rng = RandomNumberGenerator.Create();
         var password = new System.Text.StringBuilder();
         
         // Ensure at least one of each required character type
-        password.Append(upperChars[GetSecureRandomIndex(upperChars.Length)]);
-        password.Append(lowerChars[GetSecureRandomIndex(lowerChars.Length)]);
-        password.Append(digits[GetSecureRandomIndex(digits.Length)]);
-        password.Append(specialChars[GetSecureRandomIndex(specialChars.Length)]);
+        password.Append(upperChars[GetSecureRandomIndex(rng, upperChars.Length)]);
+        password.Append(lowerChars[GetSecureRandomIndex(rng, lowerChars.Length)]);
+        password.Append(digits[GetSecureRandomIndex(rng, digits.Length)]);
+        password.Append(specialChars[GetSecureRandomIndex(rng, specialChars.Length)]);
         
         // Fill remaining characters
         const string allChars = upperChars + lowerChars + digits;
         for (int i = 4; i < 16; i++)
         {
-            password.Append(allChars[GetSecureRandomIndex(allChars.Length)]);
+            password.Append(allChars[GetSecureRandomIndex(rng, allChars.Length)]);
         }
         
         // Shuffle the password
         var shuffled = password.ToString().ToCharArray();
         for (int i = shuffled.Length - 1; i > 0; i--)
         {
-            int j = GetSecureRandomIndex(i + 1);
+            int j = GetSecureRandomIndex(rng, i + 1);
             (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
         }
         
         return new string(shuffled);
     }
 
-    private static int GetSecureRandomIndex(int maxValue)
+    private static int GetSecureRandomIndex(RandomNumberGenerator rng, int maxValue)
     {
         // Use RandomNumberGenerator for cryptographically secure random numbers
-        using var rng = RandomNumberGenerator.Create();
+        // Use rejection sampling to ensure uniform distribution
         var bytes = new byte[4];
-        rng.GetBytes(bytes);
-        var randomValue = BitConverter.ToUInt32(bytes, 0);
+        
+        // Calculate the maximum value that avoids modulo bias
+        uint maxValidValue = uint.MaxValue - (uint.MaxValue % (uint)maxValue);
+        
+        uint randomValue;
+        do
+        {
+            rng.GetBytes(bytes);
+            randomValue = BitConverter.ToUInt32(bytes, 0);
+        } while (randomValue >= maxValidValue);
+        
         return (int)(randomValue % (uint)maxValue);
     }
 
