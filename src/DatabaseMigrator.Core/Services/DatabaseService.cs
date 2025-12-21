@@ -220,8 +220,10 @@ public class DatabaseService : IDatabaseService
                     // Per Oracle, valida e escapa correttamente la password
                     var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
                     usedPassword = oraclePassword;  // Salva la password originale per la connessione
+                    // Escape the database/user name to prevent SQL injection
+                    var safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
                     // Usa doppi apici per supportare caratteri speciali come @, !, #, etc
-                    createQuery = $"CREATE USER {connectionInfo.Database} IDENTIFIED BY \"{oraclePassword}\"";
+                    createQuery = $"CREATE USER {safeDbName} IDENTIFIED BY \"{oraclePassword}\"";
                     Log($"Oracle: Creating user {connectionInfo.Database} with escaped password");
                 }
                 else
@@ -229,10 +231,10 @@ public class DatabaseService : IDatabaseService
                     createQuery = connectionInfo.DatabaseType switch
                     {
                         DatabaseType.SqlServer => 
-                            $"CREATE DATABASE [{connectionInfo.Database}]",
+                            $"CREATE DATABASE [{EscapeSqlServerIdentifier(connectionInfo.Database)}]",
                         
                         DatabaseType.PostgreSQL => 
-                            $"CREATE DATABASE \"{connectionInfo.Database}\"",
+                            $"CREATE DATABASE \"{EscapePostgresIdentifier(connectionInfo.Database)}\"",
                         
                         _ => throw new NotSupportedException()
                     };
