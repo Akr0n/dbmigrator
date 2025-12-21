@@ -214,6 +214,7 @@ public class DatabaseService : IDatabaseService
 
                 string createQuery = "";
                 string? usedPassword = null;  // Traccia la password usata
+                string? safeDbName = null;  // Store escaped database name for reuse
                 
                 if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                 {
@@ -223,6 +224,8 @@ public class DatabaseService : IDatabaseService
                     // Per Oracle, valida e escapa correttamente la password
                     var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
                     usedPassword = oraclePassword;  // Salva la password originale per la connessione
+                    // Escape the database/user name to prevent SQL injection
+                    safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
                     // Usa doppi apici per supportare caratteri speciali come @, !, #, etc
                     createQuery = $"CREATE USER {safeDbName} IDENTIFIED BY \"{oraclePassword}\"";
                     Log($"Oracle: Creating user {safeDbName} with escaped password");
@@ -232,10 +235,10 @@ public class DatabaseService : IDatabaseService
                     createQuery = connectionInfo.DatabaseType switch
                     {
                         DatabaseType.SqlServer => 
-                            $"CREATE DATABASE [{connectionInfo.Database}]",
+                            $"CREATE DATABASE [{EscapeSqlServerIdentifier(connectionInfo.Database)}]",
                         
                         DatabaseType.PostgreSQL => 
-                            $"CREATE DATABASE \"{connectionInfo.Database}\"",
+                            $"CREATE DATABASE \"{EscapePostgresIdentifier(connectionInfo.Database)}\"",
                         
                         _ => throw new NotSupportedException()
                     };
@@ -262,7 +265,7 @@ public class DatabaseService : IDatabaseService
                         var grantQuery = $"GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE TO {safeDbName}";
                         command.CommandText = grantQuery;
                         await command.ExecuteNonQueryAsync();
-                        Log($"Privileges granted to user {connectionInfo.Database}");
+                        Log($"Privileges granted to user {safeDbName}");
                     }
                 }
                 
@@ -640,8 +643,8 @@ public class DatabaseService : IDatabaseService
     {
         return dbType switch
         {
-            DatabaseType.SqlServer => $"[{schema}].[{tableName}]",
-            DatabaseType.PostgreSQL => $"\"{schema}\".\"{tableName}\"",
+            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
+            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(tableName)}\"",
             DatabaseType.Oracle => tableName,  // Per Oracle, usa solo il nome tabella (senza schema)
             _ => throw new NotSupportedException()
         };
@@ -660,8 +663,8 @@ public class DatabaseService : IDatabaseService
             string colName = columns[i].ColumnName;
             columnNames.Add(dbType switch
             {
-                DatabaseType.SqlServer => $"[{colName}]",
-                DatabaseType.PostgreSQL => $"\"{colName}\"",
+                DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(colName)}]",
+                DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(colName)}\"",
                 DatabaseType.Oracle => colName,
                 _ => colName
             });

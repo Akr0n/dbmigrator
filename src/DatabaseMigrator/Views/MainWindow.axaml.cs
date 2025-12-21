@@ -84,15 +84,15 @@ namespace DatabaseMigrator.Views;
             ModeDataOnly.IsCheckedChanged += OnMigrationModeChanged;
 
             // Ensure initial migration mode is applied after handlers are wired
-            if (ModeSchemaAndData.IsChecked == true)
+            if (ModeSchemaAndData.IsChecked is true)
             {
                 OnMigrationModeChanged(ModeSchemaAndData, new RoutedEventArgs());
             }
-            else if (ModeSchemaOnly.IsChecked == true)
+            else if (ModeSchemaOnly.IsChecked is true)
             {
                 OnMigrationModeChanged(ModeSchemaOnly, new RoutedEventArgs());
             }
-            else if (ModeDataOnly.IsChecked == true)
+            else if (ModeDataOnly.IsChecked is true)
             {
                 OnMigrationModeChanged(ModeDataOnly, new RoutedEventArgs());
             }
@@ -269,15 +269,10 @@ namespace DatabaseMigrator.Views;
         {
             // Fallback in case all radio buttons are unchecked: enforce a safe default
             _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
-            ModeSchemaAndData.IsChecked = true;
-            MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
-            Log("[OnMigrationModeChanged] No mode checked; defaulting to SchemaAndData");
-        }
-        else
-        {
-            // Fallback: if no radio button is checked, enforce safe default
-            _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
-            ModeSchemaAndData.IsChecked = true;
+            if (ModeSchemaAndData.IsChecked != true)
+            {
+                ModeSchemaAndData.IsChecked = true;
+            }
             MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
             Log("[OnMigrationModeChanged] No mode checked; defaulting to SchemaAndData");
         }
