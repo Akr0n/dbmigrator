@@ -214,6 +214,7 @@ public class DatabaseService : IDatabaseService
 
                 string createQuery = "";
                 string? usedPassword = null;  // Traccia la password usata
+                string? safeDbName = null;  // Store escaped database name for reuse
                 
                 if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                 {
@@ -221,10 +222,10 @@ public class DatabaseService : IDatabaseService
                     var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
                     usedPassword = oraclePassword;  // Salva la password originale per la connessione
                     // Escape the database/user name to prevent SQL injection
-                    var safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
+                    safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
                     // Usa doppi apici per supportare caratteri speciali come @, !, #, etc
                     createQuery = $"CREATE USER {safeDbName} IDENTIFIED BY \"{oraclePassword}\"";
-                    Log($"Oracle: Creating user {connectionInfo.Database} with escaped password");
+                    Log($"Oracle: Creating user {safeDbName} with escaped password");
                 }
                 else
                 {
@@ -250,12 +251,11 @@ public class DatabaseService : IDatabaseService
                     // For Oracle, after creating the user, assign necessary privileges
                     if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                     {
-                        // Escape the database/user name to prevent SQL injection
-                        var safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
+                        // Reuse the already escaped database/user name
                         var grantQuery = $"GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE TO {safeDbName}";
                         command.CommandText = grantQuery;
                         await command.ExecuteNonQueryAsync();
-                        Log($"Privileges granted to user {connectionInfo.Database}");
+                        Log($"Privileges granted to user {safeDbName}");
                     }
                 }
                 
