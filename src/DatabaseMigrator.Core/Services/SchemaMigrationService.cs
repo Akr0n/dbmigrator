@@ -149,7 +149,7 @@ public class SchemaMigrationService
                 }
                 
                 var tableParam = command.CreateParameter();
-                tableParam.ParameterName = dbType == DatabaseType.Oracle ? "tableName" : "@tableName";
+                tableParam.ParameterName = dbType == DatabaseType.Oracle ? ":tableName" : "@tableName";
                 tableParam.Value = dbType == DatabaseType.Oracle ? tableName.ToUpperInvariant() : tableName;
                 command.Parameters.Add(tableParam);
                 
