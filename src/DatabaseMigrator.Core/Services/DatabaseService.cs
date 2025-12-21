@@ -248,8 +248,14 @@ public class DatabaseService : IDatabaseService
                     // For Oracle, after creating the user, assign necessary privileges
                     if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                     {
-                        // Escape the database/user name to prevent SQL injection
-                        var safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
+                        // Validate and sanitize the database/user name to prevent SQL injection
+                        // Oracle GRANT statements do not support parameterized queries, so we must
+                        // validate that the identifier comes from a trusted source and follows strict rules
+                        var safeDbName = ValidateAndSanitizeOracleIdentifier(connectionInfo.Database, "database/user");
+                        
+                        // Log for security audit trail
+                        Log($"Oracle: Granting privileges to validated user identifier: {safeDbName}");
+                        
                         var grantQuery = $"GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE TO {safeDbName}";
                         command.CommandText = grantQuery;
                         await command.ExecuteNonQueryAsync();
@@ -800,31 +806,76 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
-    /// Escapes an Oracle identifier to prevent SQL injection.
-    /// Oracle identifiers can only contain alphanumeric characters, underscores, and dollar signs.
+    /// Validates and sanitizes an Oracle identifier to prevent SQL injection.
+    /// Since Oracle GRANT statements do not support parameterized queries, this method
+    /// enforces strict validation rules to ensure the identifier is safe for use in
+    /// dynamically constructed SQL statements.
+    /// 
+    /// Oracle identifier rules:
+    /// - Must start with a letter (A-Z, a-z)
+    /// - Can contain only letters, digits, underscore (_), dollar sign ($), and hash (#)
+    /// - Maximum length is 30 characters (Oracle 12.1 and earlier) or 128 characters (Oracle 12.2+)
+    /// - Reserved words are not validated here as they would cause Oracle errors
     /// </summary>
-    private string EscapeOracleIdentifier(string identifier)
+    /// <param name="identifier">The identifier to validate and sanitize</param>
+    /// <param name="identifierType">Description of what the identifier represents (for error messages)</param>
+    /// <returns>The validated and sanitized identifier in uppercase</returns>
+    /// <exception cref="ArgumentException">Thrown if the identifier fails validation</exception>
+    private string ValidateAndSanitizeOracleIdentifier(string identifier, string identifierType)
     {
         if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+            throw new ArgumentException($"Oracle {identifierType} identifier cannot be null or empty", nameof(identifier));
         
-        // Oracle identifiers: only allow alphanumeric, underscore, dollar sign
-        // Remove any invalid characters and validate using LINQ
-        var sanitized = new System.Text.StringBuilder();
-        foreach (char c in identifier.Where(c => char.IsLetterOrDigit(c) || c == '_' || c == '$'))
+        // Oracle identifiers have a maximum length of 30 characters (being conservative for compatibility)
+        if (identifier.Length > 30)
+            throw new ArgumentException($"Oracle {identifierType} identifier exceeds maximum length of 30 characters: {identifier.Length}", nameof(identifier));
+        
+        // Oracle identifiers must start with a letter
+        if (!char.IsLetter(identifier[0]))
+            throw new ArgumentException($"Oracle {identifierType} identifier must start with a letter: '{identifier}'", nameof(identifier));
+        
+        // Validate each character: only alphanumeric, underscore, dollar sign, and hash
+        // Using a whitelist approach for maximum security
+        var sanitized = new System.Text.StringBuilder(identifier.Length);
+        foreach (char c in identifier)
         {
-            sanitized.Append(c);
+            if (char.IsLetterOrDigit(c) || c == '_' || c == '$' || c == '#')
+            {
+                sanitized.Append(c);
+            }
+            else
+            {
+                // Reject any identifier with invalid characters - do not silently sanitize
+                throw new ArgumentException(
+                    $"Oracle {identifierType} identifier contains invalid character '{c}'. " +
+                    $"Only letters, digits, underscore (_), dollar sign ($), and hash (#) are allowed.", 
+                    nameof(identifier));
+            }
         }
         
         var result = sanitized.ToString();
-        if (string.IsNullOrEmpty(result))
-            throw new ArgumentException("Identifier contains no valid characters", nameof(identifier));
         
-        // Oracle identifiers cannot start with a digit
-        if (char.IsDigit(result[0]))
-            result = "_" + result;
+        // Additional safety check: ensure no SQL keywords or injection patterns
+        // This is a basic check; Oracle will reject reserved words anyway
+        var resultUpper = result.ToUpperInvariant();
+        var dangerousPatterns = new[] { "--", "/*", "*/", ";", "UNION", "DROP", "DELETE", "INSERT", "UPDATE", "EXEC", "EXECUTE" };
+        foreach (var pattern in dangerousPatterns)
+        {
+            if (resultUpper.Contains(pattern))
+            {
+                throw new ArgumentException(
+                    $"Oracle {identifierType} identifier contains potentially dangerous pattern '{pattern}': '{identifier}'",
+                    nameof(identifier));
+            }
+        }
         
-        return result.ToUpperInvariant();
+        // Log for security audit purposes
+        if (result != identifier)
+        {
+            Log($"Oracle: Identifier was normalized from '{identifier}' to '{resultUpper}' for security");
+        }
+        
+        return resultUpper;
     }
 
     /// <summary>
