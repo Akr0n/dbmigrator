@@ -219,7 +219,7 @@ public class DatabaseService : IDatabaseService
                 if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                 {
                     // Escape the database/user name to prevent SQL injection
-                    var safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
+                    safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
                     // Per Oracle, valida e escapa correttamente la password
                     var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
                     usedPassword = oraclePassword;  // Salva la password originale per la connessione
@@ -256,7 +256,7 @@ public class DatabaseService : IDatabaseService
                         // Validate and sanitize the database/user name to prevent SQL injection
                         // Oracle GRANT statements do not support parameterized queries, so we must
                         // validate that the identifier comes from a trusted source and follows strict rules
-                        var safeDbName = ValidateAndSanitizeOracleIdentifier(connectionInfo.Database, "database/user");
+                        safeDbName = ValidateAndSanitizeOracleIdentifier(connectionInfo.Database, "database/user");
                         
                         // Log for security audit trail
                         Log($"Oracle: Granting privileges to validated user identifier: {safeDbName}");
