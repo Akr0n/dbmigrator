@@ -338,7 +338,7 @@ public class DatabaseService : IDatabaseService
         password.Append(specialChars[GetSecureRandomInt(specialChars.Length)]);
         
         // Fill remaining characters
-        const string allChars = upperChars + lowerChars + digits;
+        const string allChars = upperChars + lowerChars + digits + specialChars;
         for (int i = 4; i < 16; i++)
         {
             password.Append(allChars[GetSecureRandomInt(allChars.Length)]);
