@@ -359,7 +359,17 @@ namespace DatabaseMigrator.Views;
             }
 
             var configDir = MainWindowViewModel.GetConfigDirectory();
+            if (!Directory.Exists(configDir))
+            {
+                Directory.CreateDirectory(configDir);
+                Log($"[OnSaveConfigurationClicked] Created configuration directory: {configDir}");
+            }
+
             var startLocation = await storageProvider.TryGetFolderFromPathAsync(configDir);
+            if (startLocation == null)
+            {
+                Log($"[OnSaveConfigurationClicked] Unable to resolve start location for path: {configDir}. Using default picker location.");
+            }
 
             var file = await storageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
