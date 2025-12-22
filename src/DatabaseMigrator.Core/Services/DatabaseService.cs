@@ -737,46 +737,36 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
-    /// Escapes PostgreSQL identifiers by replacing double quotes with two double quotes.
-    /// PostgreSQL uses double quotes to delimit identifiers, and internal double quotes
-    /// must be escaped as "".
+    /// Escapes SQL Server identifiers by replacing ] with ]].
+    /// SQL Server uses brackets [] for identifiers, and closing brackets need to be escaped.
     /// </summary>
-    /// <param name="identifier">The identifier to escape</param>
-    /// <returns>The escaped identifier</returns>
-    private string EscapePostgresIdentifier(string identifier)
-    {
-        if (string.IsNullOrEmpty(identifier))
-            return identifier;
-        
-        return identifier.Replace("\"", "\"\"");
-    }
-
-    /// <summary>
-    /// Escapes SQL Server identifiers by replacing closing square brackets with two closing brackets.
-    /// SQL Server uses square brackets to delimit identifiers, and internal closing brackets
-    /// must be escaped as ]].
-    /// </summary>
-    /// <param name="identifier">The identifier to escape</param>
-    /// <returns>The escaped identifier</returns>
     private string EscapeSqlServerIdentifier(string identifier)
     {
-        if (string.IsNullOrEmpty(identifier))
-            return identifier;
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("SQL Server identifier cannot be null or empty", nameof(identifier));
         
         return identifier.Replace("]", "]]");
     }
 
     /// <summary>
-    /// Escapes Oracle identifiers using the existing validation and sanitization logic.
-    /// This delegates to ValidateAndSanitizeOracleIdentifier for consistency with
-    /// the existing Oracle identifier handling.
+    /// Escapes PostgreSQL identifiers by replacing " with "".
+    /// PostgreSQL uses double quotes for identifiers, and quotes need to be escaped.
     /// </summary>
-    /// <param name="identifier">The identifier to escape</param>
-    /// <param name="identifierType">Description of what the identifier represents (for error messages)</param>
-    /// <returns>The escaped and validated identifier</returns>
-    private string EscapeOracleIdentifier(string identifier, string identifierType = "identifier")
+    private string EscapePostgresIdentifier(string identifier)
     {
-        return ValidateAndSanitizeOracleIdentifier(identifier, identifierType);
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("PostgreSQL identifier cannot be null or empty", nameof(identifier));
+        
+        return identifier.Replace("\"", "\"\"");
+    }
+
+    /// <summary>
+    /// Escapes Oracle identifiers by validating and sanitizing them.
+    /// Oracle identifiers have specific rules about allowed characters.
+    /// </summary>
+    private string EscapeOracleIdentifier(string identifier)
+    {
+        return ValidateAndSanitizeOracleIdentifier(identifier, "database/user");
     }
 
     /// <summary>
