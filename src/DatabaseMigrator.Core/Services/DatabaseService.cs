@@ -904,14 +904,14 @@ public class DatabaseService : IDatabaseService
         // Normalize to uppercase first so any subsequent use of the identifier value is consistent
         var upperIdentifier = identifier.ToUpperInvariant();
         
-        // Oracle identifiers: only allow alphanumeric, underscore, dollar sign
+        // Oracle identifiers: only allow alphanumeric, underscore, dollar sign, hash
         // Detect, rather than silently drop, invalid characters
         var sanitized = new System.Text.StringBuilder();
         var hasInvalidCharacters = false;
         
         foreach (char c in upperIdentifier)
         {
-            if (char.IsLetterOrDigit(c) || c == '_' || c == '$')
+            if (char.IsLetterOrDigit(c) || c == '_' || c == '$' || c == '#')
             {
                 sanitized.Append(c);
             }
