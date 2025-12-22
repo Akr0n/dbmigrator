@@ -634,7 +634,7 @@ public class DatabaseService : IDatabaseService
         {
             DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
             DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(tableName)}\"",
-            DatabaseType.Oracle => tableName,  // Per Oracle, usa solo il nome tabella (senza schema)
+            DatabaseType.Oracle => tableName,  // For Oracle: use only the table name (without schema)
             _ => throw new NotSupportedException()
         };
     }
