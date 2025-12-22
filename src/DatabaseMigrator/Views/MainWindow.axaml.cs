@@ -78,24 +78,34 @@ namespace DatabaseMigrator.Views;
             ExitMenuItem.Click += (s, e) => Close();
             AboutMenuItem.Click += (s, e) => ShowAbout();
             
-            // Wire up migration mode radio buttons
-            ModeSchemaAndData.IsCheckedChanged += OnMigrationModeChanged;
-            ModeSchemaOnly.IsCheckedChanged += OnMigrationModeChanged;
-            ModeDataOnly.IsCheckedChanged += OnMigrationModeChanged;
-
-            // Ensure initial migration mode is applied after handlers are wired
+            // Initialize migration mode before wiring event handlers to avoid race condition
             if (ModeSchemaAndData.IsChecked is true)
             {
-                OnMigrationModeChanged(ModeSchemaAndData, new RoutedEventArgs());
+                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
+                MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
             }
             else if (ModeSchemaOnly.IsChecked is true)
             {
-                OnMigrationModeChanged(ModeSchemaOnly, new RoutedEventArgs());
+                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaOnly;
+                MigrationModeDescription.Text = "Crea solo la struttura delle tabelle nel database di destinazione, senza copiare i dati.";
             }
             else if (ModeDataOnly.IsChecked is true)
             {
-                OnMigrationModeChanged(ModeDataOnly, new RoutedEventArgs());
+                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.DataOnly;
+                MigrationModeDescription.Text = "Copia solo i dati nelle tabelle esistenti. Le tabelle devono già esistere nel database di destinazione.";
             }
+            else
+            {
+                // Default to SchemaAndData if no mode is checked
+                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
+                ModeSchemaAndData.IsChecked = true;
+                MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
+            }
+
+            // Wire up migration mode radio buttons after initial mode is set
+            ModeSchemaAndData.IsCheckedChanged += OnMigrationModeChanged;
+            ModeSchemaOnly.IsCheckedChanged += OnMigrationModeChanged;
+            ModeDataOnly.IsCheckedChanged += OnMigrationModeChanged;
             
             // Wire up window closing event
             Closing += OnWindowClosing;
