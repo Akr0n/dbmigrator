@@ -746,6 +746,30 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
+    /// Escapes a SQL Server identifier by replacing ] with ]]
+    /// </summary>
+    private string EscapeSqlServerIdentifier(string identifier)
+    {
+        if (string.IsNullOrEmpty(identifier))
+            return identifier;
+        
+        // SQL Server uses square brackets, escape ] by doubling it
+        return identifier.Replace("]", "]]");
+    }
+
+    /// <summary>
+    /// Escapes a PostgreSQL identifier by replacing " with ""
+    /// </summary>
+    private string EscapePostgresIdentifier(string identifier)
+    {
+        if (string.IsNullOrEmpty(identifier))
+            return identifier;
+        
+        // PostgreSQL uses double quotes, escape " by doubling it
+        return identifier.Replace("\"", "\"\"");
+    }
+
+    /// <summary>
     /// Splits SQL statements by semicolon while respecting string literals and comments.
     /// This handles cases where semicolons appear inside quoted strings or comments.
     /// </summary>
@@ -893,9 +917,9 @@ public class DatabaseService : IDatabaseService
         // Detect, rather than silently drop, invalid characters
         var sanitized = new System.Text.StringBuilder();
         var hasInvalidCharacters = false;
-        var upperIdentifier = identifier.ToUpperInvariant();
         
         foreach (char c in upperIdentifier)
+        {
             if (char.IsLetterOrDigit(c) || c == '_' || c == '$' || c == '#')
             {
                 sanitized.Append(c);
