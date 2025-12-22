@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using DatabaseMigrator.ViewModels;
 using DatabaseMigrator.Core.Models;
 using System.Reactive;
@@ -18,25 +19,8 @@ namespace DatabaseMigrator.Views;
     {
         private MainWindowViewModel? _vm;
         private bool _allowClose = false;
-        
-        private static readonly string LogPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "DatabaseMigrator", "debug.log");
 
-    private static void Log(string message)
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(LogPath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-            
-            var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}";
-            File.AppendAllText(LogPath, fullMessage + "\n");
-            System.Diagnostics.Debug.WriteLine(fullMessage);
-        }
-        catch { }
-    }
+    private static void Log(string message) => DatabaseMigrator.Core.Services.LoggerService.Log(message);
 
     public MainWindow() 
     { 
@@ -93,6 +77,31 @@ namespace DatabaseMigrator.Views;
             LoadConfigMenuItem.Click += OnLoadConfigurationClicked;
             ExitMenuItem.Click += (s, e) => Close();
             AboutMenuItem.Click += (s, e) => ShowAbout();
+            
+            // Initialize migration mode before wiring event handlers to avoid race condition
+            if (ModeSchemaAndData.IsChecked is true)
+            {
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData);
+            }
+            else if (ModeSchemaOnly.IsChecked is true)
+            {
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaOnly);
+            }
+            else if (ModeDataOnly.IsChecked is true)
+            {
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.DataOnly);
+            }
+            else
+            {
+                // Default to SchemaAndData if no mode is checked
+                ModeSchemaAndData.IsChecked = true;
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData);
+            }
+
+            // Wire up migration mode radio buttons after initial mode is set
+            ModeSchemaAndData.IsCheckedChanged += OnMigrationModeChanged;
+            ModeSchemaOnly.IsCheckedChanged += OnMigrationModeChanged;
+            ModeDataOnly.IsCheckedChanged += OnMigrationModeChanged;
             
             // Wire up window closing event
             Closing += OnWindowClosing;
@@ -235,6 +244,66 @@ namespace DatabaseMigrator.Views;
         }
     }
 
+    private bool _isUpdatingMigrationMode;
+
+    private void SetMigrationMode(MigrationMode mode)
+    {
+        if (_vm == null) return;
+        
+        _vm.SelectedMigrationMode = mode;
+        MigrationModeDescription.Text = mode switch
+        {
+            MigrationMode.SchemaAndData => "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.",
+            MigrationMode.SchemaOnly => "Crea solo la struttura delle tabelle nel database di destinazione, senza copiare i dati.",
+            MigrationMode.DataOnly => "Copia solo i dati nelle tabelle esistenti. Le tabelle devono già esistere nel database di destinazione.",
+            _ => "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati."
+        };
+    }
+
+    private void OnMigrationModeChanged(object? sender, RoutedEventArgs e)
+    {
+        if (_isUpdatingMigrationMode)
+        {
+            return;
+        }
+
+        _isUpdatingMigrationMode = true;
+        try
+        {
+            if (_vm == null) return;
+
+            if (ModeSchemaAndData.IsChecked is true)
+            {
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData);
+                Log("[OnMigrationModeChanged] Mode set to SchemaAndData");
+            }
+            else if (ModeSchemaOnly.IsChecked is true)
+            {
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaOnly);
+                Log("[OnMigrationModeChanged] Mode set to SchemaOnly");
+            }
+            else if (ModeDataOnly.IsChecked is true)
+            {
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.DataOnly);
+                Log("[OnMigrationModeChanged] Mode set to DataOnly");
+            }
+            else
+            {
+                // Fallback in case all radio buttons are unchecked: enforce a safe default
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData);
+                if (ModeSchemaAndData.IsChecked is not true)
+                {
+                    ModeSchemaAndData.IsChecked = true;
+                }
+                Log("[OnMigrationModeChanged] No mode checked; defaulting to SchemaAndData");
+            }
+        }
+        finally
+        {
+            _isUpdatingMigrationMode = false;
+        }
+    }
+
     private void OnConnectClicked(object? sender, RoutedEventArgs e)
     {
         if (_vm == null) return;
@@ -245,6 +314,22 @@ namespace DatabaseMigrator.Views;
             int sourceType = SourceTypeCombo.SelectedIndex;
             int targetType = TargetTypeCombo.SelectedIndex;
             
+            // Validate that the selected index corresponds to a valid DatabaseType
+            var databaseTypeValues = Enum.GetValues(typeof(DatabaseType));
+            int maxDatabaseType = databaseTypeValues.Length - 1;
+            if (sourceType < 0 || sourceType > maxDatabaseType)
+            {
+                Log($"[MainWindow] Invalid source database type index: {sourceType}");
+                ErrorTextBlock.Text = "❌ Seleziona un tipo di database sorgente valido";
+                return;
+            }
+            if (targetType < 0 || targetType > maxDatabaseType)
+            {
+                Log($"[MainWindow] Invalid target database type index: {targetType}");
+                ErrorTextBlock.Text = "❌ Seleziona un tipo di database destinazione valido";
+                return;
+            }
+            
             Log($"[MainWindow] Source Type Index: {sourceType}");
             Log($"[MainWindow] Target Type Index: {targetType}");
             Log($"[MainWindow] Source Server: {SourceServerTextBox.Text}");
@@ -252,7 +337,7 @@ namespace DatabaseMigrator.Views;
             Log($"[MainWindow] Source Database: {SourceDatabaseTextBox.Text}");
             Log($"[MainWindow] Source Username: {SourceUsernameTextBox.Text}");
             
-            // Mappatura diretta agli enum: 0=SqlServer, 1=Oracle, 2=PostgreSQL
+            // Mapping to enum: 0=SqlServer, 1=Oracle, 2=PostgreSQL
             _vm.SourceConnection!.SelectedDatabaseType = (DatabaseType)sourceType;
             _vm.SourceConnection.Server = SourceServerTextBox.Text ?? "";
             _vm.SourceConnection.Port = int.TryParse(SourcePortTextBox.Text, out int sp) ? sp : 1433;
@@ -282,21 +367,41 @@ namespace DatabaseMigrator.Views;
     {
         try
         {
-            var dialog = new SaveFileDialog
+            var storageProvider = StorageProvider;
+            if (storageProvider == null)
+            {
+                Log("[OnSaveConfigurationClicked] StorageProvider not available");
+                return;
+            }
+
+            var configDir = MainWindowViewModel.GetConfigDirectory();
+            if (!Directory.Exists(configDir))
+            {
+                Directory.CreateDirectory(configDir);
+                Log($"[OnSaveConfigurationClicked] Created configuration directory: {configDir}");
+            }
+
+            var startLocation = await storageProvider.TryGetFolderFromPathAsync(configDir);
+            if (startLocation == null)
+            {
+                Log($"[OnSaveConfigurationClicked] Unable to resolve start location for path: {configDir}. Using default picker location.");
+            }
+
+            var file = await storageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
                 Title = "Salva Configurazione",
-                InitialFileName = $"config_{DateTime.Now:yyyyMMdd_HHmmss}.json",
-                Directory = MainWindowViewModel.GetConfigDirectory(),
-                Filters = new System.Collections.Generic.List<FileDialogFilter>
+                SuggestedFileName = $"config_{DateTime.Now:yyyyMMdd_HHmmss}.json",
+                SuggestedStartLocation = startLocation,
+                FileTypeChoices = new[]
                 {
-                    new() { Name = "JSON Files", Extensions = new System.Collections.Generic.List<string> { "json" } },
-                    new() { Name = "All Files", Extensions = new System.Collections.Generic.List<string> { "*" } }
+                    new FilePickerFileType("JSON Files") { Patterns = new[] { "*.json" } },
+                    new FilePickerFileType("All Files") { Patterns = new[] { "*.*" } }
                 }
-            };
+            });
 
-            var result = await dialog.ShowAsync(this);
-            if (!string.IsNullOrEmpty(result))
+            if (file != null)
             {
+                var result = file.Path.LocalPath;
                 Log($"[OnSaveConfigurationClicked] Salvando in {result}");
                 if (await _vm!.SaveConfigurationAsync(result))
                 {
@@ -315,22 +420,31 @@ namespace DatabaseMigrator.Views;
     {
         try
         {
-            var dialog = new OpenFileDialog
+            var storageProvider = StorageProvider;
+            if (storageProvider == null)
+            {
+                Log("[OnLoadConfigurationClicked] StorageProvider not available");
+                return;
+            }
+
+            var configDir = MainWindowViewModel.GetConfigDirectory();
+            var startLocation = await storageProvider.TryGetFolderFromPathAsync(configDir);
+
+            var files = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
                 Title = "Carica Configurazione",
-                Directory = MainWindowViewModel.GetConfigDirectory(),
+                SuggestedStartLocation = startLocation,
                 AllowMultiple = false,
-                Filters = new System.Collections.Generic.List<FileDialogFilter>
+                FileTypeFilter = new[]
                 {
-                    new() { Name = "JSON Files", Extensions = new System.Collections.Generic.List<string> { "json" } },
-                    new() { Name = "All Files", Extensions = new System.Collections.Generic.List<string> { "*" } }
+                    new FilePickerFileType("JSON Files") { Patterns = new[] { "*.json" } },
+                    new FilePickerFileType("All Files") { Patterns = new[] { "*.*" } }
                 }
-            };
+            });
 
-            var results = await dialog.ShowAsync(this);
-            if (results != null && results.Length > 0)
+            if (files != null && files.Count > 0)
             {
-                var filePath = results[0];
+                var filePath = files[0].Path.LocalPath;
                 Log($"[OnLoadConfigurationClicked] Caricando da {filePath}");
                 if (await _vm!.LoadConfigurationAsync(filePath))
                 {
