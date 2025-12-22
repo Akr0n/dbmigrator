@@ -218,8 +218,8 @@ public class DatabaseService : IDatabaseService
                 
                 if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                 {
-                    // Validate and sanitize the database/user name to prevent SQL injection
-                    safeDbName = ValidateAndSanitizeOracleIdentifier(connectionInfo.Database, "database/user");
+                    // Escape the database/user name to prevent SQL injection
+                    safeDbName = EscapeOracleIdentifier(connectionInfo.Database, "database/user");
                     // Per Oracle, valida e escapa correttamente la password
                     var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
                     usedPassword = oraclePassword;  // Salva la password originale per la connessione
@@ -251,11 +251,7 @@ public class DatabaseService : IDatabaseService
                     // For Oracle, after creating the user, assign necessary privileges
                     if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                     {
-                        // Validate and sanitize the database/user name to prevent SQL injection
-                        // Oracle GRANT statements do not support parameterized queries, so we must
-                        // validate that the identifier comes from a trusted source and follows strict rules
-                        safeDbName = ValidateAndSanitizeOracleIdentifier(connectionInfo.Database, "database/user");
-                        
+                        // safeDbName was already validated and sanitized above using EscapeOracleIdentifier
                         // Log for security audit trail
                         Log($"Oracle: Granting privileges to validated user identifier: {safeDbName}");
                         
@@ -741,57 +737,46 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
-    /// Escapes a SQL Server identifier to prevent SQL injection.
+    /// Escapes PostgreSQL identifiers by replacing double quotes with two double quotes.
+    /// PostgreSQL uses double quotes to delimit identifiers, and internal double quotes
+    /// must be escaped as "".
     /// </summary>
-    private string EscapeSqlServerIdentifier(string identifier)
-    {
-        if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
-        
-        // Replace ] with ]] for SQL Server bracketed identifiers
-        return identifier.Replace("]", "]]");
-    }
-
-    /// <summary>
-    /// Escapes a PostgreSQL identifier to prevent SQL injection.
-    /// </summary>
+    /// <param name="identifier">The identifier to escape</param>
+    /// <returns>The escaped identifier</returns>
     private string EscapePostgresIdentifier(string identifier)
     {
-        if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+        if (string.IsNullOrEmpty(identifier))
+            return identifier;
         
-        // Replace " with "" for PostgreSQL quoted identifiers
         return identifier.Replace("\"", "\"\"");
     }
 
     /// <summary>
-    /// Escapes an Oracle identifier to prevent SQL injection.
+    /// Escapes SQL Server identifiers by replacing closing square brackets with two closing brackets.
+    /// SQL Server uses square brackets to delimit identifiers, and internal closing brackets
+    /// must be escaped as ]].
     /// </summary>
-    private string EscapeOracleIdentifier(string identifier)
+    /// <param name="identifier">The identifier to escape</param>
+    /// <returns>The escaped identifier</returns>
+    private string EscapeSqlServerIdentifier(string identifier)
     {
-        if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+        if (string.IsNullOrEmpty(identifier))
+            return identifier;
         
-        // Oracle identifiers: only allow alphanumeric, underscore, dollar sign
-        // Remove any invalid characters
-        var sanitized = new System.Text.StringBuilder();
-        foreach (char c in identifier)
-        {
-            if (char.IsLetterOrDigit(c) || c == '_' || c == '$')
-            {
-                sanitized.Append(c);
-            }
-        }
-        
-        var result = sanitized.ToString().ToUpperInvariant();
-        if (string.IsNullOrEmpty(result))
-            throw new ArgumentException("Identifier contains no valid characters", nameof(identifier));
-        
-        // Oracle identifiers cannot start with a digit (check after uppercase conversion)
-        if (char.IsDigit(result[0]))
-            result = "_" + result;
-        
-        return result;
+        return identifier.Replace("]", "]]");
+    }
+
+    /// <summary>
+    /// Escapes Oracle identifiers using the existing validation and sanitization logic.
+    /// This delegates to ValidateAndSanitizeOracleIdentifier for consistency with
+    /// the existing Oracle identifier handling.
+    /// </summary>
+    /// <param name="identifier">The identifier to escape</param>
+    /// <param name="identifierType">Description of what the identifier represents (for error messages)</param>
+    /// <returns>The escaped and validated identifier</returns>
+    private string EscapeOracleIdentifier(string identifier, string identifierType = "identifier")
+    {
+        return ValidateAndSanitizeOracleIdentifier(identifier, identifierType);
     }
 
     /// <summary>
