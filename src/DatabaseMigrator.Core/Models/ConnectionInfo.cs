@@ -58,6 +58,12 @@ public class ConnectionInfo
         // These are powerful SYSTEM privileges and must only be granted to DBA/administrative
         // accounts, never to regular application users. Without appropriate privileges, user /
         // schema creation operations will fail with ORA-01031 (insufficient privileges).
+        //
+        // WARNING: Non-SYS users CANNOT use SYSDBA privilege. Only the SYS user can connect with
+        // SYSDBA privilege. If using a non-SYS administrative account (e.g., SYSTEM or custom DBA),
+        // that account MUST have the system privileges listed above explicitly granted to it.
+        // Attempting to use SYSDBA with non-SYS users or lacking required privileges will result
+        // in ORA-01031 (insufficient privileges) errors during database/user creation operations.
         string escapedPassword = EscapeOraclePassword(Password);
         var cs = $"Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={Server})(PORT={Port}))(CONNECT_DATA=(SERVICE_NAME={Database})));User Id={Username};Password={escapedPassword};";
         
