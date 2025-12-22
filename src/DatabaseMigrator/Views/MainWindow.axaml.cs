@@ -81,25 +81,21 @@ namespace DatabaseMigrator.Views;
             // Initialize migration mode before wiring event handlers to avoid race condition
             if (ModeSchemaAndData.IsChecked is true)
             {
-                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
-                MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData);
             }
             else if (ModeSchemaOnly.IsChecked is true)
             {
-                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaOnly;
-                MigrationModeDescription.Text = "Crea solo la struttura delle tabelle nel database di destinazione, senza copiare i dati.";
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaOnly);
             }
             else if (ModeDataOnly.IsChecked is true)
             {
-                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.DataOnly;
-                MigrationModeDescription.Text = "Copia solo i dati nelle tabelle esistenti. Le tabelle devono già esistere nel database di destinazione.";
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.DataOnly);
             }
             else
             {
                 // Default to SchemaAndData if no mode is checked
-                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
                 ModeSchemaAndData.IsChecked = true;
-                MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData);
             }
 
             // Wire up migration mode radio buttons after initial mode is set
@@ -250,6 +246,20 @@ namespace DatabaseMigrator.Views;
 
     private bool _isUpdatingMigrationMode;
 
+    private void SetMigrationMode(MigrationMode mode)
+    {
+        if (_vm == null) return;
+        
+        _vm.SelectedMigrationMode = mode;
+        MigrationModeDescription.Text = mode switch
+        {
+            MigrationMode.SchemaAndData => "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.",
+            MigrationMode.SchemaOnly => "Crea solo la struttura delle tabelle nel database di destinazione, senza copiare i dati.",
+            MigrationMode.DataOnly => "Copia solo i dati nelle tabelle esistenti. Le tabelle devono già esistere nel database di destinazione.",
+            _ => "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati."
+        };
+    }
+
     private void OnMigrationModeChanged(object? sender, RoutedEventArgs e)
     {
         if (_isUpdatingMigrationMode)
@@ -264,31 +274,27 @@ namespace DatabaseMigrator.Views;
 
             if (ModeSchemaAndData.IsChecked is true)
             {
-                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
-                MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData);
                 Log("[OnMigrationModeChanged] Mode set to SchemaAndData");
             }
             else if (ModeSchemaOnly.IsChecked is true)
             {
-                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaOnly;
-                MigrationModeDescription.Text = "Crea solo la struttura delle tabelle nel database di destinazione, senza copiare i dati.";
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaOnly);
                 Log("[OnMigrationModeChanged] Mode set to SchemaOnly");
             }
             else if (ModeDataOnly.IsChecked is true)
             {
-                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.DataOnly;
-                MigrationModeDescription.Text = "Copia solo i dati nelle tabelle esistenti. Le tabelle devono già esistere nel database di destinazione.";
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.DataOnly);
                 Log("[OnMigrationModeChanged] Mode set to DataOnly");
             }
             else
             {
                 // Fallback in case all radio buttons are unchecked: enforce a safe default
-                _vm.SelectedMigrationMode = DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData;
+                SetMigrationMode(DatabaseMigrator.Core.Models.MigrationMode.SchemaAndData);
                 if (ModeSchemaAndData.IsChecked is not true)
                 {
                     ModeSchemaAndData.IsChecked = true;
                 }
-                MigrationModeDescription.Text = "Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati.";
                 Log("[OnMigrationModeChanged] No mode checked; defaulting to SchemaAndData");
             }
         }
