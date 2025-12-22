@@ -943,6 +943,40 @@ public class DatabaseService : IDatabaseService
         return result;
     }
 
+    /// <summary>
+    /// Escapes a SQL Server identifier to prevent SQL injection.
+    /// SQL Server uses square brackets to quote identifiers, and closing brackets
+    /// must be escaped by doubling them.
+    /// </summary>
+    /// <param name="identifier">The identifier to escape</param>
+    /// <returns>The escaped identifier</returns>
+    /// <exception cref="ArgumentException">Thrown if the identifier is null or empty</exception>
+    private string EscapeSqlServerIdentifier(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+        
+        // Replace ] with ]] for SQL Server bracketed identifiers
+        return identifier.Replace("]", "]]");
+    }
+
+    /// <summary>
+    /// Escapes a PostgreSQL identifier to prevent SQL injection.
+    /// PostgreSQL uses double quotes to quote identifiers, and double quotes
+    /// must be escaped by doubling them.
+    /// </summary>
+    /// <param name="identifier">The identifier to escape</param>
+    /// <returns>The escaped identifier</returns>
+    /// <exception cref="ArgumentException">Thrown if the identifier is null or empty</exception>
+    private string EscapePostgresIdentifier(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException("Identifier cannot be null or empty", nameof(identifier));
+        
+        // Replace " with "" for PostgreSQL quoted identifiers
+        return identifier.Replace("\"", "\"\"");
+    }
+
     private string GetSqlServerTableSchema(string schema, string tableName)
     {
         return $@"
