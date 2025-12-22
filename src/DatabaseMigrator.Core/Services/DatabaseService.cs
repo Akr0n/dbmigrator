@@ -901,15 +901,11 @@ public class DatabaseService : IDatabaseService
         if (string.IsNullOrWhiteSpace(identifier))
             throw new ArgumentException($"Oracle {identifierType} identifier cannot be null or empty", nameof(identifier));
         
-    /// Oracle identifier rules (for reference):
-    /// - Must start with a letter (A-Z, a-z)
-    /// - Can contain only letters, digits, underscore (_), dollar sign ($), and hash (#)
-    /// - Maximum length is 30 characters (Oracle 12.1 and earlier) or 128 characters (Oracle 12.2+)
-    /// - Reserved words are not validated here as they would cause Oracle errors
-    /// 
-    /// Note: This method enforces only the allowed-character and starting-character rules.
-    /// It does not enforce the 30/128-character maximum length; that constraint is enforced
-    /// by Oracle itself depending on the database version.
+        // Normalize to uppercase first so any subsequent use of the identifier value is consistent
+        var upperIdentifier = identifier.ToUpperInvariant();
+        
+        // Oracle identifiers: only allow alphanumeric, underscore, dollar sign, and hash
+        // Detect, rather than silently drop, invalid characters
         var sanitized = new System.Text.StringBuilder();
         var hasInvalidCharacters = false;
         
