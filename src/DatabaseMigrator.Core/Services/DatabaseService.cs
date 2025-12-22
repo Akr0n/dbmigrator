@@ -854,6 +854,15 @@ public class DatabaseService : IDatabaseService
             // Handle double quotes (e.g., quoted identifiers)
             if (ch == '"' && !inSingleQuote)
             {
+                if (inDoubleQuote && idx + 1 < sql.Length && sql[idx + 1] == '"')
+                {
+                    // Escaped double quote inside identifier
+                    current.Append(ch);
+                    current.Append(sql[idx + 1]);
+                    idx++;
+                    continue;
+                }
+
                 inDoubleQuote = !inDoubleQuote;
                 current.Append(ch);
                 continue;
