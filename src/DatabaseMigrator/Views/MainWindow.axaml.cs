@@ -392,7 +392,7 @@ namespace DatabaseMigrator.Views;
                 Title = "Salva Configurazione",
                 SuggestedFileName = $"config_{DateTime.Now:yyyyMMdd_HHmmss}.json",
                 SuggestedStartLocation = startLocation,
-                FileTypeFilter = new[]
+                FileTypeChoices = new[]
                 {
                     new FilePickerFileType("JSON Files") { Patterns = new[] { "*.json" } },
                     new FilePickerFileType("All Files") { Patterns = new[] { "*.*" } }
