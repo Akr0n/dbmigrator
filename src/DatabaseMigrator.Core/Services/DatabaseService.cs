@@ -167,8 +167,8 @@ public class DatabaseService : IDatabaseService
                         : connectionInfo.Database;
                     command.Parameters.Add(param);
                     
-                    var result = await command.ExecuteScalarAsync();
-                    return result != null;
+                    var scalarResult = await command.ExecuteScalarAsync();
+                    return scalarResult != null;
                 }
             }
         }
