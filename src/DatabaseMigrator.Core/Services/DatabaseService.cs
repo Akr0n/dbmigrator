@@ -893,9 +893,9 @@ public class DatabaseService : IDatabaseService
         // Detect, rather than silently drop, invalid characters
         var sanitized = new System.Text.StringBuilder();
         var hasInvalidCharacters = false;
+        var upperIdentifier = identifier.ToUpperInvariant();
         
         foreach (char c in upperIdentifier)
-        {
             if (char.IsLetterOrDigit(c) || c == '_' || c == '$' || c == '#')
             {
                 sanitized.Append(c);
