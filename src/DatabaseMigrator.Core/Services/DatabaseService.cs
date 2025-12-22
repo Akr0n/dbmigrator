@@ -737,18 +737,6 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
-    /// Escapes SQL Server identifiers by replacing ] with ]].
-    /// SQL Server uses brackets [] for identifiers, and closing brackets need to be escaped.
-    /// </summary>
-    private string EscapeSqlServerIdentifier(string identifier)
-    {
-        if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException("SQL Server identifier cannot be null or empty", nameof(identifier));
-        
-        return identifier.Replace("]", "]]");
-    }
-
-    /// <summary>
     /// Escapes PostgreSQL identifiers by replacing " with "".
     /// PostgreSQL uses double quotes for identifiers, and quotes need to be escaped.
     /// </summary>
