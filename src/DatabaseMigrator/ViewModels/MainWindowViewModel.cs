@@ -347,17 +347,17 @@ public class MainWindowViewModel : ViewModelBase
                     ProgressPercentage = progressPercent;
                     ProgressText = $"{progressPercent}% - {table.TableName}";
                 }
+                
+                // Set final progress to 100% with generic text for modes that include data migration
+                ProgressPercentage = 100;
+                ProgressText = "100%";
             }
             else
             {
                 Log($"[StartMigrationAsync] Skipping data migration (Mode: {SelectedMigrationMode})");
-                ProgressPercentage = 100;
-                ProgressText = "100%";
             }
 
             Log($"[StartMigrationAsync] Migration completed successfully!");
-            ProgressPercentage = 100;
-            ProgressText = "100%";
             ErrorMessage = "";
             
             string modeDescription = SelectedMigrationMode switch
