@@ -737,18 +737,6 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
-    /// Escapes PostgreSQL identifiers by replacing " with "".
-    /// PostgreSQL uses double quotes for identifiers, and quotes need to be escaped.
-    /// </summary>
-    private string EscapePostgresIdentifier(string identifier)
-    {
-        if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException("PostgreSQL identifier cannot be null or empty", nameof(identifier));
-        
-        return identifier.Replace("\"", "\"\"");
-    }
-
-    /// <summary>
     /// Escapes Oracle identifiers by validating and sanitizing them.
     /// Oracle identifiers have specific rules about allowed characters.
     /// </summary>
