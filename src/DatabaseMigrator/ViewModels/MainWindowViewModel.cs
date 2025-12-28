@@ -327,29 +327,30 @@ public class MainWindowViewModel : ViewModelBase
                     
                     var missingTables = new System.Collections.Concurrent.ConcurrentBag<string>();
                     // Limit the number of concurrent table existence checks to avoid overloading the database
-                    var semaphore = new System.Threading.SemaphoreSlim(10);
-
-                    var validationTasks = tablesToMigrate.Select(async table =>
+                    using (var semaphore = new System.Threading.SemaphoreSlim(10))
                     {
-                        await semaphore.WaitAsync();
-                        try
+                        var validationTasks = tablesToMigrate.Select(async table =>
                         {
-                            bool exists = await _schemaMigrationService.CheckTableExistsAsync(
-                                TargetConnection.ConnectionInfo, table.Schema, table.TableName);
-
-                            if (!exists)
+                            await semaphore.WaitAsync();
+                            try
                             {
-                                missingTables.Add($"{table.Schema}.{table.TableName}");
-                                Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} does not exist in target database");
-                            }
-                        }
-                        finally
-                        {
-                            semaphore.Release();
-                        }
-                    });
+                                bool exists = await _schemaMigrationService.CheckTableExistsAsync(
+                                    TargetConnection.ConnectionInfo, table.Schema, table.TableName);
 
-                    await System.Threading.Tasks.Task.WhenAll(validationTasks);
+                                if (!exists)
+                                {
+                                    missingTables.Add($"{table.Schema}.{table.TableName}");
+                                    Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} does not exist in target database");
+                                }
+                            }
+                            finally
+                            {
+                                semaphore.Release();
+                            }
+                        });
+
+                        await System.Threading.Tasks.Task.WhenAll(validationTasks);
+                    }
                     
                     if (missingTables.Count > 0)
                     {
