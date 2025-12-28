@@ -512,78 +512,91 @@ public class DatabaseService : IDatabaseService
                             }
                         }
 
-                        // Inserisci i dati nel target in batch
-                        using (var targetCommand = targetConn.CreateCommand())
+                        try
                         {
-                            targetCommand.CommandTimeout = CommandTimeout;
-                            if (transaction != null)
-                                targetCommand.Transaction = transaction;
-
-                            for (int i = 0; i < batch.Rows.Count; i += BatchSize)
+                            // Inserisci i dati nel target in batch
+                            using (var targetCommand = targetConn.CreateCommand())
                             {
-                                var batchRows = batch.Rows.Cast<DataRow>()
-                                    .Skip(i)
-                                    .Take(BatchSize)
-                                    .ToList();
+                                targetCommand.CommandTimeout = CommandTimeout;
+                                if (transaction != null)
+                                    targetCommand.Transaction = transaction;
 
-                                string insertQuery = BuildInsertQuery(target.DatabaseType, table.Schema, table.TableName, batch.Columns, batchRows);
-                                
-                                try
+                                for (int i = 0; i < batch.Rows.Count; i += BatchSize)
                                 {
-                                    // For Oracle: execute each INSERT individually
-                                    if (target.DatabaseType == DatabaseType.Oracle)
+                                    var batchRows = batch.Rows.Cast<DataRow>()
+                                        .Skip(i)
+                                        .Take(BatchSize)
+                                        .ToList();
+
+                                    string insertQuery = BuildInsertQuery(target.DatabaseType, table.Schema, table.TableName, batch.Columns, batchRows);
+                                    
+                                    try
                                     {
-                                        // Split queries using robust parser that respects string literals
-                                        var queries = SplitSqlStatements(insertQuery);
-                                        Log($"[MigrateTableAsync] Oracle batch: {batchRows.Count} rows, {queries.Count} INSERT statements");
-                                        
-                                        int rowsInserted = 0;
-                                        foreach (var cleanQuery in queries.Select(q => q.Trim()).Where(q => !string.IsNullOrEmpty(q)))
+                                        // For Oracle: execute each INSERT individually
+                                        if (target.DatabaseType == DatabaseType.Oracle)
                                         {
-                                            targetCommand.CommandText = cleanQuery;
+                                            // Split queries using robust parser that respects string literals
+                                            var queries = SplitSqlStatements(insertQuery);
+                                            Log($"[MigrateTableAsync] Oracle batch: {batchRows.Count} rows, {queries.Count} INSERT statements");
+                                            
+                                            int rowsInserted = 0;
+                                            foreach (var cleanQuery in queries.Select(q => q.Trim()).Where(q => !string.IsNullOrEmpty(q)))
+                                            {
+                                                targetCommand.CommandText = cleanQuery;
+                                                var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
+                                                rowsInserted += rowsAffected;
+                                            }
+                                            
+                                            Log($"[MigrateTableAsync] Oracle batch completed ({rowsInserted} rows inserted)");
+                                            // Note: COMMIT will be executed once at the end of migration
+                                            // This improves performance for large migrations, but means that if an error occurs,
+                                            // all data inserted in the current transaction will be rolled back.
+                                            // Consider the tradeoff between performance and data safety for your use case.
+                                        }
+                                        else
+                                        {
+                                            // For SQL Server and PostgreSQL: execute the batch
+                                            targetCommand.CommandText = insertQuery;
                                             var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
-                                            rowsInserted += rowsAffected;
+                                            Log($"[MigrateTableAsync] Batch INSERT executed, rows affected: {rowsAffected}");
                                         }
                                         
-                                        Log($"[MigrateTableAsync] Oracle batch completed ({rowsInserted} rows inserted)");
-                                        // Note: COMMIT will be executed once at the end of migration
-                                        // This improves performance for large migrations, but means that if an error occurs,
-                                        // all data inserted in the current transaction will be rolled back.
-                                        // Consider the tradeoff between performance and data safety for your use case.
-                                    }
-                                    else
-                                    {
-                                        // For SQL Server and PostgreSQL: execute the batch
-                                        targetCommand.CommandText = insertQuery;
-                                        var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
-                                        Log($"[MigrateTableAsync] Batch INSERT executed, rows affected: {rowsAffected}");
-                                    }
-                                    
-                                    migratedRows += batchRows.Count;
-                                    processedBatches++;
+                                        migratedRows += batchRows.Count;
+                                        processedBatches++;
 
-                                    int percentage = (int)((processedBatches / (double)totalBatches) * 100);
-                                    progress?.Report(Math.Min(percentage, 100));
-                                }
-                                catch (Exception ex)
-                                {
-                                    throw new InvalidOperationException(
-                                        $"Error during batch insert for {table.Schema}.{table.TableName}: {ex.Message}", ex);
+                                        int percentage = (int)((processedBatches / (double)totalBatches) * 100);
+                                        progress?.Report(Math.Min(percentage, 100));
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        throw new InvalidOperationException(
+                                            $"Error during batch insert for {table.Schema}.{table.TableName}: {ex.Message}", ex);
+                                    }
                                 }
                             }
                         }
-
-                        // For SQL Server: disable IDENTITY_INSERT after all inserts
-                        if (target.DatabaseType == DatabaseType.SqlServer && hasIdentity)
+                        finally
                         {
-                            Log($"[MigrateTableAsync] Disabling IDENTITY_INSERT for {formattedTableName}");
-                            using (var identityCmd = targetConn.CreateCommand())
+                            // For SQL Server: disable IDENTITY_INSERT after all inserts
+                            // This must always execute to prevent leaving IDENTITY_INSERT enabled
+                            if (target.DatabaseType == DatabaseType.SqlServer && hasIdentity)
                             {
-                                identityCmd.CommandText = $"SET IDENTITY_INSERT {formattedTableName} OFF";
-                                identityCmd.CommandTimeout = CommandTimeout;
-                                if (transaction != null)
-                                    identityCmd.Transaction = transaction;
-                                await identityCmd.ExecuteNonQueryAsync();
+                                try
+                                {
+                                    Log($"[MigrateTableAsync] Disabling IDENTITY_INSERT for {formattedTableName}");
+                                    using (var identityCmd = targetConn.CreateCommand())
+                                    {
+                                        identityCmd.CommandText = $"SET IDENTITY_INSERT {formattedTableName} OFF";
+                                        identityCmd.CommandTimeout = CommandTimeout;
+                                        if (transaction != null)
+                                            identityCmd.Transaction = transaction;
+                                        await identityCmd.ExecuteNonQueryAsync();
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Log($"[MigrateTableAsync] Warning: Failed to disable IDENTITY_INSERT for {formattedTableName}: {ex.Message}");
+                                }
                             }
                         }
                     }
@@ -987,7 +1000,7 @@ public class DatabaseService : IDatabaseService
         // Oracle identifiers: only allow alphanumeric, underscore, dollar sign, and hash
         // Detect, rather than silently drop, invalid characters
         var sanitized = new System.Text.StringBuilder();
-        var invalidChars = new System.Text.StringBuilder();
+        var invalidCharsSet = new System.Collections.Generic.HashSet<char>();
         
         foreach (char c in upperIdentifier)
         {
@@ -997,18 +1010,20 @@ public class DatabaseService : IDatabaseService
             }
             else
             {
-                if (!invalidChars.ToString().Contains(c))
-                    invalidChars.Append(c);
+                invalidCharsSet.Add(c);
             }
         }
         
         var result = sanitized.ToString();
         
-        if (invalidChars.Length > 0)
+        if (invalidCharsSet.Count > 0)
+        {
+            var invalidChars = new string(invalidCharsSet.ToArray());
             throw new ArgumentException(
                 $"Oracle {identifierType} identifier '{identifier}' contains invalid characters: '{invalidChars}'. " +
                 "Only alphanumeric characters, underscore (_), dollar sign ($), and hash (#) are allowed.", 
                 nameof(identifier));
+        }
         
         // Oracle identifiers cannot start with a digit
         if (result.Length > 0 && char.IsDigit(result[0]))

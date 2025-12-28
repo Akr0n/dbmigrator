@@ -325,27 +325,41 @@ public class MainWindowViewModel : ViewModelBase
                     Log($"[StartMigrationAsync] Validating table existence in target database (DataOnly mode)...");
                     StatusMessage = "Verifica esistenza tabelle nel database di destinazione...";
                     
-                    var missingTables = new System.Collections.Generic.List<string>();
-                    foreach (var table in tablesToMigrate)
+                    var missingTables = new System.Collections.Concurrent.ConcurrentBag<string>();
+                    // Limit the number of concurrent table existence checks to avoid overloading the database
+                    var semaphore = new System.Threading.SemaphoreSlim(10);
+
+                    var validationTasks = tablesToMigrate.Select(async table =>
                     {
-                        bool exists = await _schemaMigrationService.CheckTableExistsAsync(
-                            TargetConnection.ConnectionInfo, table.Schema, table.TableName);
-                        
-                        if (!exists)
+                        await semaphore.WaitAsync();
+                        try
                         {
-                            missingTables.Add($"{table.Schema}.{table.TableName}");
-                            Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} does not exist in target database");
+                            bool exists = await _schemaMigrationService.CheckTableExistsAsync(
+                                TargetConnection.ConnectionInfo, table.Schema, table.TableName);
+
+                            if (!exists)
+                            {
+                                missingTables.Add($"{table.Schema}.{table.TableName}");
+                                Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} does not exist in target database");
+                            }
                         }
-                    }
+                        finally
+                        {
+                            semaphore.Release();
+                        }
+                    });
+
+                    await System.Threading.Tasks.Task.WhenAll(validationTasks);
                     
                     if (missingTables.Count > 0)
                     {
-                        string missingList = string.Join(", ", missingTables.Take(5));
-                        if (missingTables.Count > 5)
-                            missingList += $" e altre {missingTables.Count - 5} tabelle";
+                        var missingTablesList = missingTables.ToList();
+                        string missingList = string.Join(", ", missingTablesList.Take(5));
+                        if (missingTablesList.Count > 5)
+                            missingList += $" e altre {missingTablesList.Count - 5} tabelle";
                         
                         throw new InvalidOperationException(
-                            $"Modalità 'Solo Dati' selezionata ma {missingTables.Count} tabella/e non esistono nel database di destinazione: {missingList}. " +
+                            $"Modalità 'Solo Dati' selezionata ma {missingTablesList.Count} tabella/e non esistono nel database di destinazione: {missingList}. " +
                             "Usare 'Schema + Dati' o 'Solo Schema' per creare prima le tabelle.");
                     }
                     
