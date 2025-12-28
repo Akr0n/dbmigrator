@@ -319,6 +319,39 @@ public class MainWindowViewModel : ViewModelBase
             // Migrate data if needed
             if (SelectedMigrationMode == MigrationMode.SchemaAndData || SelectedMigrationMode == MigrationMode.DataOnly)
             {
+                // For DataOnly mode: validate that all tables exist in the target database before starting
+                if (SelectedMigrationMode == MigrationMode.DataOnly)
+                {
+                    Log($"[StartMigrationAsync] Validating table existence in target database (DataOnly mode)...");
+                    StatusMessage = "Verifica esistenza tabelle nel database di destinazione...";
+                    
+                    var missingTables = new System.Collections.Generic.List<string>();
+                    foreach (var table in tablesToMigrate)
+                    {
+                        bool exists = await _schemaMigrationService.CheckTableExistsAsync(
+                            TargetConnection.ConnectionInfo, table.Schema, table.TableName);
+                        
+                        if (!exists)
+                        {
+                            missingTables.Add($"{table.Schema}.{table.TableName}");
+                            Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} does not exist in target database");
+                        }
+                    }
+                    
+                    if (missingTables.Count > 0)
+                    {
+                        string missingList = string.Join(", ", missingTables.Take(5));
+                        if (missingTables.Count > 5)
+                            missingList += $" e altre {missingTables.Count - 5} tabelle";
+                        
+                        throw new InvalidOperationException(
+                            $"Modalità 'Solo Dati' selezionata ma {missingTables.Count} tabella/e non esistono nel database di destinazione: {missingList}. " +
+                            "Usare 'Schema + Dati' o 'Solo Schema' per creare prima le tabelle.");
+                    }
+                    
+                    Log($"[StartMigrationAsync] All {tablesToMigrate.Count} tables exist in target database");
+                }
+
                 Log($"[StartMigrationAsync] Starting data migration (Mode: {SelectedMigrationMode})...");
                 StatusMessage = "Migrazione dati...";
                 int tablesProcessed = 0;

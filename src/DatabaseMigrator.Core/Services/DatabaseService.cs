@@ -491,6 +491,27 @@ public class DatabaseService : IDatabaseService
                         int processedBatches = 0;
                         int totalBatches = (int)Math.Ceiling((double)batch.Rows.Count / BatchSize);
 
+                        // For SQL Server: check if table has IDENTITY column and enable IDENTITY_INSERT
+                        bool hasIdentity = false;
+                        string formattedTableName = FormatTableName(target.DatabaseType, table.Schema, table.TableName);
+                        
+                        if (target.DatabaseType == DatabaseType.SqlServer)
+                        {
+                            hasIdentity = await HasIdentityColumnAsync(targetConn, table.Schema, table.TableName, transaction);
+                            if (hasIdentity)
+                            {
+                                Log($"[MigrateTableAsync] Enabling IDENTITY_INSERT for {formattedTableName}");
+                                using (var identityCmd = targetConn.CreateCommand())
+                                {
+                                    identityCmd.CommandText = $"SET IDENTITY_INSERT {formattedTableName} ON";
+                                    identityCmd.CommandTimeout = CommandTimeout;
+                                    if (transaction != null)
+                                        identityCmd.Transaction = transaction;
+                                    await identityCmd.ExecuteNonQueryAsync();
+                                }
+                            }
+                        }
+
                         // Inserisci i dati nel target in batch
                         using (var targetCommand = targetConn.CreateCommand())
                         {
@@ -551,6 +572,20 @@ public class DatabaseService : IDatabaseService
                                 }
                             }
                         }
+
+                        // For SQL Server: disable IDENTITY_INSERT after all inserts
+                        if (target.DatabaseType == DatabaseType.SqlServer && hasIdentity)
+                        {
+                            Log($"[MigrateTableAsync] Disabling IDENTITY_INSERT for {formattedTableName}");
+                            using (var identityCmd = targetConn.CreateCommand())
+                            {
+                                identityCmd.CommandText = $"SET IDENTITY_INSERT {formattedTableName} OFF";
+                                identityCmd.CommandTimeout = CommandTimeout;
+                                if (transaction != null)
+                                    identityCmd.Transaction = transaction;
+                                await identityCmd.ExecuteNonQueryAsync();
+                            }
+                        }
                     }
                 }
 
@@ -600,6 +635,42 @@ public class DatabaseService : IDatabaseService
         catch (Exception ex)
         {
             Log($"[FinalizeTransactionAsync] Error finalizing transaction: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Checks if a SQL Server table has an IDENTITY column.
+    /// </summary>
+    private async Task<bool> HasIdentityColumnAsync(DbConnection connection, string schema, string tableName, DbTransaction? transaction)
+    {
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+                SELECT COUNT(*)
+                FROM sys.columns c
+                INNER JOIN sys.tables t ON c.object_id = t.object_id
+                INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE s.name = @Schema
+                  AND t.name = @TableName
+                  AND c.is_identity = 1";
+            command.CommandTimeout = CommandTimeout;
+            if (transaction != null)
+                command.Transaction = transaction;
+
+            var schemaParam = command.CreateParameter();
+            schemaParam.ParameterName = "@Schema";
+            schemaParam.Value = schema;
+            command.Parameters.Add(schemaParam);
+
+            var tableParam = command.CreateParameter();
+            tableParam.ParameterName = "@TableName";
+            tableParam.Value = tableName;
+            command.Parameters.Add(tableParam);
+
+            var result = await command.ExecuteScalarAsync();
+            var count = Convert.ToInt32(result ?? 0);
+            Log($"[HasIdentityColumnAsync] Table {schema}.{tableName} has {count} identity column(s)");
+            return count > 0;
         }
     }
 
@@ -916,7 +987,7 @@ public class DatabaseService : IDatabaseService
         // Oracle identifiers: only allow alphanumeric, underscore, dollar sign, and hash
         // Detect, rather than silently drop, invalid characters
         var sanitized = new System.Text.StringBuilder();
-        var hasInvalidCharacters = false;
+        var invalidChars = new System.Text.StringBuilder();
         
         foreach (char c in upperIdentifier)
         {
@@ -926,14 +997,18 @@ public class DatabaseService : IDatabaseService
             }
             else
             {
-                hasInvalidCharacters = true;
+                if (!invalidChars.ToString().Contains(c))
+                    invalidChars.Append(c);
             }
         }
         
         var result = sanitized.ToString();
         
-        if (hasInvalidCharacters)
-            throw new ArgumentException("Identifier contains invalid characters", nameof(identifier));
+        if (invalidChars.Length > 0)
+            throw new ArgumentException(
+                $"Oracle {identifierType} identifier '{identifier}' contains invalid characters: '{invalidChars}'. " +
+                "Only alphanumeric characters, underscore (_), dollar sign ($), and hash (#) are allowed.", 
+                nameof(identifier));
         
         // Oracle identifiers cannot start with a digit
         if (result.Length > 0 && char.IsDigit(result[0]))

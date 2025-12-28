@@ -23,6 +23,22 @@ public class SchemaMigrationService
     private static void Log(string message) => LoggerService.Log(message);
 
     /// <summary>
+    /// Checks if a table exists in the specified database.
+    /// </summary>
+    /// <param name="connectionInfo">Connection info for the database to check</param>
+    /// <param name="schema">Schema name</param>
+    /// <param name="tableName">Table name</param>
+    /// <returns>True if the table exists, false otherwise</returns>
+    public async Task<bool> CheckTableExistsAsync(ConnectionInfo connectionInfo, string schema, string tableName)
+    {
+        using (var connection = CreateConnection(connectionInfo))
+        {
+            await connection.OpenAsync();
+            return await TableExistsAsync(connection, connectionInfo.DatabaseType, schema, tableName);
+        }
+    }
+
+    /// <summary>
     /// Creates the schema in the target database based on the source database.
     /// Handles automatic data type mapping.
     /// </summary>
