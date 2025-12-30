@@ -255,7 +255,7 @@
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" Spacing="10">
-                                            <TextBlock Text="✓" Foreground="#43a047" FontSize="11"/>
+                                            <TextBlock IsVisible="{Binding IsSelected}" Text="✓" Foreground="#43a047" FontSize="11"/>
                                             <TextBlock Text="{Binding Schema}" Foreground="#64b5f6" FontSize="11"/>
                                             <TextBlock Text="." Foreground="#e0e0e0" FontSize="11"/>
                                             <TextBlock FontSize="11" Foreground="#e0e0e0" FontWeight="Bold" Text="{Binding TableName}"/>
