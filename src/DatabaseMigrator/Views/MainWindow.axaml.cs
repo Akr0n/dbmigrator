@@ -52,14 +52,27 @@ namespace DatabaseMigrator.Views;
                     StartMigrationButton.IsEnabled = _vm.IsConnected && !isMigrating;
                 });
             
-            // Bind Tables Lists
-            SourceTablesListBox.Bind(ItemsControl.ItemsSourceProperty, new Binding("Tables") { Source = _vm });
-            TargetTablesListBox.Bind(ItemsControl.ItemsSourceProperty, new Binding("Tables") { Source = _vm });
+            // Bind Tables Lists - use FilteredTables for search functionality
+            SourceTablesListBox.Bind(ItemsControl.ItemsSourceProperty, new Binding("FilteredTables") { Source = _vm });
+            TargetTablesListBox.Bind(ItemsControl.ItemsSourceProperty, new Binding("FilteredTargetTables") { Source = _vm });
+            
+            // Bind search box
+            TableSearchTextBox.Bind(TextBox.TextProperty, new Binding("TableSearchFilter") { Source = _vm, Mode = BindingMode.TwoWay });
+            
+            // Wire up search clear button
+            ClearSearchButton.Click += (s, e) =>
+            {
+                TableSearchTextBox.Text = "";
+                _vm.TableSearchFilter = "";
+            };
+            
+            // Wire up refresh button
+            RefreshSourceButton.Click += OnRefreshSourceClicked;
             
             // Bind statistics
             SourceCountTextBlock.Bind(TextBlock.TextProperty, new Binding("Tables.Count") { Source = _vm, StringFormat = "📋 Tabelle sorgente: {0}" });
             SelectedCountTextBlock.Bind(TextBlock.TextProperty, new Binding("SelectedTablesCount") { Source = _vm, StringFormat = "✓ Tabelle selezionate: {0}" });
-            TargetCountTextBlock.Bind(TextBlock.TextProperty, new Binding("Tables.Count") { Source = _vm, StringFormat = "📋 Tabelle destinazione: {0}" });
+            TargetCountTextBlock.Bind(TextBlock.TextProperty, new Binding("FilteredTables.Count") { Source = _vm, StringFormat = "📋 Tabelle visualizzate: {0}" });
             TotalRowsTextBlock.Bind(TextBlock.TextProperty, new Binding("TotalRowsToMigrate") { Source = _vm, StringFormat = "📊 Righe totali da migrare: {0}" });
             
             // Wire up button clicks
@@ -241,6 +254,21 @@ namespace DatabaseMigrator.Views;
         else
         {
             Log("[DeselectAllButton_Click] ViewModel is null!");
+        }
+    }
+
+    private async void OnRefreshSourceClicked(object? sender, RoutedEventArgs e)
+    {
+        Log("[OnRefreshSourceClicked] Button clicked!");
+        if (_vm != null && _vm.IsConnected && !_vm.IsMigrating)
+        {
+            Log("[OnRefreshSourceClicked] Refreshing tables...");
+            await _vm.RefreshTablesAsync();
+            Log("[OnRefreshSourceClicked] Tables refresh completed");
+        }
+        else
+        {
+            Log("[OnRefreshSourceClicked] Cannot refresh: not connected or migration in progress");
         }
     }
 

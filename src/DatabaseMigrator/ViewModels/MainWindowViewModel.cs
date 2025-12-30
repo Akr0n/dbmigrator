@@ -33,6 +33,10 @@ public class MainWindowViewModel : ViewModelBase
     private long _totalRowsToMigrate;
     private bool _canStartMigration;
     private MigrationMode _selectedMigrationMode = MigrationMode.SchemaAndData;
+    private string _tableSearchFilter = "";
+    private ObservableCollection<TableInfo> _filteredTables = new();
+    private ObservableCollection<TableInfo> _filteredTargetTables = new();
+    private ObservableCollection<TableInfo> _selectedTablesForMigration = new();
 
     public ConnectionViewModel? SourceConnection
     {
@@ -50,6 +54,34 @@ public class MainWindowViewModel : ViewModelBase
     {
         get => _tables;
         set => this.RaiseAndSetIfChanged(ref _tables, value);
+    }
+
+    public ObservableCollection<TableInfo> FilteredTables
+    {
+        get => _filteredTables;
+        set => this.RaiseAndSetIfChanged(ref _filteredTables, value);
+    }
+
+    public ObservableCollection<TableInfo> FilteredTargetTables
+    {
+        get => _filteredTargetTables;
+        set => this.RaiseAndSetIfChanged(ref _filteredTargetTables, value);
+    }
+
+    public ObservableCollection<TableInfo> SelectedTablesForMigration
+    {
+        get => _selectedTablesForMigration;
+        set => this.RaiseAndSetIfChanged(ref _selectedTablesForMigration, value);
+    }
+
+    public string TableSearchFilter
+    {
+        get => _tableSearchFilter;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _tableSearchFilter, value);
+            ApplyTableFilter();
+        }
     }
 
     public bool IsConnected
@@ -118,6 +150,7 @@ public class MainWindowViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> StartMigrationCommand { get; }
     public ReactiveCommand<Unit, Unit> SelectAllTablesCommand { get; }
     public ReactiveCommand<Unit, Unit> DeselectAllTablesCommand { get; }
+    public ReactiveCommand<Unit, Unit> RefreshTablesCommand { get; }
 
     public MainWindowViewModel()
     {
@@ -141,6 +174,9 @@ public class MainWindowViewModel : ViewModelBase
                 (connected, migrating) => connected && !migrating));
         SelectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => Task.Run(() => SelectAllTablesDirectly()));
         DeselectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => Task.Run(() => DeselectAllTablesDirectly()));
+        RefreshTablesCommand = ReactiveCommand.CreateFromTask(RefreshTablesAsync,
+            this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating,
+                (connected, migrating) => connected && !migrating));
     }
 
     private void SubscribeToTableChanges(TableInfo table)
@@ -207,6 +243,8 @@ public class MainWindowViewModel : ViewModelBase
                 SubscribeToTableChanges(table);
             }
 
+            // Inizializza le collezioni filtrate
+            ApplyTableFilter();
             UpdateTableStatistics();
 
             ProgressPercentage = 100;
@@ -461,6 +499,8 @@ public class MainWindowViewModel : ViewModelBase
         var newCollection = new ObservableCollection<TableInfo>(Tables);
         Tables = newCollection;
         
+        // Aggiorna anche le collezioni filtrate
+        ApplyTableFilter();
         UpdateTableStatistics();
         Log($"[{operation}TablesDirectly] Completed. SelectedTablesCount={SelectedTablesCount}");
     }
@@ -469,7 +509,116 @@ public class MainWindowViewModel : ViewModelBase
     {
         SelectedTablesCount = Tables.Count(t => t.IsSelected);
         TotalRowsToMigrate = Tables.Where(t => t.IsSelected).Sum(t => t.RowCount);
+        
+        // Aggiorna la lista delle tabelle selezionate per la tab Migrazione (senza filtro)
+        SelectedTablesForMigration = new ObservableCollection<TableInfo>(Tables.Where(t => t.IsSelected));
+        
+        // Aggiorna FilteredTargetTables per mostrare solo le tabelle selezionate (con filtro applicato)
+        if (string.IsNullOrWhiteSpace(TableSearchFilter))
+        {
+            FilteredTargetTables = new ObservableCollection<TableInfo>(Tables.Where(t => t.IsSelected));
+        }
+        else
+        {
+            var filter = TableSearchFilter.ToLowerInvariant();
+            FilteredTargetTables = new ObservableCollection<TableInfo>(
+                Tables.Where(t => t.IsSelected && 
+                    (t.TableName.ToLowerInvariant().Contains(filter) ||
+                     t.Schema.ToLowerInvariant().Contains(filter) ||
+                     $"{t.Schema}.{t.TableName}".ToLowerInvariant().Contains(filter))));
+        }
+        
         Log($"[UpdateTableStatistics] SelectedCount={SelectedTablesCount}, TotalRows={TotalRowsToMigrate}");
+    }
+
+    /// <summary>
+    /// Applica il filtro di ricerca alle tabelle
+    /// </summary>
+    private void ApplyTableFilter()
+    {
+        Log($"[ApplyTableFilter] Applying filter: '{TableSearchFilter}'");
+        
+        if (string.IsNullOrWhiteSpace(TableSearchFilter))
+        {
+            FilteredTables = new ObservableCollection<TableInfo>(Tables);
+            FilteredTargetTables = new ObservableCollection<TableInfo>(Tables.Where(t => t.IsSelected));
+        }
+        else
+        {
+            var filter = TableSearchFilter.ToLowerInvariant();
+            var filtered = Tables.Where(t => 
+                t.TableName.ToLowerInvariant().Contains(filter) ||
+                t.Schema.ToLowerInvariant().Contains(filter) ||
+                $"{t.Schema}.{t.TableName}".ToLowerInvariant().Contains(filter));
+            
+            FilteredTables = new ObservableCollection<TableInfo>(filtered);
+            FilteredTargetTables = new ObservableCollection<TableInfo>(filtered.Where(t => t.IsSelected));
+        }
+        
+        Log($"[ApplyTableFilter] Filtered tables count: {FilteredTables.Count}");
+    }
+
+    /// <summary>
+    /// Ricarica le tabelle dal database sorgente
+    /// </summary>
+    public async Task RefreshTablesAsync()
+    {
+        try
+        {
+            Log("[RefreshTablesAsync] Starting tables refresh...");
+            StatusMessage = "Ricaricamento tabelle...";
+            
+            if (SourceConnection?.ConnectionInfo == null)
+            {
+                ErrorMessage = "Errore: Connessione sorgente non valida";
+                StatusMessage = "Errore: connessione non valida";
+                return;
+            }
+
+            // Salva le selezioni correnti
+            var selectedTables = Tables
+                .Where(t => t.IsSelected)
+                .Select(t => $"{t.Schema}.{t.TableName}")
+                .ToHashSet();
+            
+            Log($"[RefreshTablesAsync] Preserving {selectedTables.Count} selected tables");
+
+            // Ricarica le tabelle dal database
+            var tables = await _databaseService.GetTablesAsync(SourceConnection.ConnectionInfo);
+            
+            Tables.Clear();
+            foreach (var table in tables)
+            {
+                // Ripristina la selezione se la tabella era selezionata
+                if (selectedTables.Contains($"{table.Schema}.{table.TableName}"))
+                {
+                    table.IsSelected = true;
+                }
+                Tables.Add(table);
+                SubscribeToTableChanges(table);
+            }
+
+            // Applica il filtro corrente
+            ApplyTableFilter();
+            UpdateTableStatistics();
+
+            StatusMessage = $"✅ Tabelle ricaricate! Trovate {tables.Count} tabelle";
+            Log($"[RefreshTablesAsync] Refresh completed. {tables.Count} tables loaded");
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"❌ Errore nel ricaricamento: {ex.Message}";
+            StatusMessage = "Errore durante il ricaricamento";
+            Log($"[RefreshTablesAsync] Error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Metodo pubblico per ricaricare le tabelle (chiamabile dalla UI)
+    /// </summary>
+    public void RefreshTablesDirectly()
+    {
+        _ = RefreshTablesAsync();
     }
 
     /// <summary>
