@@ -576,15 +576,37 @@ public class MainWindowViewModel : ViewModelBase
 
         if (string.IsNullOrWhiteSpace(TableSearchFilter))
         {
+
+        // Ensure collections are initialized once and then reused
+        if (FilteredTables == null)
+        {
+            FilteredTables = new ObservableCollection<TableInfo>();
+        }
+
+        if (FilteredTargetTables == null)
+        {
+            FilteredTargetTables = new ObservableCollection<TableInfo>();
+        }
+
+        // Clear current items to avoid recreating ObservableCollection instances
+        FilteredTables.Clear();
+        FilteredTargetTables.Clear();
+
+        IEnumerable<TableInfo> source;
+
+        if (string.IsNullOrWhiteSpace(TableSearchFilter))
+        {
             source = Tables;
         }
         else
         {
             var filter = TableSearchFilter.ToLowerInvariant();
-            source = Tables.Where(t => MatchesFilter(t, filter));
+            source = Tables.Where(t =>
+                t.TableName.ToLowerInvariant().Contains(filter) ||
+                t.Schema.ToLowerInvariant().Contains(filter) ||
+                $"{t.Schema}.{t.TableName}".ToLowerInvariant().Contains(filter));
         }
 
-        // Batch add items to minimize UI notifications
         foreach (var table in source)
         {
             FilteredTables.Add(table);
@@ -593,7 +615,6 @@ public class MainWindowViewModel : ViewModelBase
                 FilteredTargetTables.Add(table);
             }
         }
-        
         Log($"[ApplyTableFilter] Filtered tables count: {FilteredTables.Count}");
     }
 
