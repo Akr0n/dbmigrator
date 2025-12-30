@@ -62,7 +62,6 @@ namespace DatabaseMigrator.Views;
             // Wire up search clear button
             ClearSearchButton.Click += (s, e) =>
             {
-                TableSearchTextBox.Text = "";
                 _vm.TableSearchFilter = "";
             };
             
@@ -72,7 +71,7 @@ namespace DatabaseMigrator.Views;
             // Bind statistics
             SourceCountTextBlock.Bind(TextBlock.TextProperty, new Binding("Tables.Count") { Source = _vm, StringFormat = "📋 Tabelle sorgente: {0}" });
             SelectedCountTextBlock.Bind(TextBlock.TextProperty, new Binding("SelectedTablesCount") { Source = _vm, StringFormat = "✓ Tabelle selezionate: {0}" });
-            TargetCountTextBlock.Bind(TextBlock.TextProperty, new Binding("FilteredTables.Count") { Source = _vm, StringFormat = "📋 Tabelle visualizzate: {0}" });
+            TargetCountTextBlock.Bind(TextBlock.TextProperty, new Binding("FilteredTargetTables.Count") { Source = _vm, StringFormat = "📋 Tabelle visualizzate: {0}" });
             TotalRowsTextBlock.Bind(TextBlock.TextProperty, new Binding("TotalRowsToMigrate") { Source = _vm, StringFormat = "📊 Righe totali da migrare: {0}" });
             
             // Wire up button clicks
