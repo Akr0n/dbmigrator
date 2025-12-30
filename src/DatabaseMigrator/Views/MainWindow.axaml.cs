@@ -65,8 +65,8 @@ namespace DatabaseMigrator.Views;
                 _vm.TableSearchFilter = "";
             };
             
-            // Wire up refresh button
-            RefreshSourceButton.Click += OnRefreshSourceClicked;
+            // Wire up refresh button using ViewModel command
+            RefreshSourceButton.Command = _vm.RefreshTablesCommand;
             
             // Bind statistics
             SourceCountTextBlock.Bind(TextBlock.TextProperty, new Binding("Tables.Count") { Source = _vm, StringFormat = "📋 Tabelle sorgente: {0}" });
@@ -253,21 +253,6 @@ namespace DatabaseMigrator.Views;
         else
         {
             Log("[DeselectAllButton_Click] ViewModel is null!");
-        }
-    }
-
-    private async void OnRefreshSourceClicked(object? sender, RoutedEventArgs e)
-    {
-        Log("[OnRefreshSourceClicked] Button clicked!");
-        if (_vm != null && _vm.IsConnected && !_vm.IsMigrating)
-        {
-            Log("[OnRefreshSourceClicked] Refreshing tables...");
-            await _vm.RefreshTablesAsync();
-            Log("[OnRefreshSourceClicked] Tables refresh completed");
-        }
-        else
-        {
-            Log("[OnRefreshSourceClicked] Cannot refresh: not connected or migration in progress");
         }
     }
 
