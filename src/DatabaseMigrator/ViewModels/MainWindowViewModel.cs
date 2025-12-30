@@ -160,6 +160,11 @@ public class MainWindowViewModel : ViewModelBase
 
         SourceConnection = new ConnectionViewModel();
         TargetConnection = new ConnectionViewModel();
+        
+        // Initialize filtered collections
+        _filteredTables = new ObservableCollection<TableInfo>();
+        _filteredTargetTables = new ObservableCollection<TableInfo>();
+        _selectedTablesForMigration = new ObservableCollection<TableInfo>();
 
         // Inizializza CanStartMigration al valore corretto
         CanStartMigration = IsConnected && !IsMigrating;
@@ -526,17 +531,12 @@ public class MainWindowViewModel : ViewModelBase
         
         // Update the list of selected tables for the Migration tab (without filter)
         var selectedTables = Tables.Where(t => t.IsSelected).ToList();
-        if (SelectedTablesForMigration == null)
+        
+        // Batch update: Clear once and add all items
+        SelectedTablesForMigration.Clear();
+        foreach (var table in selectedTables)
         {
-            SelectedTablesForMigration = new ObservableCollection<TableInfo>(selectedTables);
-        }
-        else
-        {
-            SelectedTablesForMigration.Clear();
-            foreach (var table in selectedTables)
-            {
-                SelectedTablesForMigration.Add(table);
-            }
+            SelectedTablesForMigration.Add(table);
         }
         
         // Update FilteredTargetTables to show only selected tables (with filter applied)
@@ -551,17 +551,11 @@ public class MainWindowViewModel : ViewModelBase
             filteredSelectedTables = selectedTables.Where(t => MatchesFilter(t, filter));
         }
 
-        if (FilteredTargetTables == null)
+        // Batch update: Clear once and add all items
+        FilteredTargetTables.Clear();
+        foreach (var table in filteredSelectedTables)
         {
-            FilteredTargetTables = new ObservableCollection<TableInfo>(filteredSelectedTables);
-        }
-        else
-        {
-            FilteredTargetTables.Clear();
-            foreach (var table in filteredSelectedTables)
-            {
-                FilteredTargetTables.Add(table);
-            }
+            FilteredTargetTables.Add(table);
         }
         
         Log($"[UpdateTableStatistics] SelectedCount={SelectedTablesCount}, TotalRows={TotalRowsToMigrate}");
@@ -574,18 +568,7 @@ public class MainWindowViewModel : ViewModelBase
     {
         Log($"[ApplyTableFilter] Applying filter: '{TableSearchFilter}'");
         
-        // Ensure collections are initialized once and then reused
-        if (FilteredTables == null)
-        {
-            FilteredTables = new ObservableCollection<TableInfo>();
-        }
-
-        if (FilteredTargetTables == null)
-        {
-            FilteredTargetTables = new ObservableCollection<TableInfo>();
-        }
-
-        // Clear current items to avoid recreating ObservableCollection instances
+        // Clear collections once before batch update
         FilteredTables.Clear();
         FilteredTargetTables.Clear();
 
@@ -601,6 +584,7 @@ public class MainWindowViewModel : ViewModelBase
             source = Tables.Where(t => MatchesFilter(t, filter));
         }
 
+        // Batch add items to minimize UI notifications
         foreach (var table in source)
         {
             FilteredTables.Add(table);
