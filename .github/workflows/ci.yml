@@ -68,24 +68,3 @@ jobs:
         with:
           name: test-results-windows
           path: '**/test-results.trx'
-
-  build-linux:
-    name: Build (.NET 8.0 - Linux)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Set up .NET 8.0
-        uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Restore dependencies
-        run: dotnet restore DatabaseMigrator.sln
-
-      - name: Build solution (Release)
-        run: dotnet build DatabaseMigrator.sln --configuration Release --no-restore
