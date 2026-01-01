@@ -15,7 +15,7 @@ Tool cross-platform per migrazione di dati tra database relazionali (SQL Server,
 
 ## Requisiti
 
-- Windows 11 o superiore (o Linux per versione nativa)
+- Windows 11 o superiore
 - .NET 8.0 Runtime (incluso nell'exe standalone)
 
 ## Installazione
