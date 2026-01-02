@@ -273,6 +273,9 @@ public class MainWindowViewModel : ViewModelBase
 
     private async Task StartMigrationAsync()
     {
+        // Track tables created during schema migration for rollback on data migration failure
+        var tablesCreatedDuringMigration = new List<TableInfo>();
+        
         try
         {
             Log($"[StartMigrationAsync] Starting migration...");
@@ -331,6 +334,23 @@ public class MainWindowViewModel : ViewModelBase
             }
 
             ProgressPercentage = 10;
+
+            // For SchemaAndData mode: track which tables need to be created (don't exist yet)
+            if (SelectedMigrationMode == MigrationMode.SchemaAndData)
+            {
+                Log($"[StartMigrationAsync] SchemaAndData mode: checking which tables need to be created...");
+                foreach (var table in tablesToMigrate)
+                {
+                    bool exists = await _schemaMigrationService.CheckTableExistsAsync(
+                        TargetConnection.ConnectionInfo, table.Schema, table.TableName);
+                    if (!exists)
+                    {
+                        tablesCreatedDuringMigration.Add(table);
+                        Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} will be created");
+                    }
+                }
+                Log($"[StartMigrationAsync] {tablesCreatedDuringMigration.Count} tables will be created during migration");
+            }
 
             // Migrate schema if needed
             if (SelectedMigrationMode == MigrationMode.SchemaAndData || SelectedMigrationMode == MigrationMode.SchemaOnly)
@@ -449,6 +469,9 @@ public class MainWindowViewModel : ViewModelBase
                 Log($"[StartMigrationAsync] Skipping data migration (Mode: {SelectedMigrationMode})");
             }
 
+            // Clear the list since migration was successful
+            tablesCreatedDuringMigration.Clear();
+
             Log($"[StartMigrationAsync] Migration completed successfully!");
             ErrorMessage = "";
             
@@ -465,8 +488,34 @@ public class MainWindowViewModel : ViewModelBase
         {
             Log($"[StartMigrationAsync] ERROR: {ex.Message}");
             Log($"[StartMigrationAsync] Stack trace: {ex.StackTrace}");
-            ErrorMessage = $"❌ Errore migrazione: {ex.Message}";
-            StatusMessage = "Migrazione fallita";
+            
+            // Rollback: drop tables that were created during this migration if using SchemaAndData mode
+            if (SelectedMigrationMode == MigrationMode.SchemaAndData && 
+                tablesCreatedDuringMigration.Count > 0 &&
+                TargetConnection?.ConnectionInfo != null)
+            {
+                Log($"[StartMigrationAsync] Rolling back {tablesCreatedDuringMigration.Count} created tables...");
+                StatusMessage = "Rolling back created tables...";
+                
+                foreach (var table in tablesCreatedDuringMigration)
+                {
+                    try
+                    {
+                        await _schemaMigrationService.DropTableAsync(
+                            TargetConnection.ConnectionInfo, table.Schema, table.TableName);
+                        Log($"[StartMigrationAsync] Rolled back table {table.Schema}.{table.TableName}");
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        Log($"[StartMigrationAsync] Failed to rollback table {table.Schema}.{table.TableName}: {rollbackEx.Message}");
+                    }
+                }
+                
+                Log($"[StartMigrationAsync] Rollback completed");
+            }
+            
+            ErrorMessage = $"❌ Migration error: {ex.Message}";
+            StatusMessage = "Migration failed";
             ProgressPercentage = 0;
         }
         finally

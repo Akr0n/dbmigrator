@@ -1,188 +1,167 @@
 # Database Migrator
 
-Tool cross-platform per migrazione di dati tra database relazionali (SQL Server, Oracle, PostgreSQL).
+A cross-platform tool for migrating data between relational databases (SQL Server, Oracle, PostgreSQL).
 
-## Caratteristiche
+## Features
 
-- 🔄 Migrazione dati cross-database
-- 🗄️ Supporto SQL Server, Oracle, PostgreSQL
-- 🎨 Interfaccia grafica moderna (Avalonia)
-- 📊 Selezione selettiva delle tabelle
-- 🔧 Mapping automatico tipi dati
-- 📈 Barra di progresso in tempo reale
-- 🚀 Creazione automatica database target
+- 🔄 Cross-database data migration
+- 🗄️ Support for SQL Server, Oracle, PostgreSQL
+- 🎨 Modern graphical interface (Avalonia UI)
+- 📊 Selective table selection with search/filter
+- 🔧 Automatic data type mapping
+- 📈 Real-time progress bar
+- 🚀 Automatic target database creation
 - 💾 Single-file executable (.exe)
+- 📁 Save/Load connection configurations
+- 🔀 Three migration modes: Schema+Data, Schema Only, Data Only
+- ↩️ Automatic rollback on failure (Schema+Data mode)
 
-## Requisiti
+## Requirements
 
-- Windows 11 o superiore
-- .NET 8.0 Runtime (incluso nell'exe standalone)
+- Windows 10/11 (64-bit) or Linux
+- .NET 8.0 Runtime (included in standalone exe)
 
-## Installazione
+## Installation
 
-### Metodo 1: Eseguibile Standalone
-1. Scarica `DatabaseMigrator-Setup-v1.0.0.exe` dal Release
-2. Esegui l'installer
-3. Avvia l'applicazione dal Menu Start
+### Method 1: Standalone Executable (Recommended)
+1. Download `DatabaseMigrator-Setup-v1.0.0.exe` from Releases
+2. Run the installer
+3. Launch the application from Start Menu
 
-### Metodo 2: Build da Sorgente
+### Method 2: Build from Source
 
-#### Prerequisiti di compilazione:
+#### Build Prerequisites:
 - .NET 8.0 SDK
 - PowerShell 7+ (Windows)
 
-#### Compilazione e pubblicazione:
+#### Build and Publish:
 
 **PowerShell:**
 ```powershell
-# Build e pubblica per Windows x64
+# Build and publish for Windows x64
 .\publish.ps1
 
-# L'eseguibile sarà in: .\release\DatabaseMigrator.exe
+# The executable will be in: .\release\DatabaseMigrator.exe
 ```
 
 **Batch/CMD:**
 ```cmd
-REM Build e pubblica per Windows x64
+REM Build and publish for Windows x64
 publish.bat
 
-REM L'eseguibile sarà in: .\release\DatabaseMigrator.exe
+REM The executable will be in: .\release\DatabaseMigrator.exe
 ```
 
-**Manuale con dotnet CLI:**
+**Manual with dotnet CLI:**
 ```bash
-dotnet publish src\DatabaseMigrator\DatabaseMigrator.csproj `
-    -c Release `
-    -r win-x64 `
-    --self-contained `
+dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj \
+    -c Release \
+    -r win-x64 \
+    --self-contained \
     -p:PublishSingleFile=true
 ```
 
-## Utilizzo
+## Usage
 
-### Passaggio 1: Connessione ai Database
-1. Avvia l'applicazione
-2. Nella tab "Connessioni Database":
-   - **Database Sorgente**: Inserisci i dati di connessione al DB originale
-   - **Database Target**: Inserisci i dati di connessione al DB destinazione
-3. Clicca "Connetti ai Database"
+### Step 1: Connect to Databases
+1. Launch the application
+2. In the "Database Connections" tab:
+   - **Source Database**: Enter connection details for the source DB
+   - **Target Database**: Enter connection details for the target DB
+3. Click "Connect to Databases"
 
-### Passaggio 2: Selezione Tabelle
-1. Seleziona le tabelle da migrare nella tab "Selezione Tabelle"
-2. Usa i pulsanti "Seleziona Tutto" e "Deseleziona Tutto" per gestione rapida
-3. Le informazioni sulle righe vengono caricate automaticamente
+### Step 2: Select Tables
+1. Select the tables to migrate in the "Table Selection" tab
+2. Use the search box to filter tables by name
+3. Use "Select All" and "Deselect All" buttons for quick management
+4. Row counts are loaded automatically
 
-### Passaggio 3: Migrazione
-1. Vai alla tab "Migrazione"
-2. Rivedi le informazioni di status
-3. Clicca "Avvia Migrazione"
-4. Monitora il progresso con la barra di avanzamento
-5. L'operazione creerà il database target se non esiste
+### Step 3: Choose Migration Mode
+Select one of three migration modes:
+- **Schema + Data**: Creates tables and migrates data (with automatic rollback on failure)
+- **Schema Only**: Creates only the table structure without data
+- **Data Only**: Migrates data only (tables must already exist in target)
 
-## Configurazione Connessioni
+### Step 4: Start Migration
+1. Go to the "Migration" tab
+2. Review the status information
+3. Click "Start Migration"
+4. Monitor progress with the progress bar
+5. The target database will be created automatically if it doesn't exist
+
+## Connection Configuration
 
 ### SQL Server
-- **Tipo**: SqlServer
-- **Server**: Nome server o IP
-- **Porta**: 1433 (default)
-- **Database**: Nome database
-- **Username**: sa o user SQL
-- **Password**: Password account
+- **Type**: SqlServer
+- **Server**: Server name or IP
+- **Port**: 1433 (default)
+- **Database**: Database name
+- **Username**: sa or SQL user (leave empty for Windows Auth)
+- **Password**: Account password
 
 ### Oracle
-- **Tipo**: Oracle
-- **Server**: Nome TNS o IP
-- **Porta**: 1521 (default)
-- **Database**: SID o service name
-- **Username**: User Oracle
-- **Password**: Password account
+- **Type**: Oracle
+- **Server**: TNS name or IP
+- **Port**: 1521 (default)
+- **Database**: SID or service name (e.g., XE, ORCL)
+- **Username**: Oracle user
+- **Password**: Account password
 
 ### PostgreSQL
-- **Tipo**: PostgreSQL
-- **Server**: Localhost o IP
-- **Porta**: 5432 (default)
-- **Database**: Nome database
-- **Username**: postgres o altro user
-- **Password**: Password account
+- **Type**: PostgreSQL
+- **Server**: Server name or IP
+- **Port**: 5432 (default)
+- **Database**: Database name
+- **Username**: postgres or other user
+- **Password**: Account password
 
-## Architettura
+## Save/Load Configurations
 
-### Progetto: DatabaseMigrator.Core
-Libreria .NET 8.0 contenente:
-- **Models**: ConnectionInfo, DatabaseType, TableInfo
-- **Services**: DatabaseService (query, DDL, DML), SchemaMigrationService (mapping tipi dati)
+The application supports saving and loading connection configurations:
 
-### Progetto: DatabaseMigrator
-Applicazione Avalonia 11.0 contenente:
-- **ViewModels**: MVVM binding e logica UI
-- **Views**: XAML per interfaccia grafica
-- **Program.cs**: Entry point dell'applicazione
+- **Save**: File → Save Configuration (or Ctrl+S)
+- **Load**: File → Load Configuration (or Ctrl+O)
 
-## Specifiche Tecniche
+Configurations are saved as JSON files and include both source and target connection settings.
 
-### Mapping Tipi Dati Cross-Database
-L'applicazione esegue il mapping automatico dei tipi dati:
+## Data Type Mapping
 
-**SQL Server → PostgreSQL**
-- int → integer
-- bigint → bigint
-- varchar(n) → varchar(n)
-- datetime2 → timestamp
-- bit → boolean
-- ecc.
+The application automatically maps data types between different database systems:
 
-**SQL Server → Oracle**
-- int → NUMBER(10)
-- varchar(n) → VARCHAR2(n)
-- datetime2 → TIMESTAMP
-- ecc.
+| SQL Server | PostgreSQL | Oracle |
+|------------|------------|--------|
+| int | integer | NUMBER(10) |
+| bigint | bigint | NUMBER(19) |
+| varchar(n) | varchar(n) | VARCHAR2(n) |
+| nvarchar(n) | varchar(n) | NVARCHAR2(n) |
+| varchar(max) | text | CLOB |
+| nvarchar(max) | text | NCLOB |
+| datetime2 | timestamp | TIMESTAMP(6) |
+| bit | boolean | NUMBER(1) |
+| text | text | CLOB |
+| varbinary | bytea | BLOB |
+| uniqueidentifier | uuid | RAW(16) |
 
-**PostgreSQL ↔ Oracle** (e viceversa)
-- Mapping completo bidirezionale
+## Error Handling
 
-### Migrazione Dati
-- Lettura batch da sorgente (1000 righe per batch)
-- Insert batch nel target
-- Progress tracking in tempo reale
-- Gestione transazioni
+- **Connection failures**: Clear error messages with troubleshooting hints
+- **Schema creation errors**: Detailed logging of DDL operations
+- **Data migration errors**: Automatic rollback of created tables (in Schema+Data mode)
+- **Validation**: Data-only mode validates table existence before starting
 
-## Creazione Installer NSIS
+## Logging
 
-Per creare l'installer standalone:
-
-1. Installa NSIS: http://nsis.sourceforge.net/Download
-2. Esegui il publish: `.\publish.ps1`
-3. Compila l'installer:
-   ```cmd
-   "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi
-   ```
-4. L'installer sarà in: `DatabaseMigrator-Setup-v1.0.0.exe`
-
-## Supporto e Bug Report
-
-Per segnalare bug o richiedere feature, visita il repository GitHub.
+The application logs all operations to help with troubleshooting:
+- Connection attempts and results
+- Table discovery and row counts
+- Schema DDL generation
+- Data migration progress
+- Error details with stack traces
 
 ## License
 
-MIT License
+MIT License - See LICENSE file for details.
 
-## Compilazione e Build
+## Contributing
 
-```powershell
-# Build debug (locale)
-dotnet build
-
-# Build release (ottimizzato)
-dotnet build -c Release
-
-# Pubblica come single-file executable
-.\publish.ps1
-
-# Crea installer NSIS (dopo aver eseguito publish.ps1)
-& "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi
-```
-
----
-
-**Versione**: 1.0.0
-**Ultimo aggiornamento**: Novembre 2025
+Contributions are welcome! Please read the ARCHITECTURE.md file to understand the codebase structure.

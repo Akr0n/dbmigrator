@@ -108,12 +108,11 @@ public class DatabaseService : IDatabaseService
 
                 Log($"Retrieved {tables.Count} tables");
 
-                // Ottieni row count per ogni tabella
-                foreach (var table in tables)
-                {
-                    table.RowCount = await GetTableRowCountAsync(connectionInfo, table.Schema, table.TableName);
-                    Log($"Row count for {table.Schema}.{table.TableName}: {table.RowCount}");
-                }
+                // Get row count for all tables in batch to avoid too many connections
+                // Use controlled parallelism for databases with many tables
+                Log($"Starting row count retrieval for {tables.Count} tables...");
+                await GetAllTableRowCountsAsync(connectionInfo, tables);
+                Log($"Row count retrieval completed");
             }
         }
         catch (Exception ex)
@@ -687,6 +686,41 @@ public class DatabaseService : IDatabaseService
         }
     }
 
+    /// <summary>
+    /// Gets row counts for all tables using a single connection and controlled parallelism.
+    /// This avoids creating thousands of connections for databases with many tables.
+    /// </summary>
+    private async Task GetAllTableRowCountsAsync(ConnectionInfo connectionInfo, List<TableInfo> tables)
+    {
+        if (tables.Count == 0)
+            return;
+
+        // Use a semaphore to limit concurrent operations (prevents overwhelming the database)
+        const int maxConcurrency = 10;
+        using var semaphore = new System.Threading.SemaphoreSlim(maxConcurrency);
+
+        // Process tables in parallel with controlled concurrency
+        var tasks = tables.Select(async table =>
+        {
+            await semaphore.WaitAsync();
+            try
+            {
+                table.RowCount = await GetTableRowCountAsync(connectionInfo, table.Schema, table.TableName);
+            }
+            catch (Exception ex)
+            {
+                Log($"Error getting row count for {table.Schema}.{table.TableName}: {ex.Message}");
+                table.RowCount = 0;
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+    }
+
     private async Task<long> GetTableRowCountAsync(ConnectionInfo connectionInfo, string schema, string tableName)
     {
         try
@@ -706,8 +740,9 @@ public class DatabaseService : IDatabaseService
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Log($"GetTableRowCountAsync error for {schema}.{tableName}: {ex.Message}");
             return 0;
         }
     }

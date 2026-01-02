@@ -1,277 +1,181 @@
 # Database Migrator - Quick Start Guide
 
-## ⚡ Inizio Rapido (5 minuti)
+## ⚡ Quick Start (5 minutes)
 
-### 1️⃣ Primo Avvio
+### 1️⃣ First Launch
 ```powershell
-# Naviga alla cartella del progetto
+# Navigate to the project folder
 cd c:\_repositories\dbmigrator
 
-# Esegui direttamente
+# Run directly
 .\release\DatabaseMigrator.exe
 ```
 
-L'applicazione partirà con interfaccia vuota.
+The application will start with an empty interface.
 
 ---
 
-## 🔌 Configurazione Connessioni
+## 🔌 Connection Configuration
 
-### Step 1: Database Sorgente
-Nel tab **"Connessioni Database"**, sezione sinistra:
+### Step 1: Source Database
+In the **"Database Connections"** tab, left section:
 
-**Esempio SQL Server**:
+**SQL Server Example**:
 ```
-Tipo Database:      SqlServer
-Server:             localhost (o 192.168.1.100)
-Porta:              1433
+Database Type:      SqlServer
+Server:             localhost (or 192.168.1.100)
+Port:               1433
 Database:           MySourceDB
 Username:           sa
 Password:           YourPassword123
 ```
 
-**Esempio PostgreSQL**:
+**PostgreSQL Example**:
 ```
-Tipo Database:      PostgreSQL
+Database Type:      PostgreSQL
 Server:             localhost
-Porta:              5432
+Port:               5432
 Database:           source_db
 Username:           postgres
 Password:           postgres123
 ```
 
-**Esempio Oracle**:
+**Oracle Example**:
 ```
-Tipo Database:      Oracle
+Database Type:      Oracle
 Server:             localhost
-Porta:              1521
+Port:               1521
 Database:           XE
 Username:           system
 Password:           oracle123
 ```
 
-### Step 2: Database Target
-Nel tab **"Connessioni Database"**, sezione destra:
+### Step 2: Target Database
+In the **"Database Connections"** tab, right section:
 
 ```
-Tipo Database:      PostgreSQL (diverso dalla sorgente!)
+Database Type:      PostgreSQL (can be different from source!)
 Server:             192.168.1.200
-Porta:              5432
+Port:               5432
 Database:           target_db
 Username:           postgres
 Password:           postgres456
 ```
 
-### Step 3: Connessione
-Clicca il pulsante verde **"Connetti ai Database"**
+### Step 3: Connect
+Click the green **"Connect to Databases"** button
 
-Vedrai:
-- ✅ Barra di avanzamento
-- ✅ Messaggi di status
-- ✅ Numero di tabelle trovate
-
----
-
-## 📋 Selezione Tabelle
-
-Nel tab **"Selezione Tabelle"** (abilitato dopo connessione):
-
-### Option A: Seleziona Manualmente
-- [ ] Clicca il checkbox accanto a ogni tabella
-- Vedrai il nome tabella, schema e numero di righe
-
-### Option B: Seleziona Tutto
-- Clicca **"Seleziona Tutto"**
-
-### Option C: Deseleziona Tutto
-- Clicca **"Deseleziona Tutto"**
+You will see:
+- ✅ Progress bar
+- ✅ Status messages
+- ✅ Number of tables found
 
 ---
 
-## ▶️ Avvia Migrazione
+## 📋 Table Selection
 
-Nel tab **"Migrazione"**:
+In the **"Table Selection"** tab (enabled after connection):
 
-1. Rivedi il messaggio di status (dovrebbe dire "Connesso!")
-2. Clicca il pulsante rosso **"Avvia Migrazione"**
+### Option A: Manual Selection
+- Click the checkbox next to each table
+- You'll see table name, schema, and row count
 
-Succede automaticamente:
-- ✅ Crea il database target se non esiste
-- ✅ Crea le tabelle con lo schema corretto
-- ✅ Migra tutti i dati selezionati
-- ✅ Mostra la barra di progresso
+### Option B: Select All
+- Click **"Select All"**
 
----
+### Option C: Deselect All
+- Click **"Deselect All"**
 
-## 📊 Monitoraggio
-
-Durante la migrazione vedrai:
-- **Barra di progresso**: 0% → 100%
-- **Testo percentuale**: Aggiornato in tempo reale
-- **Status message**: Mostra operazione corrente
-  - "Verifica database target..."
-  - "Migrazione schema..."
-  - "Migrazione dati: tabella1..."
-  - "Migrazione completata! 5 tabelle migrate"
+### Search/Filter
+- Use the search box to filter tables by name
+- The filter applies to table name and schema
 
 ---
 
-## ✅ Verifica Risultato
+## 🔀 Migration Modes
 
-### In PostgreSQL (con pgAdmin o psql)
-```sql
--- Controlla se il database è stato creato
-\l
+Choose a migration mode before starting:
 
--- Controlla le tabelle
-\dt
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **Schema + Data** | Creates tables and migrates data | Full migration to new database |
+| **Schema Only** | Creates empty tables | Prepare target for manual data load |
+| **Data Only** | Migrates data only | Tables already exist in target |
 
--- Controlla il numero di righe
-SELECT COUNT(*) FROM table_name;
-```
-
-### In SQL Server (con SQL Server Management Studio)
-```sql
--- Seleziona il database
-USE target_db;
-
--- Controlla le tabelle
-SELECT * FROM INFORMATION_SCHEMA.TABLES;
-
--- Controlla il numero di righe
-SELECT COUNT(*) FROM dbo.table_name;
-```
-
-### In Oracle (con SQL*Plus o SQL Developer)
-```sql
--- Controlla le tabelle
-SELECT table_name FROM user_tables;
-
--- Controlla il numero di righe
-SELECT COUNT(*) FROM table_name;
-```
+**Important**: In "Schema + Data" mode, if migration fails, all created tables are automatically dropped (rollback).
 
 ---
 
-## 🆘 Troubleshooting Rapido
+## ▶️ Start Migration
 
-### ❌ "Impossibile connettersi al database sorgente"
-**Soluzione**:
-1. Verifica che il server sia raggiungibile: `ping localhost`
-2. Verifica le credenziali (username/password)
-3. Verifica la porta (1433 SQL Server, 5432 PostgreSQL, 1521 Oracle)
-4. Controlla firewall
+In the **"Migration"** tab:
 
-### ❌ "Errore durante creazione schema"
-**Soluzione**:
-1. Assicurati che l'utente target abbia permessi DDL (CREATE TABLE)
-2. Controlla se il database esiste già
-3. Verifica lo spazio disponibile
+1. Review the status message (should say "Connected!")
+2. Select your migration mode
+3. Click the **"Start Migration"** button
 
-### ❌ "Timeout migrazione"
-**Soluzione**:
-1. Riduci il numero di tabelle (riprova con meno tabelle)
-2. Controlla la velocità della rete
-3. Controlla il carico del database sorgente
-
-### ❌ "Nessuna tabella trovata"
-**Soluzione**:
-1. Verifica che il database non sia vuoto
-2. Controlla i permessi dell'utente
-3. Assicurati di usare il nome corretto del database
+What happens automatically:
+- ✅ Creates target database if it doesn't exist
+- ✅ Creates tables with correct schema
+- ✅ Migrates data in batches
+- ✅ Shows progress percentage
+- ✅ Rollback on failure (Schema + Data mode)
 
 ---
 
-## 💡 Tips & Tricks
+## 💾 Save/Load Configurations
 
-### Migrazione Test
-Prima di una migrazione importante:
-```
-1. Copia il database sorgente in test
-2. Usa la copia per la prima migrazione
-3. Valida i risultati
-4. Poi fai la migrazione finale
-```
+### Save Configuration
+1. Configure both source and target connections
+2. File → Save Configuration (or Ctrl+S)
+3. Choose a location and filename
 
-### Migrazione Parziale
-Puoi migrare solo alcune tabelle:
-```
-1. Connetti ai database
-2. Deseleziona le tabelle che NON vuoi migrare
-3. Avvia la migrazione (solo le selezionate verranno migrate)
-```
-
-### Database Diversi
-Perfetto per:
-```
-SQL Server 2019 → PostgreSQL 14
-Oracle 19c → SQL Server 2022
-PostgreSQL 13 → Oracle 21c
-```
+### Load Configuration
+1. File → Load Configuration (or Ctrl+O)
+2. Select a previously saved configuration file
+3. Connection fields will be populated automatically
 
 ---
 
-## 📱 Requisiti Minimi
+## 🔄 Refresh Tables
 
-| Aspetto | Requisito |
-|--------|-----------|
-| **Sistema Operativo** | Windows 11+ (64-bit) |
-| **RAM** | 2 GB minimo |
-| **Disco** | 200 MB spazio libero |
-| **Connessione Rete** | Accesso ai database sorgente/target |
-| **Altre Dipendenze** | Nessuna (runtime incluso) |
+After connection, if you need to update the table list:
+- Click the **"Refresh"** button
+- Table selections are preserved
+- Row counts are updated
 
 ---
 
-## 🎯 Checklist Pre-Migrazione
+## ⚠️ Common Issues
 
-Primo di avviare una migrazione critica:
+### Connection Failed
+- Verify server is reachable (ping)
+- Check port is correct and open
+- Verify credentials
+- Check firewall settings
 
-- [ ] Backup del database target
-- [ ] Backup del database sorgente
-- [ ] Verifica connettività rete
-- [ ] Verifica credenziali database
-- [ ] Test con small dataset (poche tabelle)
-- [ ] Valida risultati dopo test
-- [ ] Sincronizza con il team
+### "Table does not exist" (Data Only mode)
+- Tables must exist in target before using Data Only mode
+- Use "Schema + Data" or "Schema Only" first
 
----
+### "String or binary data would be truncated"
+- Source column data is larger than target column
+- Check data type mapping in logs
+- May need to adjust target column size manually
 
-## 📚 Documentazione Completa
-
-Per informazioni dettagliate:
-- **README.md**: Manuale completo
-- **DEPLOYMENT.md**: Deployment e troubleshooting avanzato
-- **ARCHITECTURE.md**: Dettagli tecnici
-- **PROJECT_SUMMARY.md**: Panoramica progetto
-
----
-
-## 🚀 Prossimi Passi
-
-1. **Usa subito**: Esegui `DatabaseMigrator.exe` ora!
-2. **Crea shortcut**: Aggiungi a Desktop/StartMenu per accesso rapido
-3. **Condividi**: Distribuisci l'exe ai colleghi
-4. **Automatizza**: Integra in script di backup/migration
+### Timeout
+- Large tables may take time
+- Default timeout is 300 seconds
+- Check network speed
 
 ---
 
-## 📞 Supporto Rapido
+## 📊 Supported Migrations
 
-**Domanda**: Quale versione di database supporta?
-**Risposta**: SQL Server 2019+, Oracle 19c+, PostgreSQL 12+
+| From \ To | SQL Server | PostgreSQL | Oracle |
+|-----------|------------|------------|--------|
+| **SQL Server** | ✅ | ✅ | ✅ |
+| **PostgreSQL** | ✅ | ✅ | ✅ |
+| **Oracle** | ✅ | ✅ | ✅ |
 
-**Domanda**: Posso migrare tra lo stesso tipo di database?
-**Risposta**: Sì! Perfetto anche per backup/clone
-
-**Domanda**: Quanto tempo ci vuole per migrare 1 milione di righe?
-**Risposta**: ~1-3 minuti (dipende da velocità rete)
-
-**Domanda**: I dati originali vengono modificati?
-**Risposta**: NO! Solo lettura da sorgente, solo scrittura su target
-
----
-
-**Buona Migrazione! 🎉**
-
-Versione: 1.0.0 | Data: Novembre 2025
+All combinations are supported with automatic data type mapping.

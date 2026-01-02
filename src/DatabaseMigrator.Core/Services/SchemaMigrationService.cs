@@ -39,6 +39,48 @@ public class SchemaMigrationService
     }
 
     /// <summary>
+    /// Drops a table from the specified database.
+    /// Used to rollback schema creation when data migration fails.
+    /// </summary>
+    /// <param name="connectionInfo">Connection info for the database</param>
+    /// <param name="schema">Schema name</param>
+    /// <param name="tableName">Table name</param>
+    /// <returns>True if the table was dropped successfully, false otherwise</returns>
+    public async Task<bool> DropTableAsync(ConnectionInfo connectionInfo, string schema, string tableName)
+    {
+        try
+        {
+            using (var connection = CreateConnection(connectionInfo))
+            {
+                await connection.OpenAsync();
+                
+                string dropQuery = connectionInfo.DatabaseType switch
+                {
+                    DatabaseType.SqlServer => $"DROP TABLE [{schema}].[{tableName}]",
+                    DatabaseType.PostgreSQL => $"DROP TABLE \"{schema}\".\"{tableName}\"",
+                    DatabaseType.Oracle => $"DROP TABLE {tableName.ToUpperInvariant()}",
+                    _ => throw new NotSupportedException()
+                };
+
+                using (var command = connection.CreateCommand())
+                {
+                    command.CommandText = dropQuery;
+                    command.CommandTimeout = CommandTimeout;
+                    await command.ExecuteNonQueryAsync();
+                }
+                
+                Log($"[DropTableAsync] Successfully dropped table {schema}.{tableName}");
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"[DropTableAsync] Error dropping table {schema}.{tableName}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Creates the schema in the target database based on the source database.
     /// Handles automatic data type mapping.
     /// </summary>
@@ -347,6 +389,15 @@ public class SchemaMigrationService
         // Normalize the source data type
         string normalized = sourceDataType.ToLowerInvariant().Trim();
 
+        // Handle SQL Server MAX length (-1 means MAX)
+        bool isMaxLength = maxLength.HasValue && maxLength == -1;
+
+        // Same database type: preserve original types with their sizes
+        if (sourceDbType == targetDbType)
+        {
+            return BuildSameDbTypeMapping(sourceDbType, normalized, maxLength, precision, scale, isMaxLength);
+        }
+
         // Mapping cross-database
         if (sourceDbType == DatabaseType.SqlServer && targetDbType == DatabaseType.PostgreSQL)
         {
@@ -361,18 +412,18 @@ public class SchemaMigrationService
                     : "numeric",
                 "float" => "double precision",
                 "real" => "real",
-                "varchar" => maxLength.HasValue && maxLength > 0 
+                "varchar" => isMaxLength ? "text" : (maxLength.HasValue && maxLength > 0 
                     ? $"varchar({maxLength})" 
-                    : "text",
-                "nvarchar" => maxLength.HasValue && maxLength > 0 
-                    ? $"varchar({maxLength / 2})" 
-                    : "text",
-                "char" => maxLength.HasValue 
+                    : "text"),
+                "nvarchar" => isMaxLength ? "text" : (maxLength.HasValue && maxLength > 0 
+                    ? $"varchar({maxLength})"  // PostgreSQL varchar is already Unicode, no division needed
+                    : "text"),
+                "char" => maxLength.HasValue && maxLength > 0
                     ? $"char({maxLength})" 
-                    : "char(10)",
-                "nchar" => maxLength.HasValue 
-                    ? $"char({maxLength / 2})" 
-                    : "char(10)",
+                    : "char(1)",
+                "nchar" => maxLength.HasValue && maxLength > 0
+                    ? $"char({maxLength})"  // PostgreSQL char is already Unicode
+                    : "char(1)",
                 "text" => "text",
                 "ntext" => "text",
                 "datetime" => "timestamp",
@@ -401,18 +452,18 @@ public class SchemaMigrationService
                     : "NUMBER",
                 "float" => "BINARY_DOUBLE",
                 "real" => "BINARY_FLOAT",
-                "varchar" => maxLength.HasValue && maxLength > 0 
-                    ? $"VARCHAR2({maxLength})" 
-                    : "VARCHAR2(4000)",
-                "nvarchar" => maxLength.HasValue && maxLength > 0 
-                    ? $"NVARCHAR2({maxLength / 2})" 
-                    : "NVARCHAR2(2000)",
-                "char" => maxLength.HasValue 
-                    ? $"CHAR({maxLength})" 
-                    : "CHAR(10)",
-                "nchar" => maxLength.HasValue 
-                    ? $"NCHAR({maxLength / 2})" 
-                    : "NCHAR(10)",
+                "varchar" => isMaxLength ? "CLOB" : (maxLength.HasValue && maxLength > 0 
+                    ? $"VARCHAR2({Math.Min(maxLength.Value, 4000)})" 
+                    : "VARCHAR2(4000)"),
+                "nvarchar" => isMaxLength ? "NCLOB" : (maxLength.HasValue && maxLength > 0 
+                    ? $"NVARCHAR2({Math.Min(maxLength.Value, 2000)})"  // Oracle NVARCHAR2 max is 2000
+                    : "NVARCHAR2(2000)"),
+                "char" => maxLength.HasValue && maxLength > 0
+                    ? $"CHAR({Math.Min(maxLength.Value, 2000)})" 
+                    : "CHAR(1)",
+                "nchar" => maxLength.HasValue && maxLength > 0
+                    ? $"NCHAR({Math.Min(maxLength.Value, 1000)})"  // Oracle NCHAR max is 1000
+                    : "NCHAR(1)",
                 "text" => "CLOB",
                 "ntext" => "NCLOB",
                 "datetime" => "TIMESTAMP(6)",
@@ -422,7 +473,7 @@ public class SchemaMigrationService
                 "time" => "TIMESTAMP(0)",
                 "bit" => "NUMBER(1)",
                 "binary" => "RAW",
-                "varbinary" => "BLOB",
+                "varbinary" => isMaxLength ? "BLOB" : "RAW(2000)",
                 "uniqueidentifier" => "RAW(16)",
                 _ => "VARCHAR2(4000)"
             };
@@ -553,6 +604,70 @@ public class SchemaMigrationService
         }
 
         // Default fallback
+        return normalized;
+    }
+
+    /// <summary>
+    /// Builds type mapping when source and target are the same database type.
+    /// Preserves original types with correct sizes, handling special cases like MAX.
+    /// </summary>
+    private string BuildSameDbTypeMapping(DatabaseType dbType, string normalized, 
+        int? maxLength, int? precision, int? scale, bool isMaxLength)
+    {
+        if (dbType == DatabaseType.SqlServer)
+        {
+            return normalized switch
+            {
+                "varchar" => isMaxLength ? "varchar(max)" : (maxLength.HasValue && maxLength > 0 
+                    ? $"varchar({maxLength})" : "varchar(max)"),
+                "nvarchar" => isMaxLength ? "nvarchar(max)" : (maxLength.HasValue && maxLength > 0 
+                    ? $"nvarchar({maxLength})" : "nvarchar(max)"),
+                "char" => maxLength.HasValue && maxLength > 0 ? $"char({maxLength})" : "char(1)",
+                "nchar" => maxLength.HasValue && maxLength > 0 ? $"nchar({maxLength})" : "nchar(1)",
+                "varbinary" => isMaxLength ? "varbinary(max)" : (maxLength.HasValue && maxLength > 0 
+                    ? $"varbinary({maxLength})" : "varbinary(max)"),
+                "binary" => maxLength.HasValue && maxLength > 0 ? $"binary({maxLength})" : "binary(1)",
+                "decimal" or "numeric" => precision.HasValue 
+                    ? $"{normalized}({precision},{scale ?? 0})" : $"{normalized}(18,0)",
+                "float" => precision.HasValue ? $"float({precision})" : "float",
+                _ => normalized
+            };
+        }
+        
+        if (dbType == DatabaseType.PostgreSQL)
+        {
+            return normalized switch
+            {
+                "varchar" or "character varying" => maxLength.HasValue && maxLength > 0 
+                    ? $"varchar({maxLength})" : "text",
+                "char" or "character" => maxLength.HasValue && maxLength > 0 
+                    ? $"char({maxLength})" : "char(1)",
+                "numeric" or "decimal" => precision.HasValue 
+                    ? $"numeric({precision},{scale ?? 0})" : "numeric",
+                _ => normalized
+            };
+        }
+        
+        if (dbType == DatabaseType.Oracle)
+        {
+            return normalized switch
+            {
+                "varchar2" => maxLength.HasValue && maxLength > 0 
+                    ? $"VARCHAR2({Math.Min(maxLength.Value, 4000)})" : "VARCHAR2(4000)",
+                "nvarchar2" => maxLength.HasValue && maxLength > 0 
+                    ? $"NVARCHAR2({Math.Min(maxLength.Value, 2000)})" : "NVARCHAR2(2000)",
+                "char" => maxLength.HasValue && maxLength > 0 
+                    ? $"CHAR({Math.Min(maxLength.Value, 2000)})" : "CHAR(1)",
+                "nchar" => maxLength.HasValue && maxLength > 0 
+                    ? $"NCHAR({Math.Min(maxLength.Value, 1000)})" : "NCHAR(1)",
+                "number" => precision.HasValue 
+                    ? $"NUMBER({precision},{scale ?? 0})" : "NUMBER",
+                "raw" => maxLength.HasValue && maxLength > 0 
+                    ? $"RAW({Math.Min(maxLength.Value, 2000)})" : "RAW(2000)",
+                _ => normalized.ToUpperInvariant()
+            };
+        }
+        
         return normalized;
     }
 
