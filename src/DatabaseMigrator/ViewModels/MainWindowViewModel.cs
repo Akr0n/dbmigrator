@@ -495,7 +495,7 @@ public class MainWindowViewModel : ViewModelBase
                 TargetConnection?.ConnectionInfo != null)
             {
                 Log($"[StartMigrationAsync] Rolling back {tablesCreatedDuringMigration.Count} created tables...");
-                StatusMessage = "Rollback tabelle create...";
+                StatusMessage = "Rolling back created tables...";
                 
                 foreach (var table in tablesCreatedDuringMigration)
                 {
@@ -514,8 +514,8 @@ public class MainWindowViewModel : ViewModelBase
                 Log($"[StartMigrationAsync] Rollback completed");
             }
             
-            ErrorMessage = $"❌ Errore migrazione: {ex.Message}";
-            StatusMessage = "Migrazione fallita";
+            ErrorMessage = $"❌ Migration error: {ex.Message}";
+            StatusMessage = "Migration failed";
             ProgressPercentage = 0;
         }
         finally
