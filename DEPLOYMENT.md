@@ -1,201 +1,255 @@
-# Database Migrator - Guida al Deployment
+# Database Migrator - Deployment Guide
 
-## Panoramica
+## Overview
 
-**Database Migrator** è un tool professionale per la migrazione cross-database di dati tra:
+**Database Migrator** is a professional tool for cross-database data migration between:
 - SQL Server
 - Oracle
 - PostgreSQL
 
-## File di Rilascio
+## Release Files
 
-### Eseguibile Standalone (Consigliato)
-- **File**: `DatabaseMigrator.exe` (166 MB)
-- **Ubicazione**: `/release/`
-- **Requisiti**: Windows 11+, nessuna dipendenza esterna
-- **Runtime incluso**: .NET 8.0 (self-contained)
+### Standalone Executable (Recommended)
+- **File**: `DatabaseMigrator.exe` (~166 MB)
+- **Location**: `/release/`
+- **Requirements**: Windows 10/11 64-bit, no external dependencies
+- **Runtime**: .NET 8.0 (self-contained)
 
-## Installazione
+## Installation
 
-### Opzione 1: Esecuzione Diretta
+### Option 1: Direct Execution
 ```powershell
-# Copia l'exe in una cartella a tua scelta
+# Copy exe to your preferred folder
 Copy-Item release\DatabaseMigrator.exe "C:\Program Files\DatabaseMigrator\"
 
-# Esegui
-C:\Program Files\DatabaseMigrator\DatabaseMigrator.exe
+# Run
+& "C:\Program Files\DatabaseMigrator\DatabaseMigrator.exe"
 ```
 
-### Opzione 2: Installer NSIS (Consigliato)
+### Option 2: NSIS Installer (Recommended for Distribution)
 ```powershell
-# Genera l'installer
+# Generate the installer
 & "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi
 
-# Risultato: DatabaseMigrator-Setup-v1.0.0.exe
-# Esegui l'installer e segui la procedura guidata
+# Result: DatabaseMigrator-Setup-v1.0.0.exe
+# Run the installer and follow the wizard
 ```
 
-## Requisiti di Sistema
+## System Requirements
 
-### Minimi
-- **OS**: Windows 11 (64-bit) o superior
+### Minimum
+- **OS**: Windows 10/11 (64-bit)
 - **CPU**: Dual-core 2.0 GHz
 - **RAM**: 2 GB
-- **Disco**: 200 MB disponibili
+- **Disk**: 200 MB available
 
-### Consigliati
+### Recommended
 - **OS**: Windows 11 Pro/Enterprise
 - **CPU**: Quad-core 2.5 GHz+
 - **RAM**: 4+ GB
-- **Disco**: 1+ GB (a seconda della dimensione dei database)
+- **Disk**: 1+ GB (depending on database sizes)
 
-## Database di Origine e Destinazione
-
-L'applicazione supporta connessioni a:
+## Supported Databases
 
 ### SQL Server
-- Versioni: 2019 SP3+, 2022
-- Edizioni: Enterprise, Standard, Express
-- Accesso: SQL Auth, Windows Auth
+- **Versions**: 2017, 2019, 2022
+- **Editions**: Enterprise, Standard, Express
+- **Authentication**: SQL Auth, Windows Auth
 
 ### Oracle
-- Versioni: 19c, 21c, 23c
-- Accesso: Direct o TNS
+- **Versions**: 19c, 21c, 23c
+- **Access**: Direct connection or TNS
 
 ### PostgreSQL
-- Versioni: 12+, 14+, 15+
-- Accesso: Direct connection
+- **Versions**: 12, 13, 14, 15, 16
+- **Access**: Direct connection
 
-## Procedura di Utilizzo
+## Usage Procedure
 
-### 1. Configurazione Connessioni
-1. Avvia l'applicazione
-2. Tab "Connessioni Database"
-3. Inserisci i dati di connessione:
+### 1. Connection Configuration
+1. Launch the application
+2. Go to "Database Connections" tab
+3. Enter connection details:
    - Server/Host
-   - Porta
-   - Database
+   - Port
+   - Database name
    - Username/Password
-4. Clicca "Connetti ai Database"
+4. Click "Connect to Databases"
 
-### 2. Selezione Oggetti
-1. Tab "Selezione Tabelle"
-2. Seleziona le tabelle da migrare
-3. Visualizza il numero di righe per tabella
-4. Usa i pulsanti di selezione rapida
+### 2. Object Selection
+1. Go to "Table Selection" tab
+2. Select tables to migrate
+3. Use search box to filter
+4. View row counts per table
+5. Use quick selection buttons
 
-### 3. Avvio Migrazione
-1. Tab "Migrazione"
-2. Clicca "Avvia Migrazione"
-3. Monitora il progresso
-4. Al completamento, il database target sarà popcolato
+### 3. Migration Mode
+Select the appropriate mode:
+- **Schema + Data**: Full migration with automatic rollback on failure
+- **Schema Only**: Create table structures only
+- **Data Only**: Migrate data only (tables must exist)
 
-## Mapping Automatico Tipi Dati
+### 4. Start Migration
+1. Go to "Migration" tab
+2. Click "Start Migration"
+3. Monitor progress
+4. Wait for completion
 
-L'applicazione esegue il mapping automatico intelligente dei tipi dati:
+## Data Type Mapping
+
+The application performs intelligent automatic data type mapping:
 
 | SQL Server | PostgreSQL | Oracle |
-|-----------|-----------|---------|
+|------------|------------|--------|
 | int | integer | NUMBER(10) |
 | bigint | bigint | NUMBER(19) |
+| smallint | smallint | NUMBER(5) |
+| tinyint | smallint | NUMBER(3) |
 | varchar(n) | varchar(n) | VARCHAR2(n) |
-| datetime2 | timestamp | TIMESTAMP |
-| bit | boolean | NUMBER(1) |
+| nvarchar(n) | varchar(n) | NVARCHAR2(n) |
+| varchar(max) | text | CLOB |
+| nvarchar(max) | text | NCLOB |
+| char(n) | char(n) | CHAR(n) |
 | text | text | CLOB |
-| binary | bytea | BLOB |
+| datetime | timestamp | TIMESTAMP(6) |
+| datetime2 | timestamp | TIMESTAMP(6) |
+| date | date | DATE |
+| time | time | TIMESTAMP(0) |
+| bit | boolean | NUMBER(1) |
+| decimal(p,s) | numeric(p,s) | NUMBER(p,s) |
+| float | double precision | BINARY_DOUBLE |
+| real | real | BINARY_FLOAT |
+| binary(n) | bytea | RAW(n) |
+| varbinary | bytea | BLOB |
+| varbinary(max) | bytea | BLOB |
+| uniqueidentifier | uuid | RAW(16) |
 
-## Monitoraggio e Logging
+## Monitoring and Logging
 
-L'applicazione fornisce feedback in tempo reale:
-- Stato della connessione
-- Numero tabelle trovate
-- Progresso della migrazione (percentuale)
-- Numero righe migrate per tabella
-- Messaggi di errore dettagliati
+The application provides real-time feedback:
+- Connection status
+- Number of tables found
+- Migration progress (percentage)
+- Rows migrated per table
+- Detailed error messages
+
+Logs include:
+- Connection attempts
+- DDL statements executed
+- Batch progress
+- Error stack traces
 
 ## Troubleshooting
 
-### Connessione Fallita
-**Problema**: "Impossibile connettersi al database sorgente"
-**Soluzione**:
-- Verifica che il server sia raggiungibile
-- Controlla credenziali (username/password)
-- Verifica porta (1433 SQL Server, 1521 Oracle, 5432 PostgreSQL)
-- Verifica firewall
+### Connection Failed
+**Problem**: "Unable to connect to source/target database"
 
-### Timeout Connessione
-**Problema**: L'applicazione non risponde durante la connessione
-**Soluzione**:
-- Aumenta il timeout (modifica CommandTimeout nel codice)
-- Verifica la velocità della rete
-- Controlla il carico del database di origine
+**Solutions**:
+- Verify server is reachable (`ping hostname`)
+- Check credentials (username/password)
+- Verify port (1433 SQL Server, 1521 Oracle, 5432 PostgreSQL)
+- Check firewall settings
+- Verify database name/SID
 
-### Migrazione Parziale
-**Problema**: Non tutte le righe vengono migrate
-**Soluzione**:
-- Controlla i messaggi di errore
-- Verifica che il target abbia spazio disponibile
-- Controlla i vincoli e le relazioni tra tabelle
+### Connection Timeout
+**Problem**: Application hangs during connection
 
-### Errori di Schema
-**Problema**: Errore durante creazione schema
-**Soluzione**:
-- Verifica che l'utente target abbia permessi DDL
-- Controlla se il database target già esiste
-- Verifica la compatibilità dei tipi dati
+**Solutions**:
+- Check network speed and latency
+- Verify server load
+- Default timeout is 300 seconds
+
+### "String or binary data would be truncated"
+**Problem**: Data migration fails with truncation error
+
+**Solutions**:
+- Source data is larger than target column
+- Check column size mapping in logs
+- Consider using larger column types in target
+
+### Partial Migration
+**Problem**: Not all rows migrated
+
+**Solutions**:
+- Check error messages for specific failures
+- Verify target has sufficient disk space
+- Check for constraint violations
+- Review foreign key dependencies
+
+### Schema Errors
+**Problem**: Error during schema creation
+
+**Solutions**:
+- Verify target user has DDL privileges
+- Check if table already exists
+- Review data type compatibility
+- Check for reserved word conflicts
+
+### Oracle-Specific Issues
+**Problem**: ORA-01031 insufficient privileges
+
+**Solutions**:
+- Ensure user has CREATE SESSION, CREATE TABLE privileges
+- For creating new schemas, use SYSTEM or SYS user
+- SYSDBA is only available to SYS user
 
 ## Performance
 
-### Ottimizzazione
-- **Batch Size**: 1000 righe per batch (configurabile nel codice)
-- **Timeout**: 300 secondi per operazione
-- **Memoria**: ~100-200 MB RAM in uso
+### Optimization Settings
+- **Batch Size**: 1000 rows per batch
+- **Command Timeout**: 300 seconds (5 minutes)
+- **Parallel Row Counts**: 10 concurrent operations
+- **Memory Usage**: ~100-200 MB during migration
 
-### Velocità Tipica
-- Connessione: < 1 secondo
-- Discovery tabelle: 1-5 secondi
-- Schema migration: 5-30 secondi
-- Data migration: 10-100MB per minuto (dipende dalla velocità rete)
+### Typical Performance
+- **Connection**: < 1 second
+- **Table Discovery**: 1-10 seconds (depending on table count)
+- **Schema Migration**: 5-60 seconds
+- **Data Migration**: 10-100 MB per minute (network dependent)
 
-## Backup Consigliato
+### Large Database Tips
+- Migrate tables in batches
+- Start with smaller tables for testing
+- Monitor server resources during migration
+- Consider off-peak hours for production migrations
 
-Prima di avviare una migrazione importante:
-1. Crea backup del database target
-2. Testa con un subset di dati
-3. Valida l'integrità dei dati post-migrazione
+## Backup Recommendations
 
-## Uninstallazione
+Before starting an important migration:
+1. Create backup of target database
+2. Test with a subset of data first
+3. Validate data integrity post-migration
+4. Keep rollback plan ready
 
-### Se installato tramite NSIS:
-1. Pannello di Controllo → Programmi → Programmi e Funzionalità
-2. Seleziona "Database Migrator"
-3. Clicca "Disinstalla"
+## Uninstallation
 
-### Se eseguibile standalone:
-1. Elimina il file DatabaseMigrator.exe
-2. Elimina la cartella di installazione
+### If Installed via NSIS:
+1. Control Panel → Programs → Programs and Features
+2. Select "Database Migrator"
+3. Click "Uninstall"
 
-## Supporto Tecnico
+### If Using Standalone Executable:
+1. Delete the DatabaseMigrator.exe file
+2. Delete the installation folder
+3. Optionally delete configurations from `%LOCALAPPDATA%\DatabaseMigrator\`
 
-Per problemi o richieste:
-1. Consulta il README.md per informazioni generali
-2. Verifica i log di output dell'applicazione
-3. Controlla la connettività di rete
+## Version Information
 
-## Versione e Aggiornamenti
-
-**Versione Corrente**: 1.0.0
-**Data Rilascio**: Novembre 2025
+**Current Version**: 1.0.0  
+**Release Date**: January 2026  
 **Build**: Win-x64, .NET 8.0 self-contained
 
-### Note di Rilascio
-- ✅ Supporto SQL Server, Oracle, PostgreSQL
-- ✅ UI Avalonia moderna
-- ✅ Mapping tipi dati intelligente
+### Release Notes v1.0.0
+- ✅ SQL Server, Oracle, PostgreSQL support
+- ✅ Modern Avalonia UI
+- ✅ Intelligent data type mapping
 - ✅ Single-file executable
-- ✅ Progress tracking in tempo reale
+- ✅ Real-time progress tracking
+- ✅ Three migration modes
+- ✅ Automatic rollback on failure
+- ✅ Configuration save/load
+- ✅ Table search and filtering
 
 ---
 
-**Creato con**: .NET 8.0, Avalonia 11.0, ReactiveUI
-**Piattaforme Supportate**: Windows 11+ (64-bit)
+**Built with**: .NET 8.0, Avalonia 11.0, ReactiveUI

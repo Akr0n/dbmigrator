@@ -1,426 +1,336 @@
-# Database Migrator - Architettura Tecnica
+# Database Migrator - Technical Architecture
 
-## Panoramica Architettura
+## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    DATABASE MIGRATOR                     │
-│                   (Avalonia UI - MVVM)                  │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  ┌───────────────┐  ┌────────────────┐  ┌────────────┐ │
-│  │  MainWindow   │  │  UI Binding    │  │  Commands  │ │
-│  │   (XAML)      │  │  ViewModels    │  │  ReactiveUI│ │
-│  └───────────────┘  └────────────────┘  └────────────┘ │
-│                           │                              │
-│                           ▼                              │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │         DatabaseMigrator.Core (Libreria)        │   │
-│  │                                                   │   │
-│  │  ┌─────────────────────────────────────────┐    │   │
-│  │  │  Services                               │    │   │
-│  │  │ ├─ DatabaseService                      │    │   │
-│  │  │ │  └─ Connessioni, Query, Discovery     │    │   │
-│  │  │ ├─ SchemaMigrationService               │    │   │
-│  │  │ │  └─ DDL, Mapping Tipi Dati            │    │   │
-│  │  │ └─ DataMigrationService (opzionale)     │    │   │
-│  │  └─────────────────────────────────────────┘    │   │
-│  │                                                   │   │
-│  │  ┌─────────────────────────────────────────┐    │   │
-│  │  │  Models                                 │    │   │
-│  │  │ ├─ ConnectionInfo                       │    │   │
-│  │  │ ├─ DatabaseType                         │    │   │
-│  │  │ ├─ TableInfo                            │    │   │
-│  │  │ └─ ColumnDefinition                     │    │   │
-│  │  └─────────────────────────────────────────┘    │   │
-│  └──────────────────────────────────────────────────┘   │
-│                           │                              │
-│                           ▼                              │
-│  ┌──────────────────────────────────────────┐           │
-│  │      Database Drivers                    │           │
-│  │  ├─ Microsoft.Data.SqlClient             │           │
-│  │  ├─ Oracle.ManagedDataAccess.Core        │           │
-│  │  └─ Npgsql (PostgreSQL)                  │           │
-│  └──────────────────────────────────────────┘           │
-│                           │                              │
-└───────────────┬───────────┴───────────────┬──────────────┘
-                │                           │
-    ┌───────────▼────────┐        ┌────────▼──────────┐
-    │  Source Database   │        │ Target Database   │
-    │  (SQL/Oracle/PG)   │        │ (SQL/Oracle/PG)   │
-    └────────────────────┘        └───────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                     DATABASE MIGRATOR                        │
+│                    (Avalonia UI - MVVM)                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌───────────────┐  ┌────────────────┐  ┌────────────────┐  │
+│  │  MainWindow   │  │   ViewModels   │  │   Commands     │  │
+│  │   (AXAML)     │  │   + Bindings   │  │   ReactiveUI   │  │
+│  └───────────────┘  └────────────────┘  └────────────────┘  │
+│                            │                                 │
+│                            ▼                                 │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │          DatabaseMigrator.Core (Library)              │  │
+│  │                                                        │  │
+│  │  ┌──────────────────────────────────────────────┐     │  │
+│  │  │  Services                                    │     │  │
+│  │  │  ├─ DatabaseService                          │     │  │
+│  │  │  │  └─ Connections, Queries, Data Migration  │     │  │
+│  │  │  ├─ SchemaMigrationService                   │     │  │
+│  │  │  │  └─ DDL, Data Type Mapping, Schema Ops    │     │  │
+│  │  │  └─ LoggerService                            │     │  │
+│  │  │     └─ Centralized Logging                   │     │  │
+│  │  └──────────────────────────────────────────────┘     │  │
+│  │                                                        │  │
+│  │  ┌──────────────────────────────────────────────┐     │  │
+│  │  │  Models                                      │     │  │
+│  │  │  ├─ ConnectionInfo                           │     │  │
+│  │  │  ├─ ConnectionConfig                         │     │  │
+│  │  │  ├─ DatabaseType                             │     │  │
+│  │  │  ├─ MigrationMode                            │     │  │
+│  │  │  └─ TableInfo                                │     │  │
+│  │  └──────────────────────────────────────────────┘     │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                            │                                 │
+│                            ▼                                 │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │              Database Drivers (ADO.NET)               │  │
+│  │  ├─ Microsoft.Data.SqlClient (SQL Server)             │  │
+│  │  ├─ Oracle.ManagedDataAccess.Core (Oracle)            │  │
+│  │  └─ Npgsql (PostgreSQL)                               │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                            │                                 │
+└────────────────────────────┼─────────────────────────────────┘
+                             │
+         ┌───────────────────┴───────────────────┐
+         │                                       │
+    ┌────▼─────────────┐              ┌─────────▼──────────┐
+    │  Source Database │              │  Target Database   │
+    │  (SQL/Oracle/PG) │              │  (SQL/Oracle/PG)   │
+    └──────────────────┘              └────────────────────┘
 ```
 
-## Struttura Progetti
+## Project Structure
 
-### DatabaseMigrator.Core (Libreria)
-**Target**: .NET 8.0
-**Dipendenze**:
+### DatabaseMigrator.Core (Library)
+
+**Target Framework**: .NET 8.0
+
+**Dependencies**:
 - Microsoft.Data.SqlClient 5.2.0
 - Npgsql 8.0.3
 - Oracle.ManagedDataAccess.Core 23.4.0
 
-**Namespace**:
+**Namespace Structure**:
 ```
 DatabaseMigrator.Core
-├── Models
-│   ├── ConnectionInfo.cs
-│   ├── DatabaseType.cs
-│   ├── TableInfo.cs
-│   └── ColumnDefinition.cs (interno)
-└── Services
-    ├── IDatabaseService.cs
-    ├── DatabaseService.cs
-    └── SchemaMigrationService.cs
+├── Models/
+│   ├── ConnectionInfo.cs      # Connection details and connection string builder
+│   ├── ConnectionConfig.cs    # Serializable configuration for save/load
+│   ├── DatabaseType.cs        # Enum: SqlServer, PostgreSQL, Oracle
+│   ├── MigrationMode.cs       # Enum: SchemaAndData, SchemaOnly, DataOnly
+│   └── TableInfo.cs           # Table metadata (name, schema, row count)
+└── Services/
+    ├── IDatabaseService.cs        # Interface for database operations
+    ├── DatabaseService.cs         # Connection testing, table discovery, data migration
+    ├── SchemaMigrationService.cs  # Schema DDL generation, type mapping
+    └── LoggerService.cs           # Centralized logging service
 ```
 
-### DatabaseMigrator (Applicazione UI)
-**Target**: .NET 8.0
-**Runtime**: win-x64 (self-contained)
-**UI Framework**: Avalonia 11.0.10
+### DatabaseMigrator (UI Application)
+
+**Target Framework**: .NET 8.0  
+**Runtime**: win-x64 (self-contained)  
+**UI Framework**: Avalonia 11.0.10  
 **Binding**: ReactiveUI + System.Reactive
 
-**Namespace**:
+**Namespace Structure**:
 ```
 DatabaseMigrator
-├── Program.cs (Entry point)
-├── App.axaml
+├── Program.cs              # Entry point
+├── App.axaml               # Application configuration
+├── Assets/                 # Application icons and resources
 ├── Views/
-│   ├── MainWindow.xaml
-│   └── MainWindow.xaml.cs
+│   ├── MainWindow.axaml    # Main UI definition (XAML)
+│   └── MainWindow.axaml.cs # Code-behind
 └── ViewModels/
-    ├── ViewModelBase.cs (base class)
-    ├── MainWindowViewModel.cs
-    └── ConnectionViewModel.cs
+    ├── ViewModelBase.cs        # Base class with INotifyPropertyChanged
+    ├── MainWindowViewModel.cs  # Main application logic
+    └── ConnectionViewModel.cs  # Connection form logic
 ```
 
-## Componenti Chiave
+## Key Components
 
-### 1. DatabaseService (DatabaseMigrator.Core)
+### 1. DatabaseService
 
-**Responsabilità**:
-- Gestione connessioni ai database
-- Discovery tabelle e schema
-- Migrazione dati in batch
-- Validazione connessioni
-
-**Metodi Principali**:
-```csharp
-// Test connessione
-Task<bool> TestConnectionAsync(ConnectionInfo connectionInfo)
-
-// Recupero tabelle
-Task<List<TableInfo>> GetTablesAsync(ConnectionInfo connectionInfo)
-
-// Verifica esistenza database
-Task<bool> DatabaseExistsAsync(ConnectionInfo connectionInfo)
-
-// Creazione database
-Task CreateDatabaseAsync(ConnectionInfo connectionInfo)
-
-// Recupero schema tabella
-Task<string> GetTableSchemaAsync(ConnectionInfo connectionInfo, 
-                                  string tableName, string schema)
-
-// Migrazione dati con progress
-Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, 
-                       TableInfo table, IProgress<int> progress)
-```
-
-**Caratteristiche**:
-- Batch size: 1000 righe per insert
-- Command timeout: 300 secondi
-- Support DbConnection base per abstraction
-
-### 2. SchemaMigrationService (DatabaseMigrator.Core)
-
-**Responsabilità**:
-- Migrazione DDL (Data Definition Language)
-- Mapping tipi dati cross-database
-- Creazione schema nel target
-
-**Mapping Tipi Dati**:
-- **SQL Server ↔ PostgreSQL**: 25+ conversioni
-- **SQL Server ↔ Oracle**: 20+ conversioni  
-- **PostgreSQL ↔ Oracle**: 20+ conversioni
-- Supporto precision/scale per numerici
-
-**Esempio Mapping**:
-```
-SQL Server                PostgreSQL              Oracle
-int                  →    integer            →    NUMBER(10)
-varchar(255)         →    varchar(255)       →    VARCHAR2(255)
-datetime2            →    timestamp          →    TIMESTAMP
-bit                  →    boolean            →    NUMBER(1)
-decimal(18,2)        →    numeric(18,2)      →    NUMBER(18,2)
-```
-
-### 3. MainWindowViewModel (DatabaseMigrator)
-
-**Responsabilità**:
-- Orchestrazione logica UI
-- Binding dati connessioni
-- Gestione flusso migrazione
-- Progress tracking
-
-**Proprietà Reactive**:
-```csharp
-// Connessioni
-ConnectionViewModel? SourceConnection
-ConnectionViewModel? TargetConnection
-
-// Dati
-ObservableCollection<TableInfo> Tables
-
-// Stato
-bool IsConnected
-bool IsMigrating
-string StatusMessage
-
-// Progress
-int ProgressPercentage (0-100)
-string ProgressText
-```
-
-**Comandi**:
-```csharp
-ConnectDatabasesCommand      // Connetti ai DB
-StartMigrationCommand        // Avvia migrazione
-SelectAllTablesCommand       // Seleziona tutto
-DeselectAllTablesCommand     // Deseleziona tutto
-```
-
-### 4. ConnectionViewModel (DatabaseMigrator)
-
-**Responsabilità**:
-- Gestione parametri connessione
-- Validazione dati input
-- Creazione ConnectionInfo
-
-**Proprietà**:
-```csharp
-string Server
-int Port
-string Database
-string Username
-string Password
-DatabaseType SelectedDatabaseType
-ConnectionInfo? ConnectionInfo (derived)
-```
-
-**Porta Default per DB**:
-- SQL Server: 1433
-- PostgreSQL: 5432
-- Oracle: 1521
-
-## Flusso di Migrazione
-
-### 1. Connessione
-```
-User Input (Connessioni) 
-    ↓
-ConnectDatabasesCommand
-    ↓
-DatabaseService.TestConnectionAsync (sorgente)
-    ↓
-DatabaseService.TestConnectionAsync (target)
-    ↓
-DatabaseService.GetTablesAsync (sorgente)
-    ↓
-UI: Popolamento lista tabelle
-    ↓
-IsConnected = true
-```
-
-### 2. Selezione
-```
-User seleziona tabelle (UI)
-    ↓
-TableInfo.IsSelected = true/false
-    ↓
-SelectAllTablesCommand / DeselectAllTablesCommand
-```
-
-### 3. Migrazione
-```
-User clicca "Avvia Migrazione"
-    ↓
-IsMigrating = true
-    ↓
-Verifica DatabaseExistsAsync (target)
-    ↓
-Se non esiste: CreateDatabaseAsync
-    ↓
-SchemaMigrationService.MigrateSchemaAsync
-    ├─ GetTableColumnsAsync (sorgente)
-    ├─ MapDataType (per ogni colonna)
-    ├─ BuildCreateTableStatement
-    └─ Esegui DDL nel target
-    ↓
-Per ogni tabella selezionata:
-    DatabaseService.MigrateTableAsync
-    ├─ SELECT * FROM sorgente (batch)
-    ├─ INSERT INTO target (batch)
-    └─ Progress callback
-    ↓
-IsMigrating = false
-    ↓
-Completo!
-```
-
-## Patterns Utilizzati
-
-### 1. Reactive Programming (ReactiveUI)
-- **WhenAnyValue**: Tracking cambiamenti proprietà
-- **ReactiveCommand**: Comandi con async/await
-- **RaiseAndSetIfChanged**: Notifiche binding
+The `DatabaseService` class handles all database operations:
 
 ```csharp
-public ReactiveCommand<Unit, Unit> ConnectDatabasesCommand { get; }
-
-ConnectDatabasesCommand = ReactiveCommand.CreateFromTask(
-    ConnectDatabasesAsync,
-    this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating,
-        (connected, migrating) => connected && !migrating)
-);
+public interface IDatabaseService
+{
+    Task<bool> TestConnectionAsync(ConnectionInfo connectionInfo);
+    Task<List<TableInfo>> GetTablesAsync(ConnectionInfo connectionInfo);
+    Task<bool> DatabaseExistsAsync(ConnectionInfo connectionInfo);
+    Task<string?> CreateDatabaseAsync(ConnectionInfo connectionInfo);
+    Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, 
+        TableInfo table, IProgress<int> progress);
+}
 ```
 
-### 2. Dependency Injection Pattern
+**Key Features**:
+- Connection testing with detailed error reporting
+- Table discovery with parallel row count retrieval (controlled concurrency)
+- Batch data migration (1000 rows per batch)
+- Transaction support with commit/rollback
+- IDENTITY_INSERT handling for SQL Server
+
+### 2. SchemaMigrationService
+
+The `SchemaMigrationService` handles DDL operations and type mapping:
+
+```csharp
+public class SchemaMigrationService
+{
+    Task<bool> CheckTableExistsAsync(ConnectionInfo connectionInfo, string schema, string tableName);
+    Task<bool> DropTableAsync(ConnectionInfo connectionInfo, string schema, string tableName);
+    Task MigrateSchemaAsync(ConnectionInfo source, ConnectionInfo target, List<TableInfo> tablesToMigrate);
+}
+```
+
+**Key Features**:
+- Cross-database data type mapping (25+ type conversions)
+- DDL generation for CREATE TABLE statements
+- Constraint handling (primary keys, indexes)
+- Support for MAX types (VARCHAR(MAX) → TEXT/CLOB)
+- Same-database migrations with type preservation
+
+### 3. MainWindowViewModel
+
+The main ViewModel orchestrates the migration process:
+
 ```csharp
 public class MainWindowViewModel : ViewModelBase
 {
-    private readonly IDatabaseService _databaseService;
-    private readonly SchemaMigrationService _schemaMigrationService;
-
-    public MainWindowViewModel()
-    {
-        _databaseService = new DatabaseService();
-        _schemaMigrationService = new SchemaMigrationService();
-    }
+    // Commands
+    ReactiveCommand<Unit, Unit> ConnectDatabasesCommand { get; }
+    ReactiveCommand<Unit, Unit> StartMigrationCommand { get; }
+    ReactiveCommand<Unit, Unit> SelectAllTablesCommand { get; }
+    ReactiveCommand<Unit, Unit> DeselectAllTablesCommand { get; }
+    ReactiveCommand<Unit, Unit> RefreshTablesCommand { get; }
+    
+    // Migration modes
+    MigrationMode SelectedMigrationMode { get; set; }
 }
 ```
 
-### 3. Factory Pattern (DatabaseService)
-```csharp
-private DbConnection CreateConnection(ConnectionInfo connectionInfo) 
-    => connectionInfo.DatabaseType switch
-{
-    DatabaseType.SqlServer => new SqlConnection(...),
-    DatabaseType.PostgreSQL => new NpgsqlConnection(...),
-    DatabaseType.Oracle => new OracleConnection(...),
-    _ => throw new NotSupportedException()
-};
+**Key Features**:
+- Reactive UI updates with progress tracking
+- Table filtering and selection management
+- Configuration save/load (JSON format)
+- Automatic rollback on migration failure (Schema+Data mode)
+
+## Migration Flow
+
+### Schema + Data Mode
+
+```
+1. Check if target database exists
+   └─ If not: Create database (with privileges for Oracle)
+   
+2. Identify tables that need to be created
+   └─ Track in tablesCreatedDuringMigration list
+   
+3. For each table:
+   a. Check if table exists in target
+   b. If not: Get column definitions from source
+   c. Map data types to target database
+   d. Generate and execute CREATE TABLE DDL
+   e. Apply constraints (primary keys, indexes)
+   
+4. For each table (data migration):
+   a. Truncate target table (if exists)
+   b. Read data from source in batches (1000 rows)
+   c. Generate INSERT statements
+   d. Execute with transaction support
+   e. Commit on success
+   
+5. On failure:
+   └─ Rollback: DROP all tables created during this migration
 ```
 
-### 4. Strategy Pattern (SchemaMigrationService)
+### Data Type Mapping
+
+The application supports bidirectional mapping between all supported databases:
+
+**SQL Server → PostgreSQL**:
+| SQL Server | PostgreSQL |
+|------------|------------|
+| int | integer |
+| bigint | bigint |
+| varchar(n) | varchar(n) |
+| nvarchar(n) | varchar(n) |
+| varchar(max) | text |
+| datetime2 | timestamp |
+| bit | boolean |
+| varbinary | bytea |
+| uniqueidentifier | uuid |
+
+**SQL Server → Oracle**:
+| SQL Server | Oracle |
+|------------|--------|
+| int | NUMBER(10) |
+| bigint | NUMBER(19) |
+| varchar(n) | VARCHAR2(n) |
+| nvarchar(n) | NVARCHAR2(n) |
+| varchar(max) | CLOB |
+| datetime2 | TIMESTAMP(6) |
+| bit | NUMBER(1) |
+| varbinary | BLOB |
+
+**Same Database Migrations**:
+When source and target are the same database type, original types are preserved with correct sizes, including handling of MAX/unlimited length types.
+
+## Concurrency and Performance
+
+### Table Row Count Retrieval
+
+For databases with many tables (1000+), row counts are retrieved using controlled parallelism:
+
 ```csharp
-private string GetTableColumnsQuery(DatabaseType dbType, ...)
-    => dbType switch
-{
-    DatabaseType.SqlServer => /* SQL Server query */,
-    DatabaseType.PostgreSQL => /* PostgreSQL query */,
-    DatabaseType.Oracle => /* Oracle query */,
-};
-```
+const int maxConcurrency = 10;
+using var semaphore = new SemaphoreSlim(maxConcurrency);
 
-## Sicurezza
-
-### Connessioni
-- ✅ TrustServerCertificate per SQL Server
-- ✅ SQL Injection Prevention: Query parametrizzate
-- ✅ Password in memoria durante sessione
-- ⚠️ Nota: Password non criptate in memoria (miglioramento futuro)
-
-### Dati
-- ✅ Batch processing con transazioni
-- ✅ Error handling con rollback
-- ✅ Validazione schema prima migrazione
-
-## Performance
-
-### Ottimizzazioni Implementate
-1. **Batch Processing**: 1000 righe per batch
-2. **Async/Await**: Non-blocking operations
-3. **Connection Pooling**: Gestito da driver nativi
-4. **Early Exit**: Validazioni prima operazioni lunghe
-
-### Metriche Tipiche
-| Operazione | Tempo Tipico |
-|-----------|------------|
-| Test connessione | < 1s |
-| Discovery 100 tabelle | 2-5s |
-| Schema migration 100 tabelle | 10-30s |
-| Migrazione 1M righe | 30-120s |
-
-## Testing
-
-### Unit Test (Consigliato)
-```csharp
-[TestClass]
-public class DatabaseServiceTests
-{
-    [TestMethod]
-    public async Task TestConnection_WithValidCredentials_ReturnsTrue()
-    {
-        // Arrange
-        var service = new DatabaseService();
-        var connectionInfo = new ConnectionInfo { /* ... */ };
-        
-        // Act
-        var result = await service.TestConnectionAsync(connectionInfo);
-        
-        // Assert
-        Assert.IsTrue(result);
+var tasks = tables.Select(async table => {
+    await semaphore.WaitAsync();
+    try {
+        table.RowCount = await GetTableRowCountAsync(...);
+    } finally {
+        semaphore.Release();
     }
+});
+
+await Task.WhenAll(tasks);
+```
+
+### Batch Processing
+
+Data is migrated in batches of 1000 rows to:
+- Reduce memory consumption
+- Provide granular progress updates
+- Enable partial recovery on errors
+
+### Transaction Management
+
+- **SQL Server/PostgreSQL**: Use ADO.NET transactions
+- **Oracle**: Use explicit COMMIT/ROLLBACK statements
+
+## Security Considerations
+
+### Connection Strings
+
+- Passwords with special characters are properly escaped
+- Oracle passwords support special characters via quoted identifiers
+- SQL Server supports both SQL Auth and Windows Auth
+
+### SQL Injection Prevention
+
+- Parameterized queries for table existence checks
+- Identifier escaping for dynamic DDL
+- Schema and table names are validated
+
+### Oracle Privileges
+
+For Oracle target databases, the connecting user needs:
+- CREATE SESSION
+- CREATE TABLE
+- CREATE SEQUENCE
+- CREATE PROCEDURE (for user creation)
+
+## Error Handling
+
+### Connection Errors
+- Detailed error messages with server/port information
+- Timeout handling with configurable timeouts (300 seconds default)
+
+### Migration Errors
+- Automatic rollback of created tables on failure
+- Transaction rollback for data operations
+- Detailed logging with stack traces
+
+### Validation
+- Data-only mode validates table existence before starting
+- Connection validation before migration start
+
+## Configuration Storage
+
+Configurations are stored as JSON files:
+
+```json
+{
+  "Name": "config_name",
+  "Source": {
+    "DatabaseType": "SqlServer",
+    "Server": "localhost",
+    "Port": 1433,
+    "Database": "SourceDB",
+    "Username": "sa",
+    "Password": "****"
+  },
+  "Target": {
+    "DatabaseType": "PostgreSQL",
+    "Server": "localhost",
+    "Port": 5432,
+    "Database": "TargetDB",
+    "Username": "postgres",
+    "Password": "****"
+  },
+  "Timestamp": "2026-01-02T10:30:00"
 }
 ```
 
-## Deployment e Build
-
-### Build Command
-```bash
-dotnet build -c Release
-```
-
-### Publish Command (Win-x64)
-```bash
-dotnet publish src\DatabaseMigrator\DatabaseMigrator.csproj `
-    -c Release `
-    -r win-x64 `
-    --self-contained `
-    -p:PublishSingleFile=true
-```
-
-### Risultato
-- Single-file executable: 166 MB
-- Includes: .NET 8.0 runtime + tutte le dipendenze
-- Runtime richiesto: Windows 11 x64+
-
-## Miglioramenti Futuri
-
-1. **Sicurezza**:
-   - [ ] Encryption delle password in memoria
-   - [ ] Secure credential storage
-   - [ ] Audit logging
-
-2. **Performance**:
-   - [ ] Parallel table migration
-   - [ ] Streaming per large datasets
-   - [ ] Index optimization post-migration
-
-3. **Features**:
-   - [ ] Incremental migration (CDC)
-   - [ ] Data validation/reconciliation
-   - [ ] Scheduling e automation
-   - [ ] Web UI
-   - [ ] CLI Interface
-
-4. **UI**:
-   - [ ] Advanced filtering tabelle
-   - [ ] Column mapping customization
-   - [ ] Pre-migration validation report
-
----
-
-**Ultima Revisione**: Novembre 2025
-**Versione**: 1.0.0
+Default storage location: `%LOCALAPPDATA%\DatabaseMigrator\Configurations\`

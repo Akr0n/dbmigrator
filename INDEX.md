@@ -1,243 +1,147 @@
-# 📚 Database Migrator - Index Completo
+# 📚 Database Migrator - Documentation Index
 
-## 🎯 Dove Iniziare?
+## 🎯 Where to Start?
 
-### 👤 Se sei un **Utente Finale**
-1. Leggi: **QUICKSTART.md** (5 minuti)
-2. Esegui: `.\release\DatabaseMigrator.exe`
-3. Fai: Migrazione database!
-4. Riferimento: **README.md**
+### 👤 If You're an **End User**
+1. Read: **[QUICKSTART.md](QUICKSTART.md)** (5 minutes)
+2. Run: `.\release\DatabaseMigrator.exe`
+3. Do: Database migration!
+4. Reference: **[README.md](README.md)**
 
-### 👨‍💻 Se sei uno **Sviluppatore**
-1. Leggi: **ARCHITECTURE.md** (design e patterns)
-2. Esplora: Struttura del codice in `src/`
-3. Build: `dotnet build` oppure `.\publish.ps1`
-4. Modifica: Aggiungi features/fix bugs
-5. Riferimento: **PROJECT_SUMMARY.md**
+### 👨‍💻 If You're a **Developer**
+1. Read: **[ARCHITECTURE.md](ARCHITECTURE.md)** (design and patterns)
+2. Explore: Source code in `src/`
+3. Build: `dotnet build` or `.\publish.ps1`
+4. Modify: Add features/fix bugs
+5. Test: **[DOCKER_E2E_TESTING.md](DOCKER_E2E_TESTING.md)**
 
-### 🚀 Se devi **Deployare**
-1. Leggi: **DEPLOYMENT.md** (requirements e best practices)
-2. Crea: Installer NSIS con `makensis installer.nsi`
-3. Distribuisci: `DatabaseMigrator-Setup-v1.0.0.exe`
-4. Supporta: Usa le guide troubleshooting
-
-### 🏢 Se devi **Amministrare**
-1. Leggi: **DEPLOYMENT.md** sezione "Performance"
-2. Leggi: **ARCHITECTURE.md** sezione "Security"
-3. Monitora: Progress bar durante migrazione
-4. Backup: Prima di qualsiasi migrazione critica
+### 🚀 If You Need to **Deploy**
+1. Read: **[DEPLOYMENT.md](DEPLOYMENT.md)** (requirements and best practices)
+2. Create: NSIS installer with `makensis installer.nsi`
+3. Distribute: `DatabaseMigrator-Setup-v1.0.0.exe`
+4. Support: Use troubleshooting guides
 
 ---
 
-## 📁 Struttura File
+## 📁 File Structure
 
 ```
 c:\_repositories\dbmigrator
 │
-├── 📄 README.md ...................... Guida utente completa
-├── 📄 QUICKSTART.md .................. Start rapido (5 min)
-├── 📄 DEPLOYMENT.md .................. Troubleshooting + best practices
-├── 📄 ARCHITECTURE.md ................ Design patterns + technical deep dive
-├── 📄 PROJECT_SUMMARY.md ............. Riepilogo progetto completo
-├── 📄 INDEX.md ....................... Questo file
+├── 📄 README.md ...................... Complete user guide
+├── 📄 QUICKSTART.md .................. Quick start (5 min)
+├── 📄 DEPLOYMENT.md .................. Deployment + troubleshooting
+├── 📄 ARCHITECTURE.md ................ Technical deep dive
+├── 📄 DOCKER_E2E_TESTING.md .......... E2E testing with Docker
+├── 📄 INDEX.md ....................... This file
 │
 ├── 🔨 publish.ps1 .................... Build script (PowerShell)
 ├── 🔨 publish.bat .................... Build script (Batch)
-├── 📦 installer.nsi .................. Config NSIS installer
+├── 📦 installer.nsi .................. NSIS installer config
+├── 🐳 docker-compose.yml ............. Docker test environment
 │
 ├── 📂 src/
-│   ├── DatabaseMigrator/ ............. 🎨 Applicazione UI (Avalonia)
+│   ├── DatabaseMigrator/ ............. 🎨 UI Application (Avalonia)
 │   │   ├── Program.cs ................ Entry point
 │   │   ├── App.axaml ................. App configuration
-│   │   ├── DatabaseMigrator.csproj ... Project file
 │   │   ├── Views/
-│   │   │   └── MainWindow.axaml ...... 🎨 UI principale
+│   │   │   └── MainWindow.axaml ...... 🎨 Main UI
 │   │   └── ViewModels/
-│   │       ├── MainWindowViewModel.cs  🔄 Logica principale
-│   │       └── ConnectionViewModel.cs  🔌 Gestione connessioni
+│   │       ├── MainWindowViewModel.cs  🔄 Main logic
+│   │       └── ConnectionViewModel.cs  🔌 Connection management
 │   │
-│   └── DatabaseMigrator.Core/ ........ 📚 Libreria Core
-│       ├── DatabaseMigrator.Core.csproj Project file
+│   └── DatabaseMigrator.Core/ ........ 📚 Core Library
 │       ├── Models/
-│       │   ├── ConnectionInfo.cs ...... Modello connessione
-│       │   ├── DatabaseType.cs ........ Enum DB types
-│       │   └── TableInfo.cs ........... Modello tabella
+│       │   ├── ConnectionInfo.cs ...... Connection model
+│       │   ├── ConnectionConfig.cs .... Save/load configuration
+│       │   ├── DatabaseType.cs ........ DB type enum
+│       │   ├── MigrationMode.cs ....... Migration mode enum
+│       │   └── TableInfo.cs ........... Table model
 │       └── Services/
-│           ├── IDatabaseService.cs .... Interface servizi DB
-│           ├── DatabaseService.cs ..... 🗄️ Query, DDL, DML
-│           └── SchemaMigrationService.cs 📊 Mapping tipi dati
+│           ├── IDatabaseService.cs .... Service interface
+│           ├── DatabaseService.cs ..... 🗄️ Database operations
+│           ├── SchemaMigrationService.cs 📊 Schema + type mapping
+│           └── LoggerService.cs ....... Logging service
 │
-├── 📂 publish/ ....................... Build intermedi
-├── 📂 release/ ....................... ✅ ESEGUIBILE FINALE
-│   └── DatabaseMigrator.exe .......... 166 MB - PRONTO PER L'USO!
+├── 📂 init-scripts/ .................. Docker init scripts
+├── 📂 release/ ....................... ✅ FINAL EXECUTABLE
+│   └── DatabaseMigrator.exe .......... ~166 MB - READY TO USE!
 │
-└── DatabaseMigrator.sln .............. Soluzione Visual Studio
+└── DatabaseMigrator.sln .............. Visual Studio solution
 ```
 
 ---
 
-## 📖 Documenti per Ruolo
+## 📖 Documents by Role
 
-### 👤 UTENTE FINALE
+### 👤 END USER
 
-| Documento | Sezione | Tempo |
-|-----------|---------|-------|
-| QUICKSTART.md | Tutto | 5 min |
-| README.md | "Utilizzo" | 10 min |
+| Document | Section | Time |
+|----------|---------|------|
+| QUICKSTART.md | All | 5 min |
+| README.md | "Usage" | 10 min |
 | DEPLOYMENT.md | "Troubleshooting" | 10 min |
 
-### 👨‍💻 SVILUPPATORE
+### 👨‍💻 DEVELOPER
 
-| Documento | Sezione | Tempo |
-|-----------|---------|-------|
-| ARCHITECTURE.md | Tutto | 30 min |
-| README.md | "Compilazione e Build" | 5 min |
-| PROJECT_SUMMARY.md | "Stack Tecnologico" | 10 min |
-| Codice sorgente | Services + ViewModels | 1 ora |
+| Document | Section | Time |
+|----------|---------|------|
+| ARCHITECTURE.md | All | 30 min |
+| README.md | "Build from Source" | 5 min |
+| DOCKER_E2E_TESTING.md | All | 15 min |
+| Source code | Services + ViewModels | 1 hour |
 
 ### 🚀 DEVOPS / SYSTEM ADMIN
 
-| Documento | Sezione | Tempo |
-|-----------|---------|-------|
-| DEPLOYMENT.md | Tutto | 20 min |
-| README.md | "Installazione" | 5 min |
-| ARCHITECTURE.md | "Security" + "Performance" | 15 min |
-
-### 🏢 MANAGER / STAKEHOLDER
-
-| Documento | Sezione | Tempo |
-|-----------|---------|-------|
-| PROJECT_SUMMARY.md | Tutto | 10 min |
-| README.md | "Caratteristiche" | 3 min |
-| QUICKSTART.md | "Tips & Tricks" | 5 min |
+| Document | Section | Time |
+|----------|---------|------|
+| DEPLOYMENT.md | All | 20 min |
+| ARCHITECTURE.md | "Performance", "Security" | 15 min |
+| DOCKER_E2E_TESTING.md | "Troubleshooting" | 10 min |
 
 ---
 
-## 🎯 Quick Links per Task
+## 🔑 Key Features Summary
 
-### "Voglio eseguire l'app adesso"
-→ `.\release\DatabaseMigrator.exe`
-→ Vai a: **QUICKSTART.md**
+| Feature | Description |
+|---------|-------------|
+| **Cross-DB Migration** | SQL Server ↔ PostgreSQL ↔ Oracle |
+| **Migration Modes** | Schema+Data, Schema Only, Data Only |
+| **Auto Rollback** | Tables dropped on failure (Schema+Data) |
+| **Type Mapping** | 25+ automatic type conversions |
+| **Batch Processing** | 1000 rows per batch |
+| **Progress Tracking** | Real-time progress bar |
+| **Config Save/Load** | JSON configuration files |
+| **Table Filtering** | Search and filter tables |
+| **Parallel Execution** | Controlled concurrency for large DBs |
 
-### "Voglio compilare da sorgente"
+---
+
+## 🛠️ Quick Commands
+
 ```powershell
-.\publish.ps1                    # PowerShell
-# OPPURE
-publish.bat                      # Batch/CMD
-# OPPURE
-dotnet publish ...               # CLI manuale
-```
-→ Vai a: **README.md** sezione "Compilazione"
+# Build the project
+dotnet build
 
-### "Voglio creare l'installer"
-```powershell
-# Pubblica prima
+# Publish standalone executable
 .\publish.ps1
 
-# Crea installer
-& "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi
+# Run the application
+.\release\DatabaseMigrator.exe
+
+# Start Docker test environment
+docker-compose up -d
+
+# Stop Docker test environment
+docker-compose down
 ```
-→ Vai a: **DEPLOYMENT.md** sezione "Installer NSIS"
-
-### "Ho un errore di connessione"
-→ Vai a: **DEPLOYMENT.md** sezione "Troubleshooting"
-
-### "Voglio capire l'architettura"
-→ Vai a: **ARCHITECTURE.md** sezione "Panoramica Architettura"
-
-### "Voglio contribuire"
-→ Leggi: **ARCHITECTURE.md** → **PROJECT_SUMMARY.md** → Modifica codice
 
 ---
 
-## 🔑 Concetti Chiave
+## 📞 Support
 
-### Database Supportati
-- ✅ SQL Server (2019 SP3+, 2022)
-- ✅ Oracle (19c, 21c, 23c)
-- ✅ PostgreSQL (12+, 14+, 15+)
-
-### Conversioni Supportate
-- ✅ SQL Server ↔ PostgreSQL
-- ✅ SQL Server ↔ Oracle
-- ✅ PostgreSQL ↔ Oracle
-- ✅ Qualsiasi combinazione!
-
-### Funzionalità
-- ✅ Selezione selettiva tabelle
-- ✅ Mapping tipi dati automatico
-- ✅ Creazione DB target automatica
-- ✅ Migrazione batch (1000 righe)
-- ✅ Progress bar real-time
-
-### Piattaforme
-- ✅ Windows 11 (64-bit)
-- ✅ Single-file executable (166 MB)
-- ✅ Include .NET 8.0 runtime
-- ✅ Nessuna dipendenza esterna
-
----
-
-## 📊 Statistiche Progetto
-
-| Metrica | Valore |
-|---------|--------|
-| Linee di Codice | ~2500 |
-| File Sorgente | 8 |
-| Documentazione | 2500 righe |
-| Dimensione Exe | 166 MB |
-| Tempo Build | ~5 minuti |
-| Target Framework | .NET 8.0 |
-| UI Framework | Avalonia 11.0 |
-| Database Supportati | 3 (SQL Server, Oracle, PostgreSQL) |
-| Conversioni DB | 6 (tutte le combinazioni) |
-| Mapping Tipi Dati | 25+ mappings |
-
----
-
-## ✅ Checklist Finale
-
-Prima di usare/distribuire, verifica:
-
-- [x] ✅ Eseguibile creato (166 MB)
-- [x] ✅ Compilation senza errori
-- [x] ✅ Documentazione completa
-- [x] ✅ Script di build funzionanti
-- [x] ✅ Installer NSIS configurato
-- [x] ✅ README.md aggiornato
-- [x] ✅ Architettura documentata
-- [x] ✅ Quickstart disponibile
-- [x] ✅ Troubleshooting guide
-- [x] ✅ Project summary completo
-
----
-
-## 🚀 Prossimi Passi
-
-1. **Immediate**: Esegui `DatabaseMigrator.exe`
-2. **Breve termine**: Testa con database locali
-3. **Medio termine**: Crea installer e distribuisci
-4. **Lungo termine**: Aggiungi nuove features
-
----
-
-## 📞 Contatti Rapidi
-
-**Per domande su**:
-- **Utilizzo**: Vai a QUICKSTART.md
-- **Features**: Vai a README.md
-- **Errori**: Vai a DEPLOYMENT.md
-- **Design**: Vai a ARCHITECTURE.md
-- **Overview**: Vai a PROJECT_SUMMARY.md
-
----
-
-**Versione**: 1.0.0  
-**Status**: ✅ COMPLETATO E PRONTO  
-**Data**: Novembre 2025
-
----
-
-## 🎉 Grazie per aver usato Database Migrator!
-
-Buone migrazioni! 🚀
+For issues and questions:
+1. Check the [Troubleshooting](DEPLOYMENT.md#troubleshooting) section
+2. Review application logs
+3. Test with Docker environment
+4. Check network connectivity

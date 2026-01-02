@@ -1,26 +1,27 @@
 # E2E Testing Setup with Docker
 
-Questo setup avvia 3 container Docker con PostgreSQL, Oracle e SQL Server, precaricati con dati di test per testare l'applicazione DatabaseMigrator.
+This setup starts 3 Docker containers with PostgreSQL, Oracle, and SQL Server, preloaded with test data for testing the DatabaseMigrator application.
 
-## Prerequisiti
+## Prerequisites
 
-- Docker Desktop installato e running
-- PowerShell (per gli script)
+- Docker Desktop installed and running
+- PowerShell (for scripts)
+- At least 4GB RAM allocated to Docker
 
-## Avvio dei Database
+## Starting the Databases
 
 ```powershell
-# Naviga alla root del progetto
+# Navigate to project root
 cd c:\_repositories\dbmigrator
 
-# Avvia i 3 container
+# Start all 3 containers
 docker-compose up -d
 
-# Verifica lo stato
+# Check status
 docker-compose ps
 ```
 
-## Credenziali di Connessione
+## Connection Credentials
 
 ### PostgreSQL
 - **Host**: `localhost`
@@ -33,10 +34,9 @@ docker-compose ps
 ### Oracle
 - **Host**: `localhost`
 - **Port**: `1521`
-- **Database**: `XE`
+- **Database/SID**: `XE`
 - **User**: `migration_test`
 - **Password**: `oraclepass123`
-- **SID**: `XE`
 
 ### SQL Server
 - **Host**: `localhost`
@@ -46,16 +46,18 @@ docker-compose ps
 - **Password**: `SqlServer@123`
 - **Schema**: `migration_test`
 
-## Tabelle Disponibili
+## Available Tables
 
-Ogni database ha le seguenti tabelle con dati di test:
+Each database contains the following tables with test data:
 
-1. **users** - 4 record con password_hash (BYTEA/BLOB/VARBINARY)
-2. **products** - 5 record con image e thumbnail (BYTEA/BLOB/VARBINARY)
-3. **orders** - 8 record con relationship a users e products
-4. **audit_log** - 4 record con change_data binari
+| Table | Records | Special Columns |
+|-------|---------|-----------------|
+| users | 4 | password_hash (binary) |
+| products | 5 | image, thumbnail (binary) |
+| orders | 8 | references users, products |
+| audit_log | 4 | change_data (binary) |
 
-### Schema Relazionale
+### Relational Schema
 
 ```
 users (1) ──┬─→ (M) orders ←─┬─ (1) products
@@ -63,75 +65,125 @@ users (1) ──┬─→ (M) orders ←─┬─ (1) products
           user_id        product_id
 ```
 
-## Test Cases Suggeriti
+## Suggested Test Cases
 
 ### Test 1: PostgreSQL → SQL Server
 ```
 Source: PostgreSQL (localhost:5432, migration_test.*)
-Target: SQL Server (localhost:1433, migration_test.*)
+Target: SQL Server (localhost:1433, TestDB)
 
-Expected: 4 users + 5 products + 8 orders + 4 audit_log = 21 record migrati
-          + Binary data (password_hash, image) preservati
+Expected: 4 users + 5 products + 8 orders + 4 audit_log = 21 records migrated
+          + Binary data preserved
 ```
 
 ### Test 2: PostgreSQL → Oracle
 ```
 Source: PostgreSQL (localhost:5432, migration_test.*)
-Target: Oracle (localhost:1521, migration_test.*)
+Target: Oracle (localhost:1521, XE)
 
-Expected: Stessi 21 record + type mapping (BYTEA → BLOB)
+Expected: Same 21 records + type mapping (BYTEA → BLOB)
 ```
 
-### Test 3: SQL Server → PostgreSQL (reverse)
+### Test 3: SQL Server → PostgreSQL
 ```
-Source: SQL Server (localhost:1433, migration_test.*)
-Target: PostgreSQL (localhost:5432, migration_test.*)
+Source: SQL Server (localhost:1433, TestDB)
+Target: PostgreSQL (localhost:5432, testdb)
 
-Expected: Reverse migration con dati intatti
+Expected: Reverse migration with data intact
 ```
 
-## Arresto dei Database
+### Test 4: SQL Server → SQL Server (Same DB Type)
+```
+Source: SQL Server (localhost:1433, TestDB)
+Target: SQL Server (localhost:1433, TestDB2)
+
+Expected: Type preservation, VARCHAR(MAX) → VARCHAR(MAX)
+```
+
+### Test 5: Schema Only Mode
+```
+Source: Any database with tables
+Target: Empty database
+
+Mode: Schema Only
+Expected: Tables created, no data migrated
+```
+
+### Test 6: Data Only Mode
+```
+Prerequisite: Run Schema Only first
+Source: Database with data
+Target: Database with empty tables
+
+Mode: Data Only
+Expected: Data migrated, no schema changes
+```
+
+### Test 7: Rollback Test
+```
+Source: Database with valid tables
+Target: Database where data insertion will fail
+
+Mode: Schema + Data
+Expected: Tables created, data fails, tables dropped (rollback)
+```
+
+## Stopping the Databases
 
 ```powershell
-# Ferma i container
+# Stop containers
 docker-compose down
 
-# Ferma e rimuove i volumi (per reset completo)
+# Stop and remove volumes (complete reset)
 docker-compose down -v
 ```
 
 ## Troubleshooting
 
-### Oracle container non parte
+### Oracle Container Doesn't Start
 ```powershell
-# Oracle impiega più tempo (2-3 minuti). Controlla i log:
+# Oracle takes longer to initialize (2-3 minutes). Check logs:
 docker logs dbmigrator-oracle
+
+# Wait for "DATABASE IS READY TO USE" message
 ```
 
-### SQL Server non risponde
+### SQL Server Not Responding
 ```powershell
-# Attendi almeno 30 secondi dopo l'avvio
+# Wait at least 30 seconds after startup
 docker logs dbmigrator-sqlserver
 
-# Se persiste, aumenta memory a Docker Desktop:
-# Settings > Resources > Memory: 4GB o più
+# If issues persist, increase Docker Desktop memory:
+# Settings → Resources → Memory: 4GB or more
 ```
 
-### Connessione rifiutata
+### Connection Refused
 ```powershell
-# Verifica che i container siano running:
+# Verify containers are running:
 docker ps
 
-# Verifica la connettività:
+# Test connectivity:
 # PostgreSQL: psql -h localhost -U pguser -d testdb
 # SQL Server: sqlcmd -S localhost -U sa -P SqlServer@123
+# Oracle: sqlplus migration_test/oraclepass123@localhost:1521/XE
 ```
 
-## Verifica Dati
+### Port Already in Use
+```powershell
+# Check what's using the port:
+netstat -ano | findstr :1433
+netstat -ano | findstr :5432
+netstat -ano | findstr :1521
+
+# Stop conflicting services or change ports in docker-compose.yml
+```
+
+## Verifying Test Data
 
 ### PostgreSQL
 ```bash
 docker exec dbmigrator-postgres psql -U pguser -d testdb -c "SELECT COUNT(*) FROM migration_test.users;"
+docker exec dbmigrator-postgres psql -U pguser -d testdb -c "SELECT * FROM migration_test.users;"
 ```
 
 ### SQL Server
@@ -141,23 +193,46 @@ docker exec dbmigrator-sqlserver /opt/mssql-tools/bin/sqlcmd -S localhost -U sa 
 
 ### Oracle
 ```bash
-docker exec dbmigrator-oracle sqlplus -S migration_test/oraclepass123@localhost:1521/XE @migration_test.users;
+docker exec dbmigrator-oracle sqlplus -S migration_test/oraclepass123@localhost:1521/XE <<< "SELECT COUNT(*) FROM users;"
 ```
 
-## Note Importanti
+## Test Data Details
 
-- **BYTEA/BLOB/VARBINARY**: I dati binari sono mockati con stringhe ASCII per semplicità. In produzione sarebbero veri PNG/file binari.
-- **Foreign Keys**: Gli orders referenziano users e products - esegui la migrazione in ordine: users → products → orders
-- **Sequences/Identity**: Oracle usa SEQUENCE, SQL Server usa IDENTITY, PostgreSQL usa SERIAL - il tipo mapping è critico
-- **Timestamp**: Tutti i timestamp sono UTC (GETUTCDATE per SQL Server, CURRENT_TIMESTAMP per altri)
-
-## Reset Dati
-
-Se vuoi ricominciare con dati freschi:
-
-```powershell
-docker-compose down -v
-docker-compose up -d
-# Attendi 1-2 minuti per che i DB siano pronti
-docker-compose ps  # Verifica HEALTHY status
+### Users Table
+```sql
+CREATE TABLE users (
+    id INT PRIMARY KEY,
+    username VARCHAR(50),
+    email VARCHAR(100),
+    password_hash VARBINARY/BYTEA/RAW,  -- Binary data
+    created_at DATETIME/TIMESTAMP
+);
 ```
+
+### Products Table
+```sql
+CREATE TABLE products (
+    id INT PRIMARY KEY,
+    name VARCHAR(100),
+    price DECIMAL(10,2),
+    image VARBINARY/BYTEA/BLOB,        -- Binary data
+    thumbnail VARBINARY/BYTEA/BLOB     -- Binary data
+);
+```
+
+### Orders Table
+```sql
+CREATE TABLE orders (
+    id INT PRIMARY KEY,
+    user_id INT REFERENCES users(id),
+    product_id INT REFERENCES products(id),
+    quantity INT,
+    order_date DATETIME/TIMESTAMP
+);
+```
+
+## Notes
+
+- **Binary Data**: Test data uses ASCII-encoded mock data for simplicity. Production would use actual binary files.
+- **Foreign Keys**: Orders reference users and products. For proper migration, migrate in order: users → products → orders
+- **Schema Names**: PostgreSQL and SQL Server use `migration_test` schema. Oracle uses the `migration_test` user as schema.
