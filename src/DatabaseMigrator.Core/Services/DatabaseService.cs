@@ -108,8 +108,8 @@ public class DatabaseService : IDatabaseService
 
                 Log($"Retrieved {tables.Count} tables");
 
-                // Ottieni row count per tutte le tabelle in batch per evitare troppe connessioni
-                // Usa parallelismo controllato per database con molte tabelle
+                // Get row count for all tables in batch to avoid too many connections
+                // Use controlled parallelism for databases with many tables
                 Log($"Starting row count retrieval for {tables.Count} tables...");
                 await GetAllTableRowCountsAsync(connectionInfo, tables);
                 Log($"Row count retrieval completed");
