@@ -836,7 +836,7 @@ public class SchemaMigrationService
             DatabaseType.PostgreSQL => 
                 $"ALTER TABLE {tableRef} ADD CONSTRAINT \"{EscapePostgresIdentifier(constraintName)}\" {constraintType} ({columnList})",
             DatabaseType.Oracle => 
-                $"ALTER TABLE {tableRef} ADD CONSTRAINT {constraintName} {constraintType} ({columnList})",
+                $"ALTER TABLE {tableRef} ADD CONSTRAINT \"{EscapeOracleIdentifier(constraintName)}\" {constraintType} ({columnList})",
             _ => throw new NotSupportedException()
         };
 
@@ -1062,10 +1062,29 @@ public class SchemaMigrationService
     /// </summary>
     private string EscapePostgresIdentifier(string identifier)
     {
+        // PostgreSQL uses double quotes, escape " by doubling it
+        return EscapeQuotedIdentifier(identifier);
+    }
+
+    /// <summary>
+    /// Escapes an Oracle identifier by replacing " with ""
+    /// </summary>
+    private string EscapeOracleIdentifier(string identifier)
+    {
+        // Oracle uses double quotes for quoted identifiers, escape " by doubling it
+        return EscapeQuotedIdentifier(identifier);
+    }
+
+    /// <summary>
+    /// Escapes a double-quoted identifier by replacing " with ""
+    /// This is used for PostgreSQL and Oracle identifiers
+    /// </summary>
+    private string EscapeQuotedIdentifier(string identifier)
+    {
         if (string.IsNullOrEmpty(identifier))
             return identifier;
         
-        // PostgreSQL uses double quotes, escape " by doubling it
+        // Escape double quote by doubling it
         return identifier.Replace("\"", "\"\"");
     }
 
