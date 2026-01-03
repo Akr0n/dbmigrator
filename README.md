@@ -9,8 +9,8 @@ A Windows tool for migrating data between relational databases (SQL Server, Orac
 - 🎨 Modern graphical interface (Avalonia UI)
 - 📊 Selective table selection with search/filter
 - 🔧 Automatic data type mapping
-- � Primary Key and UNIQUE constraint migration
-- �📈 Real-time progress bar
+- 🔑 Primary Key and UNIQUE constraint migration
+- 📈 Real-time progress bar
 - 🚀 Automatic target database creation
 - 💾 Single-file executable (.exe)
 - 📁 Save/Load connection configurations

@@ -671,16 +671,6 @@ public class MainWindowViewModel : ViewModelBase
             }
 
             // Salva le selezioni correnti (lettura thread-safe)
-            HashSet<string> selectedTables;
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                selectedTables = Tables
-                    .Where(t => t.IsSelected)
-                    .Select(t => $"{t.Schema}.{t.TableName}")
-                    .ToHashSet();
-            });
-            
-            // Creiamo una copia locale per evitare problemi di closure
             var selectedTablesCopy = new HashSet<string>();
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
