@@ -1062,11 +1062,8 @@ public class SchemaMigrationService
     /// </summary>
     private string EscapePostgresIdentifier(string identifier)
     {
-        if (string.IsNullOrEmpty(identifier))
-            return identifier;
-        
         // PostgreSQL uses double quotes, escape " by doubling it
-        return identifier.Replace("\"", "\"\"");
+        return EscapeQuotedIdentifier(identifier);
     }
 
     /// <summary>
@@ -1074,10 +1071,20 @@ public class SchemaMigrationService
     /// </summary>
     private string EscapeOracleIdentifier(string identifier)
     {
+        // Oracle uses double quotes for quoted identifiers, escape " by doubling it
+        return EscapeQuotedIdentifier(identifier);
+    }
+
+    /// <summary>
+    /// Escapes a double-quoted identifier by replacing " with ""
+    /// This is used for PostgreSQL and Oracle identifiers
+    /// </summary>
+    private string EscapeQuotedIdentifier(string identifier)
+    {
         if (string.IsNullOrEmpty(identifier))
             return identifier;
         
-        // Oracle uses double quotes for quoted identifiers, escape " by doubling it
+        // Escape double quote by doubling it
         return identifier.Replace("\"", "\"\"");
     }
 
