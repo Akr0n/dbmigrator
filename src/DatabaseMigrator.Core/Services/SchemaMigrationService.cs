@@ -1075,14 +1075,22 @@ public class SchemaMigrationService
         if (string.IsNullOrWhiteSpace(identifier))
             throw new ArgumentException($"{parameterName} cannot be null or empty", parameterName);
 
-        // Remove potentially dangerous characters - allow only alphanumeric, underscore, and basic separators
+        // Allow only alphanumeric, underscore - most conservative for database identifiers
         // This is a defense-in-depth measure for identifiers used in dynamic SQL
         var sanitized = new string(identifier.Where(c => 
-            char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '$' || c == '#').ToArray());
+            char.IsLetterOrDigit(c) || c == '_').ToArray());
 
-        if (string.IsNullOrEmpty(sanitized) || sanitized != identifier)
+        if (string.IsNullOrEmpty(sanitized))
         {
-            Log($"[ValidateIdentifier] WARNING: Identifier '{identifier}' contains potentially unsafe characters. Sanitized to: '{sanitized}'");
+            throw new ArgumentException($"{parameterName} contains no valid identifier characters", parameterName);
+        }
+
+        if (sanitized != identifier)
+        {
+            Log($"[ValidateIdentifier] WARNING: Identifier '{identifier}' contains potentially unsafe characters");
+            throw new ArgumentException(
+                $"{parameterName} contains invalid characters. Only letters, digits, and underscores are allowed. " +
+                $"Provided: '{identifier}'", parameterName);
         }
 
         return sanitized;
