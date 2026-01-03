@@ -58,8 +58,8 @@ public class SchemaMigrationService
                 
                 string dropQuery = connectionInfo.DatabaseType switch
                 {
-                    DatabaseType.SqlServer => $"DROP TABLE [{schema}].[{tableName}]",
-                    DatabaseType.PostgreSQL => $"DROP TABLE \"{schema}\".\"{tableName}\"",
+                    DatabaseType.SqlServer => $"DROP TABLE [{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
+                    DatabaseType.PostgreSQL => $"DROP TABLE \"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(tableName)}\"",
                     DatabaseType.Oracle => $"DROP TABLE {tableName.ToUpperInvariant()}",
                     _ => throw new NotSupportedException()
                 };
@@ -944,8 +944,8 @@ public class SchemaMigrationService
     {
         return dbType switch
         {
-            DatabaseType.SqlServer => $"[{schema}].[{tableName}]",
-            DatabaseType.PostgreSQL => $"\"{schema.ToLowerInvariant()}\".\"{tableName.ToLowerInvariant()}\"",
+            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
+            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema.ToLowerInvariant())}\".\"{EscapePostgresIdentifier(tableName.ToLowerInvariant())}\"",
             DatabaseType.Oracle => tableName.ToUpperInvariant(),  // Oracle: uppercase, no schema prefix
             _ => throw new NotSupportedException()
         };
@@ -955,8 +955,8 @@ public class SchemaMigrationService
     {
         return dbType switch
         {
-            DatabaseType.SqlServer => $"[{columnName}]",
-            DatabaseType.PostgreSQL => $"\"{columnName.ToLowerInvariant()}\"",  // PostgreSQL: lowercase
+            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(columnName)}]",
+            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(columnName.ToLowerInvariant())}\"",  // PostgreSQL: lowercase
             DatabaseType.Oracle => columnName.ToUpperInvariant(),  // Oracle: uppercase
             _ => columnName
         };
