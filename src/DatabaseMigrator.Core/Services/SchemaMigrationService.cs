@@ -289,11 +289,15 @@ public class SchemaMigrationService
     {
         var constraints = new Dictionary<string, ConstraintInfo>();
         
+        // Validate identifiers to prevent SQL injection - defense in depth
+        schema = ValidateIdentifier(schema, nameof(schema));
+        tableName = ValidateIdentifier(tableName, nameof(tableName));
+        
         string query = dbType switch
         {
-            DatabaseType.SqlServer => GetSqlServerConstraintsWithColumnsQuery(schema, tableName),
-            DatabaseType.PostgreSQL => GetPostgresConstraintsWithColumnsQuery(schema, tableName),
-            DatabaseType.Oracle => GetOracleConstraintsWithColumnsQuery(schema, tableName),
+            DatabaseType.SqlServer => GetSqlServerConstraintsWithColumnsQuery(),
+            DatabaseType.PostgreSQL => GetPostgresConstraintsWithColumnsQuery(),
+            DatabaseType.Oracle => GetOracleConstraintsWithColumnsQuery(),
             _ => throw new NotSupportedException()
         };
 
@@ -301,6 +305,17 @@ public class SchemaMigrationService
         {
             command.CommandText = query;
             command.CommandTimeout = CommandTimeout;
+            
+            // Use parameters to prevent SQL injection
+            var schemaParam = command.CreateParameter();
+            schemaParam.ParameterName = dbType == DatabaseType.Oracle ? ":schema" : "@schema";
+            schemaParam.Value = schema;
+            command.Parameters.Add(schemaParam);
+            
+            var tableParam = command.CreateParameter();
+            tableParam.ParameterName = dbType == DatabaseType.Oracle ? ":tableName" : "@tableName";
+            tableParam.Value = tableName;
+            command.Parameters.Add(tableParam);
 
             using (var reader = await command.ExecuteReaderAsync())
             {
@@ -327,13 +342,9 @@ public class SchemaMigrationService
         return constraints.Values.ToList();
     }
 
-    private string GetSqlServerConstraintsWithColumnsQuery(string schema, string tableName)
+    private string GetSqlServerConstraintsWithColumnsQuery()
     {
-        // Validate identifiers to prevent SQL injection
-        schema = ValidateIdentifier(schema, nameof(schema));
-        tableName = ValidateIdentifier(tableName, nameof(tableName));
-
-        return $@"
+        return @"
             SELECT 
                 tc.CONSTRAINT_NAME as ConstraintName,
                 tc.CONSTRAINT_TYPE as ConstraintType,
@@ -343,18 +354,14 @@ public class SchemaMigrationService
                 ON tc.CONSTRAINT_NAME = ccu.CONSTRAINT_NAME 
                 AND tc.TABLE_SCHEMA = ccu.TABLE_SCHEMA
                 AND tc.TABLE_NAME = ccu.TABLE_NAME
-            WHERE tc.TABLE_SCHEMA = '{schema}' AND tc.TABLE_NAME = '{tableName}'
+            WHERE tc.TABLE_SCHEMA = @schema AND tc.TABLE_NAME = @tableName
             AND tc.CONSTRAINT_TYPE IN ('PRIMARY KEY', 'UNIQUE')
             ORDER BY tc.CONSTRAINT_NAME, ccu.COLUMN_NAME";
     }
 
-    private string GetPostgresConstraintsWithColumnsQuery(string schema, string tableName)
+    private string GetPostgresConstraintsWithColumnsQuery()
     {
-        // Validate identifiers to prevent SQL injection
-        schema = ValidateIdentifier(schema, nameof(schema));
-        tableName = ValidateIdentifier(tableName, nameof(tableName));
-
-        return $@"
+        return @"
             SELECT 
                 tc.constraint_name as ConstraintName,
                 tc.constraint_type as ConstraintType,
@@ -364,20 +371,16 @@ public class SchemaMigrationService
                 ON tc.constraint_name = kcu.constraint_name 
                 AND tc.table_schema = kcu.table_schema
                 AND tc.table_name = kcu.table_name
-            WHERE tc.table_schema = '{schema}' AND tc.table_name = '{tableName}'
+            WHERE tc.table_schema = @schema AND tc.table_name = @tableName
             AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
             ORDER BY tc.constraint_name, kcu.ordinal_position";
     }
 
-    private string GetOracleConstraintsWithColumnsQuery(string schema, string tableName)
+    private string GetOracleConstraintsWithColumnsQuery()
     {
-        // Validate identifiers to prevent SQL injection
-        schema = ValidateIdentifier(schema, nameof(schema));
-        tableName = ValidateIdentifier(tableName, nameof(tableName));
-
         // Oracle stores identifiers in uppercase by default
         // Use UPPER() to handle case-insensitive matching
-        return $@"
+        return @"
             SELECT 
                 c.constraint_name as ConstraintName,
                 CASE c.constraint_type 
@@ -389,7 +392,7 @@ public class SchemaMigrationService
             JOIN all_cons_columns cc 
                 ON c.constraint_name = cc.constraint_name 
                 AND c.owner = cc.owner
-            WHERE c.owner = UPPER('{schema}') AND c.table_name = UPPER('{tableName}')
+            WHERE c.owner = UPPER(:schema) AND c.table_name = UPPER(:tableName)
             AND c.constraint_type IN ('P', 'U')
             ORDER BY c.constraint_name, cc.position";
     }
