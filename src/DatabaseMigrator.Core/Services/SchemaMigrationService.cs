@@ -454,10 +454,7 @@ public class SchemaMigrationService
         }
         
         // Oracle doesn't like semicolon at the end of CREATE TABLE in this context
-        if (targetDbType == DatabaseType.Oracle)
-            sb.AppendLine(")");
-        else
-            sb.AppendLine(");");
+        sb.AppendLine(targetDbType == DatabaseType.Oracle ? ")" : ");");
 
         return sb.ToString();
     }
@@ -472,15 +469,9 @@ public class SchemaMigrationService
         // - Columns are nullable by default in Oracle
         // - Only specify NOT NULL explicitly when needed
         // For other databases: always specify NULL/NOT NULL explicitly
-        string nullable = "";
-        if (dbType != DatabaseType.Oracle)
-        {
-            nullable = column.IsNullable ? " NULL" : " NOT NULL";
-        }
-        else if (!column.IsNullable)
-        {
-            nullable = " NOT NULL";  // Oracle: only specify if NOT NULL
-        }
+        string nullable = dbType != DatabaseType.Oracle
+            ? (column.IsNullable ? " NULL" : " NOT NULL")
+            : (!column.IsNullable ? " NOT NULL" : "");
         
         // For Oracle: ignore DEFAULT values that are SQL Server functions
         string defaultValue = "";
