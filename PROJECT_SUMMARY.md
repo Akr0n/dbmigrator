@@ -2,7 +2,7 @@
 
 ## Overview
 
-Database Migrator is a professional-grade, cross-platform tool for migrating data between relational database systems. Built with .NET 8.0 and Avalonia UI, it provides a modern graphical interface for managing database migrations.
+Database Migrator is a professional-grade Windows tool for migrating data between relational database systems. Built with .NET 8.0 and Avalonia UI, it provides a modern graphical interface for managing database migrations.
 
 ## Technology Stack
 
@@ -31,8 +31,16 @@ All combinations are supported:
 
 ### Migration Modes
 - **Schema + Data**: Full migration with automatic rollback on failure
-- **Schema Only**: Create table structures without data
+- **Schema Only**: Create table structures with constraints, without data
 - **Data Only**: Migrate data only (tables must exist)
+
+### Schema Migration
+- Primary Key constraint migration
+- UNIQUE constraint migration
+- Automatic identifier case handling:
+  - PostgreSQL: lowercase identifiers
+  - Oracle: UPPERCASE identifiers
+  - SQL Server: original case preserved
 
 ### Data Type Mapping
 - 25+ automatic type conversions

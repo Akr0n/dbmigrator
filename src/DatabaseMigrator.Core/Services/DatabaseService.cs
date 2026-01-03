@@ -752,8 +752,8 @@ public class DatabaseService : IDatabaseService
         return dbType switch
         {
             DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
-            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(tableName)}\"",
-            DatabaseType.Oracle => tableName,  // For Oracle: use only the table name (without schema)
+            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema.ToLowerInvariant())}\".\"{EscapePostgresIdentifier(tableName.ToLowerInvariant())}\"",
+            DatabaseType.Oracle => tableName.ToUpperInvariant(),  // Oracle: uppercase, no schema prefix
             _ => throw new NotSupportedException()
         };
     }
@@ -764,7 +764,7 @@ public class DatabaseService : IDatabaseService
         var sb = new System.Text.StringBuilder();
         string tableRef = FormatTableName(dbType, schema, tableName);
 
-        // Costruisci colonne
+        // Costruisci colonne con case appropriato per ogni database
         var columnNames = new List<string>();
         for (int i = 0; i < columns.Count; i++)
         {
@@ -772,8 +772,8 @@ public class DatabaseService : IDatabaseService
             columnNames.Add(dbType switch
             {
                 DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(colName)}]",
-                DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(colName)}\"",
-                DatabaseType.Oracle => colName,
+                DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(colName.ToLowerInvariant())}\"",
+                DatabaseType.Oracle => colName.ToUpperInvariant(),
                 _ => colName
             });
         }

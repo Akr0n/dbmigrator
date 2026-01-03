@@ -11,6 +11,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Reactive.Linq;
+using Avalonia.Threading;
 
 namespace DatabaseMigrator.ViewModels;
 
@@ -652,49 +653,79 @@ public class MainWindowViewModel : ViewModelBase
         try
         {
             Log("[RefreshTablesAsync] Starting tables refresh...");
-            StatusMessage = "Ricaricamento tabelle...";
+            
+            // Update UI on main thread
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                StatusMessage = "Ricaricamento tabelle...";
+            });
             
             if (SourceConnection?.ConnectionInfo == null)
             {
-                ErrorMessage = "Errore: Connessione sorgente non valida";
-                StatusMessage = "Errore: connessione non valida";
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    ErrorMessage = "Errore: Connessione sorgente non valida";
+                    StatusMessage = "Errore: connessione non valida";
+                });
                 return;
             }
 
-            // Salva le selezioni correnti
-            var selectedTables = Tables
-                .Where(t => t.IsSelected)
-                .Select(t => $"{t.Schema}.{t.TableName}")
-                .ToHashSet();
+            // Salva le selezioni correnti (lettura thread-safe)
+            HashSet<string> selectedTables;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                selectedTables = Tables
+                    .Where(t => t.IsSelected)
+                    .Select(t => $"{t.Schema}.{t.TableName}")
+                    .ToHashSet();
+            });
             
-            Log($"[RefreshTablesAsync] Preserving {selectedTables.Count} selected tables");
+            // Creiamo una copia locale per evitare problemi di closure
+            var selectedTablesCopy = new HashSet<string>();
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                foreach (var t in Tables.Where(t => t.IsSelected))
+                {
+                    selectedTablesCopy.Add($"{t.Schema}.{t.TableName}");
+                }
+            });
+            
+            Log($"[RefreshTablesAsync] Preserving {selectedTablesCopy.Count} selected tables");
 
-            // Ricarica le tabelle dal database
+            // Ricarica le tabelle dal database (operazione async)
             var tables = await _databaseService.GetTablesAsync(SourceConnection.ConnectionInfo);
             
-            Tables.Clear();
-            foreach (var table in tables)
+            // Aggiorna le collezioni sul thread UI
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                // Ripristina la selezione se la tabella era selezionata
-                if (selectedTables.Contains($"{table.Schema}.{table.TableName}"))
+                Tables.Clear();
+                foreach (var table in tables)
                 {
-                    table.IsSelected = true;
+                    // Ripristina la selezione se la tabella era selezionata
+                    if (selectedTablesCopy.Contains($"{table.Schema}.{table.TableName}"))
+                    {
+                        table.IsSelected = true;
+                    }
+                    Tables.Add(table);
+                    SubscribeToTableChanges(table);
                 }
-                Tables.Add(table);
-                SubscribeToTableChanges(table);
-            }
 
-            // Applica il filtro corrente
-            ApplyTableFilter();
-            UpdateTableStatistics();
+                // Applica il filtro corrente
+                ApplyTableFilter();
+                UpdateTableStatistics();
 
-            StatusMessage = $"✅ Tabelle ricaricate! Trovate {tables.Count} tabelle";
+                StatusMessage = $"✅ Tabelle ricaricate! Trovate {tables.Count} tabelle";
+            });
+            
             Log($"[RefreshTablesAsync] Refresh completed. {tables.Count} tables loaded");
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"❌ Errore nel ricaricamento: {ex.Message}";
-            StatusMessage = "Errore durante il ricaricamento";
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                ErrorMessage = $"❌ Errore nel ricaricamento: {ex.Message}";
+                StatusMessage = "Errore durante il ricaricamento";
+            });
             Log($"[RefreshTablesAsync] Error: {ex.Message}");
         }
     }

@@ -131,7 +131,7 @@ public interface IDatabaseService
 
 ### 2. SchemaMigrationService
 
-The `SchemaMigrationService` handles DDL operations and type mapping:
+The `SchemaMigrationService` handles DDL operations, type mapping, and constraint migration:
 
 ```csharp
 public class SchemaMigrationService
@@ -142,10 +142,22 @@ public class SchemaMigrationService
 }
 ```
 
+**Schema Migration Process**:
+1. Extract column definitions from source database
+2. Map data types to target database format
+3. Generate CREATE TABLE DDL with proper identifier quoting
+4. Extract PRIMARY KEY and UNIQUE constraints
+5. Generate ALTER TABLE ADD CONSTRAINT DDL
+6. Apply identifier case conventions per database type
+
 **Key Features**:
 - Cross-database data type mapping (25+ type conversions)
 - DDL generation for CREATE TABLE statements
-- Constraint handling (primary keys, indexes)
+- Primary Key and UNIQUE constraint migration
+- Automatic identifier case handling:
+  - PostgreSQL: lowercase identifiers
+  - Oracle: UPPERCASE identifiers
+  - SQL Server: original case preserved
 - Support for MAX types (VARCHAR(MAX) → TEXT/CLOB)
 - Same-database migrations with type preservation
 
@@ -170,6 +182,7 @@ public class MainWindowViewModel : ViewModelBase
 
 **Key Features**:
 - Reactive UI updates with progress tracking
+- Thread-safe collection updates using `Dispatcher.UIThread.InvokeAsync()`
 - Table filtering and selection management
 - Configuration save/load (JSON format)
 - Automatic rollback on migration failure (Schema+Data mode)
@@ -189,19 +202,57 @@ public class MainWindowViewModel : ViewModelBase
    a. Check if table exists in target
    b. If not: Get column definitions from source
    c. Map data types to target database
-   d. Generate and execute CREATE TABLE DDL
-   e. Apply constraints (primary keys, indexes)
+   d. Apply identifier case conventions:
+      - PostgreSQL: lowercase
+      - Oracle: UPPERCASE  
+      - SQL Server: original case
+   e. Generate and execute CREATE TABLE DDL
+   f. Extract PRIMARY KEY and UNIQUE constraints from source
+   g. Generate and execute ALTER TABLE ADD CONSTRAINT DDL
    
 4. For each table (data migration):
    a. Truncate target table (if exists)
    b. Read data from source in batches (1000 rows)
-   c. Generate INSERT statements
+   c. Generate INSERT statements with proper identifier quoting
    d. Execute with transaction support
    e. Commit on success
    
 5. On failure:
    └─ Rollback: DROP all tables created during this migration
 ```
+
+### Constraint Migration
+
+The application automatically migrates PRIMARY KEY and UNIQUE constraints:
+
+**Constraint Extraction Queries**:
+- **SQL Server**: `INFORMATION_SCHEMA.TABLE_CONSTRAINTS` + `CONSTRAINT_COLUMN_USAGE`
+- **PostgreSQL**: `information_schema.table_constraints` + `key_column_usage`
+- **Oracle**: `all_constraints` + `all_cons_columns`
+
+**Constraint DDL Generation**:
+```sql
+-- SQL Server
+ALTER TABLE [schema].[table] ADD CONSTRAINT [PK_name] PRIMARY KEY ([column])
+
+-- PostgreSQL  
+ALTER TABLE "schema"."table" ADD CONSTRAINT "pk_name" PRIMARY KEY ("column")
+
+-- Oracle
+ALTER TABLE TABLE_NAME ADD CONSTRAINT PK_NAME PRIMARY KEY (COLUMN)
+```
+
+**Identifier Case Handling**:
+| Target Database | Identifier Case | Quoting |
+|-----------------|-----------------|---------|
+| SQL Server | Original (preserved) | `[brackets]` |
+| PostgreSQL | lowercase | `"double quotes"` |
+| Oracle | UPPERCASE | No quotes |
+
+**Constraint Name Length Limits**:
+- SQL Server: 128 characters
+- PostgreSQL: 63 characters
+- Oracle: 30 characters (truncated if necessary)
 
 ### Data Type Mapping
 

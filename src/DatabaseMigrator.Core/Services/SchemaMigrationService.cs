@@ -133,14 +133,16 @@ public class SchemaMigrationService
                         Log($"[SchemaMigration] Table created successfully");
                     }
 
-                    // Create primary indexes and constraints
-                    var constraints = await GetTableConstraintsAsync(sourceConn, source.DatabaseType, 
+                    // Create primary keys and unique constraints with full column information
+                    var constraintsWithColumns = await GetTableConstraintsWithColumnsAsync(sourceConn, source.DatabaseType, 
                         table.Schema, table.TableName);
                     
-                    foreach (var constraint in constraints)
+                    Log($"[SchemaMigration] Found {constraintsWithColumns.Count} constraints to migrate");
+                    
+                    foreach (var constraint in constraintsWithColumns)
                     {
-                        string constraintDdl = TranslateConstraintDdl(constraint, target.DatabaseType, 
-                            source.DatabaseType, table.Schema, table.TableName);
+                        string constraintDdl = BuildConstraintDdl(constraint, target.DatabaseType, 
+                            table.Schema, table.TableName);
                         
                         if (!string.IsNullOrEmpty(constraintDdl))
                         {
@@ -152,6 +154,7 @@ public class SchemaMigrationService
                                 {
                                     Log($"[SchemaMigration] Executing constraint: {constraintDdl}");
                                     await command.ExecuteNonQueryAsync();
+                                    Log($"[SchemaMigration] Constraint {constraint.ConstraintName} ({constraint.ConstraintType}) created successfully");
                                 }
                                 catch (Exception ex)
                                 {
@@ -266,6 +269,117 @@ public class SchemaMigrationService
         }
 
         return columns;
+    }
+
+    /// <summary>
+    /// Represents a constraint with its columns
+    /// </summary>
+    private class ConstraintInfo
+    {
+        public string ConstraintName { get; set; } = string.Empty;
+        public string ConstraintType { get; set; } = string.Empty;  // PRIMARY KEY, UNIQUE, FOREIGN KEY
+        public List<string> Columns { get; set; } = new List<string>();
+        public string? ReferencedTable { get; set; }
+        public string? ReferencedSchema { get; set; }
+        public List<string> ReferencedColumns { get; set; } = new List<string>();
+    }
+
+    private async Task<List<ConstraintInfo>> GetTableConstraintsWithColumnsAsync(DbConnection connection, 
+        DatabaseType dbType, string schema, string tableName)
+    {
+        var constraints = new Dictionary<string, ConstraintInfo>();
+        
+        string query = dbType switch
+        {
+            DatabaseType.SqlServer => GetSqlServerConstraintsWithColumnsQuery(schema, tableName),
+            DatabaseType.PostgreSQL => GetPostgresConstraintsWithColumnsQuery(schema, tableName),
+            DatabaseType.Oracle => GetOracleConstraintsWithColumnsQuery(schema, tableName),
+            _ => throw new NotSupportedException()
+        };
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = query;
+            command.CommandTimeout = CommandTimeout;
+
+            using (var reader = await command.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    var constraintName = reader["ConstraintName"].ToString() ?? "";
+                    var constraintType = reader["ConstraintType"].ToString() ?? "";
+                    var columnName = reader["ColumnName"].ToString() ?? "";
+                    
+                    if (!constraints.ContainsKey(constraintName))
+                    {
+                        constraints[constraintName] = new ConstraintInfo
+                        {
+                            ConstraintName = constraintName,
+                            ConstraintType = constraintType
+                        };
+                    }
+                    
+                    constraints[constraintName].Columns.Add(columnName);
+                }
+            }
+        }
+
+        return constraints.Values.ToList();
+    }
+
+    private string GetSqlServerConstraintsWithColumnsQuery(string schema, string tableName)
+    {
+        return $@"
+            SELECT 
+                tc.CONSTRAINT_NAME as ConstraintName,
+                tc.CONSTRAINT_TYPE as ConstraintType,
+                ccu.COLUMN_NAME as ColumnName
+            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu 
+                ON tc.CONSTRAINT_NAME = ccu.CONSTRAINT_NAME 
+                AND tc.TABLE_SCHEMA = ccu.TABLE_SCHEMA
+                AND tc.TABLE_NAME = ccu.TABLE_NAME
+            WHERE tc.TABLE_SCHEMA = '{schema}' AND tc.TABLE_NAME = '{tableName}'
+            AND tc.CONSTRAINT_TYPE IN ('PRIMARY KEY', 'UNIQUE')
+            ORDER BY tc.CONSTRAINT_NAME, ccu.COLUMN_NAME";
+    }
+
+    private string GetPostgresConstraintsWithColumnsQuery(string schema, string tableName)
+    {
+        return $@"
+            SELECT 
+                tc.constraint_name as ConstraintName,
+                tc.constraint_type as ConstraintType,
+                kcu.column_name as ColumnName
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu 
+                ON tc.constraint_name = kcu.constraint_name 
+                AND tc.table_schema = kcu.table_schema
+                AND tc.table_name = kcu.table_name
+            WHERE tc.table_schema = '{schema}' AND tc.table_name = '{tableName}'
+            AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+            ORDER BY tc.constraint_name, kcu.ordinal_position";
+    }
+
+    private string GetOracleConstraintsWithColumnsQuery(string schema, string tableName)
+    {
+        // Oracle stores identifiers in uppercase by default
+        // Use UPPER() to handle case-insensitive matching
+        return $@"
+            SELECT 
+                c.constraint_name as ConstraintName,
+                CASE c.constraint_type 
+                    WHEN 'P' THEN 'PRIMARY KEY' 
+                    WHEN 'U' THEN 'UNIQUE' 
+                END as ConstraintType,
+                cc.column_name as ColumnName
+            FROM all_constraints c
+            JOIN all_cons_columns cc 
+                ON c.constraint_name = cc.constraint_name 
+                AND c.owner = cc.owner
+            WHERE c.owner = UPPER('{schema}') AND c.table_name = UPPER('{tableName}')
+            AND c.constraint_type IN ('P', 'U')
+            ORDER BY c.constraint_name, cc.position";
     }
 
     private async Task<List<string>> GetTableConstraintsAsync(DbConnection connection, 
@@ -671,11 +785,120 @@ public class SchemaMigrationService
         return normalized;
     }
 
+    /// <summary>
+    /// Builds a constraint DDL statement (PRIMARY KEY or UNIQUE) for the target database
+    /// </summary>
+    private string BuildConstraintDdl(ConstraintInfo constraint, DatabaseType targetDbType, 
+        string schema, string tableName)
+    {
+        if (constraint.Columns.Count == 0)
+        {
+            Log($"[BuildConstraintDdl] No columns for constraint {constraint.ConstraintName}, skipping");
+            return "";
+        }
+
+        string constraintType = constraint.ConstraintType.ToUpperInvariant();
+        
+        // Format column names appropriately for each database
+        // Oracle uses uppercase identifiers, PostgreSQL uses lowercase
+        var formattedColumns = constraint.Columns
+            .Select(col => FormatColumnNameForTarget(targetDbType, col))
+            .ToList();
+        string columnList = string.Join(", ", formattedColumns);
+
+        // Format table reference for target database
+        string tableRef = FormatTableNameForTarget(targetDbType, schema, tableName);
+
+        // Generate constraint name (ensuring it's valid for target DB)
+        string constraintName = GenerateConstraintName(constraint.ConstraintName, targetDbType, schema, tableName, constraintType);
+
+        string ddl = targetDbType switch
+        {
+            DatabaseType.SqlServer => 
+                $"ALTER TABLE {tableRef} ADD CONSTRAINT [{constraintName}] {constraintType} ({columnList})",
+            DatabaseType.PostgreSQL => 
+                $"ALTER TABLE {tableRef} ADD CONSTRAINT \"{constraintName}\" {constraintType} ({columnList})",
+            DatabaseType.Oracle => 
+                $"ALTER TABLE {tableRef} ADD CONSTRAINT {constraintName} {constraintType} ({columnList})",
+            _ => throw new NotSupportedException()
+        };
+
+        Log($"[BuildConstraintDdl] Generated DDL for {constraintType}: {ddl}");
+        return ddl;
+    }
+
+    /// <summary>
+    /// Formats a column name for the target database with proper quoting and case
+    /// </summary>
+    private string FormatColumnNameForTarget(DatabaseType targetDbType, string columnName)
+    {
+        return targetDbType switch
+        {
+            DatabaseType.SqlServer => $"[{columnName}]",
+            DatabaseType.PostgreSQL => $"\"{columnName.ToLowerInvariant()}\"",  // PostgreSQL prefers lowercase
+            DatabaseType.Oracle => columnName.ToUpperInvariant(),  // Oracle uses uppercase
+            _ => columnName
+        };
+    }
+
+    /// <summary>
+    /// Formats a table reference for the target database with proper schema handling
+    /// </summary>
+    private string FormatTableNameForTarget(DatabaseType targetDbType, string schema, string tableName)
+    {
+        return targetDbType switch
+        {
+            DatabaseType.SqlServer => $"[{schema}].[{tableName}]",
+            DatabaseType.PostgreSQL => $"\"{schema.ToLowerInvariant()}\".\"{tableName.ToLowerInvariant()}\"",
+            DatabaseType.Oracle => tableName.ToUpperInvariant(),  // Oracle: just table name, uppercase
+            _ => throw new NotSupportedException()
+        };
+    }
+
+    /// <summary>
+    /// Generates a valid constraint name for the target database
+    /// </summary>
+    private string GenerateConstraintName(string originalName, DatabaseType targetDbType, 
+        string schema, string tableName, string constraintType)
+    {
+        // Use original name if it's valid, otherwise generate a new one
+        string baseName = !string.IsNullOrEmpty(originalName) ? originalName : 
+            $"{(constraintType == "PRIMARY KEY" ? "PK" : "UQ")}_{tableName}";
+
+        // Apply case conventions based on target database
+        baseName = targetDbType switch
+        {
+            DatabaseType.Oracle => baseName.ToUpperInvariant(),
+            DatabaseType.PostgreSQL => baseName.ToLowerInvariant(),
+            _ => baseName  // SQL Server is case-insensitive
+        };
+
+        // Oracle has a 30 character limit for identifiers (128 in 12.2+, but we stay safe)
+        if (targetDbType == DatabaseType.Oracle && baseName.Length > 30)
+        {
+            baseName = baseName.Substring(0, 30);
+        }
+        
+        // SQL Server has 128 character limit
+        if (targetDbType == DatabaseType.SqlServer && baseName.Length > 128)
+        {
+            baseName = baseName.Substring(0, 128);
+        }
+
+        // PostgreSQL has 63 character limit
+        if (targetDbType == DatabaseType.PostgreSQL && baseName.Length > 63)
+        {
+            baseName = baseName.Substring(0, 63);
+        }
+
+        return baseName;
+    }
+
     private string TranslateConstraintDdl(string sourceDdl, DatabaseType targetDbType, 
         DatabaseType sourceDbType, string schema, string tableName)
     {
-        // This is a simplification. In production, we would parse the complete DDL
-        // For now we return an empty string for complex constraints
+        // This method is kept for backward compatibility but is no longer used
+        // The new BuildConstraintDdl method is used instead
         return "";
     }
 
@@ -684,8 +907,8 @@ public class SchemaMigrationService
         return dbType switch
         {
             DatabaseType.SqlServer => $"[{schema}].[{tableName}]",
-            DatabaseType.PostgreSQL => $"\"{schema}\".\"{tableName}\"",
-            DatabaseType.Oracle => tableName,  // Oracle: usa solo il table name, non schema.table
+            DatabaseType.PostgreSQL => $"\"{schema.ToLowerInvariant()}\".\"{tableName.ToLowerInvariant()}\"",
+            DatabaseType.Oracle => tableName.ToUpperInvariant(),  // Oracle: uppercase, no schema prefix
             _ => throw new NotSupportedException()
         };
     }
@@ -695,8 +918,8 @@ public class SchemaMigrationService
         return dbType switch
         {
             DatabaseType.SqlServer => $"[{columnName}]",
-            DatabaseType.PostgreSQL => $"\"{columnName}\"",
-            DatabaseType.Oracle => columnName,
+            DatabaseType.PostgreSQL => $"\"{columnName.ToLowerInvariant()}\"",  // PostgreSQL: lowercase
+            DatabaseType.Oracle => columnName.ToUpperInvariant(),  // Oracle: uppercase
             _ => columnName
         };
     }
