@@ -4,6 +4,8 @@ using System.Data;
 using System.Data.Common;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
@@ -914,20 +916,14 @@ public class SchemaMigrationService
         // If truncation is needed, add a hash suffix to reduce collision risk
         if (needsTruncation)
         {
-            // Generate a short hash from the full name to ensure uniqueness
-            int hash = baseName.GetHashCode();
-            string hashSuffix = $"_{Math.Abs(hash % 10000):D4}";
+            // Generate a stable hash from the full name to ensure uniqueness across migrations
+            string hashSuffix = GetStableHashSuffix(baseName);
             
             // Reserve space for the hash suffix
             int truncateLength = maxLength - hashSuffix.Length;
-            if (truncateLength > 0)
-            {
-                baseName = baseName[..truncateLength] + hashSuffix;
-            }
-            else
-            {
-                baseName = baseName[..maxLength];
-            }
+            baseName = truncateLength > 0
+                ? baseName[..truncateLength] + hashSuffix
+                : baseName[..maxLength];
         }
 
         return baseName;
@@ -1071,24 +1067,21 @@ public class SchemaMigrationService
     }
 
     /// <summary>
-    /// Validates and sanitizes database identifiers to prevent SQL injection
+    /// Validates database identifiers to prevent SQL injection by enforcing a strict character set.
+    /// Only allows alphanumeric characters and underscores - the most conservative approach for database identifiers.
+    /// This is a defense-in-depth measure for identifiers used in dynamic SQL construction.
+    /// Note: This may reject legitimate identifiers containing special characters that are valid when quoted.
     /// </summary>
     private string ValidateIdentifier(string identifier, string parameterName)
     {
         if (string.IsNullOrWhiteSpace(identifier))
             throw new ArgumentException($"{parameterName} cannot be null or empty", parameterName);
 
-        // Allow only alphanumeric, underscore - most conservative for database identifiers
-        // This is a defense-in-depth measure for identifiers used in dynamic SQL
-        var sanitized = new string(identifier.Where(c => 
-            char.IsLetterOrDigit(c) || c == '_').ToArray());
+        // Allow only alphanumeric characters and underscore - most conservative for database identifiers.
+        // This is a defense-in-depth measure for identifiers used in dynamic SQL.
+        var hasInvalidChars = identifier.Any(c => !(char.IsLetterOrDigit(c) || c == '_'));
 
-        if (string.IsNullOrEmpty(sanitized))
-        {
-            throw new ArgumentException($"{parameterName} contains no valid identifier characters", parameterName);
-        }
-
-        if (sanitized != identifier)
+        if (hasInvalidChars)
         {
             Log($"[ValidateIdentifier] WARNING: Identifier '{identifier}' contains potentially unsafe characters");
             throw new ArgumentException(
@@ -1096,7 +1089,20 @@ public class SchemaMigrationService
                 $"Provided: '{identifier}'", parameterName);
         }
 
-        return sanitized;
+        return identifier;
+    }
+
+    /// <summary>
+    /// Generates a stable hash suffix for constraint names to ensure uniqueness across migrations.
+    /// Uses SHA256 for deterministic hashing that remains consistent across application runs.
+    /// </summary>
+    private string GetStableHashSuffix(string input)
+    {
+        using var sha256 = SHA256.Create();
+        byte[] hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
+        // Use first 4 bytes and convert to a 4-digit number for the suffix
+        int hashValue = Math.Abs(BitConverter.ToInt32(hashBytes, 0));
+        return $"_{hashValue % 10000:D4}";
     }
 }
 
