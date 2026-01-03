@@ -1079,14 +1079,16 @@ public class SchemaMigrationService
 
         // Allow only alphanumeric characters and underscore - most conservative for database identifiers.
         // This is a defense-in-depth measure for identifiers used in dynamic SQL.
-        var hasInvalidChars = identifier.Any(c => !(char.IsLetterOrDigit(c) || c == '_'));
-
-        if (hasInvalidChars)
+        // Use foreach for early exit on first invalid character for better performance
+        foreach (char c in identifier)
         {
-            Log($"[ValidateIdentifier] WARNING: Identifier '{identifier}' contains potentially unsafe characters");
-            throw new ArgumentException(
-                $"{parameterName} contains invalid characters. Only letters, digits, and underscores are allowed. " +
-                $"Provided: '{identifier}'", parameterName);
+            if (!(char.IsLetterOrDigit(c) || c == '_'))
+            {
+                Log($"[ValidateIdentifier] WARNING: Identifier '{identifier}' contains potentially unsafe characters");
+                throw new ArgumentException(
+                    $"{parameterName} contains invalid characters. Only letters, digits, and underscores are allowed. " +
+                    $"Provided: '{identifier}'", parameterName);
+            }
         }
 
         return identifier;
@@ -1101,7 +1103,8 @@ public class SchemaMigrationService
         using var sha256 = SHA256.Create();
         byte[] hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
         // Use first 4 bytes and convert to a 4-digit number for the suffix
-        int hashValue = Math.Abs(BitConverter.ToInt32(hashBytes, 0));
+        // Use unsigned int to avoid Math.Abs overflow with int.MinValue
+        uint hashValue = BitConverter.ToUInt32(hashBytes, 0);
         return $"_{hashValue % 10000:D4}";
     }
 }
