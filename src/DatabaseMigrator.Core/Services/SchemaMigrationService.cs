@@ -889,7 +889,10 @@ public class SchemaMigrationService
         bool needsTruncation = false;
         int maxLength = 0;
 
-        // Oracle has a 30 character limit for identifiers (128 in 12.2+, but we use conservative limit for compatibility)
+        // Oracle: Use 30-char limit for maximum compatibility with all Oracle versions.
+        // Note: Oracle 12.2+ supports 128 chars, but we intentionally use the conservative
+        // 30-char limit to ensure compatibility with older Oracle versions without requiring
+        // runtime version detection.
         if (targetDbType == DatabaseType.Oracle && baseName.Length > 30)
         {
             needsTruncation = true;
