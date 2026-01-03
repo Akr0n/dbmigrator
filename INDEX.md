@@ -115,7 +115,7 @@ c:\_repositories\dbmigrator
 | **Progress Tracking** | Real-time progress bar |
 | **Config Save/Load** | JSON configuration files |
 | **Table Filtering** | Search and filter tables |
-| **Thread-Safe UI** | Async operations with UI thread safety |
+| **Thread-Safe UI** | Async operations with proper UI thread marshalling |
 
 ---
 
