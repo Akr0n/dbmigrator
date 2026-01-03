@@ -329,6 +329,10 @@ public class SchemaMigrationService
 
     private string GetSqlServerConstraintsWithColumnsQuery(string schema, string tableName)
     {
+        // Validate identifiers to prevent SQL injection
+        schema = ValidateIdentifier(schema, nameof(schema));
+        tableName = ValidateIdentifier(tableName, nameof(tableName));
+
         return $@"
             SELECT 
                 tc.CONSTRAINT_NAME as ConstraintName,
@@ -346,6 +350,10 @@ public class SchemaMigrationService
 
     private string GetPostgresConstraintsWithColumnsQuery(string schema, string tableName)
     {
+        // Validate identifiers to prevent SQL injection
+        schema = ValidateIdentifier(schema, nameof(schema));
+        tableName = ValidateIdentifier(tableName, nameof(tableName));
+
         return $@"
             SELECT 
                 tc.constraint_name as ConstraintName,
@@ -363,6 +371,10 @@ public class SchemaMigrationService
 
     private string GetOracleConstraintsWithColumnsQuery(string schema, string tableName)
     {
+        // Validate identifiers to prevent SQL injection
+        schema = ValidateIdentifier(schema, nameof(schema));
+        tableName = ValidateIdentifier(tableName, nameof(tableName));
+
         // Oracle stores identifiers in uppercase by default
         // Use UPPER() to handle case-insensitive matching
         return $@"
@@ -815,9 +827,9 @@ public class SchemaMigrationService
         string ddl = targetDbType switch
         {
             DatabaseType.SqlServer => 
-                $"ALTER TABLE {tableRef} ADD CONSTRAINT [{constraintName}] {constraintType} ({columnList})",
+                $"ALTER TABLE {tableRef} ADD CONSTRAINT [{EscapeSqlServerIdentifier(constraintName)}] {constraintType} ({columnList})",
             DatabaseType.PostgreSQL => 
-                $"ALTER TABLE {tableRef} ADD CONSTRAINT \"{constraintName}\" {constraintType} ({columnList})",
+                $"ALTER TABLE {tableRef} ADD CONSTRAINT \"{EscapePostgresIdentifier(constraintName)}\" {constraintType} ({columnList})",
             DatabaseType.Oracle => 
                 $"ALTER TABLE {tableRef} ADD CONSTRAINT {constraintName} {constraintType} ({columnList})",
             _ => throw new NotSupportedException()
@@ -834,8 +846,8 @@ public class SchemaMigrationService
     {
         return targetDbType switch
         {
-            DatabaseType.SqlServer => $"[{columnName}]",
-            DatabaseType.PostgreSQL => $"\"{columnName.ToLowerInvariant()}\"",  // PostgreSQL prefers lowercase
+            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(columnName)}]",
+            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(columnName.ToLowerInvariant())}\"",  // PostgreSQL prefers lowercase
             DatabaseType.Oracle => columnName.ToUpperInvariant(),  // Oracle uses uppercase
             _ => columnName
         };
@@ -848,8 +860,8 @@ public class SchemaMigrationService
     {
         return targetDbType switch
         {
-            DatabaseType.SqlServer => $"[{schema}].[{tableName}]",
-            DatabaseType.PostgreSQL => $"\"{schema.ToLowerInvariant()}\".\"{tableName.ToLowerInvariant()}\"",
+            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
+            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema.ToLowerInvariant())}\".\"{EscapePostgresIdentifier(tableName.ToLowerInvariant())}\"",
             DatabaseType.Oracle => tableName.ToUpperInvariant(),  // Oracle: just table name, uppercase
             _ => throw new NotSupportedException()
         };
@@ -873,22 +885,46 @@ public class SchemaMigrationService
             _ => baseName  // SQL Server is case-insensitive
         };
 
-        // Oracle has a 30 character limit for identifiers (128 in 12.2+, but we stay safe)
+        // Track if we need to truncate (to add collision prevention)
+        bool needsTruncation = false;
+        int maxLength = 0;
+
+        // Oracle has a 30 character limit for identifiers (128 in 12.2+, but we use conservative limit for compatibility)
         if (targetDbType == DatabaseType.Oracle && baseName.Length > 30)
         {
-            baseName = baseName.Substring(0, 30);
+            needsTruncation = true;
+            maxLength = 30;
         }
-        
         // SQL Server has 128 character limit
-        if (targetDbType == DatabaseType.SqlServer && baseName.Length > 128)
+        else if (targetDbType == DatabaseType.SqlServer && baseName.Length > 128)
         {
-            baseName = baseName.Substring(0, 128);
+            needsTruncation = true;
+            maxLength = 128;
+        }
+        // PostgreSQL has 63 character limit
+        else if (targetDbType == DatabaseType.PostgreSQL && baseName.Length > 63)
+        {
+            needsTruncation = true;
+            maxLength = 63;
         }
 
-        // PostgreSQL has 63 character limit
-        if (targetDbType == DatabaseType.PostgreSQL && baseName.Length > 63)
+        // If truncation is needed, add a hash suffix to reduce collision risk
+        if (needsTruncation)
         {
-            baseName = baseName.Substring(0, 63);
+            // Generate a short hash from the full name to ensure uniqueness
+            int hash = baseName.GetHashCode();
+            string hashSuffix = $"_{Math.Abs(hash % 10000):D4}";
+            
+            // Reserve space for the hash suffix
+            int truncateLength = maxLength - hashSuffix.Length;
+            if (truncateLength > 0)
+            {
+                baseName = baseName[..truncateLength] + hashSuffix;
+            }
+            else
+            {
+                baseName = baseName[..maxLength];
+            }
         }
 
         return baseName;
@@ -1006,6 +1042,59 @@ public class SchemaMigrationService
         DatabaseType.Oracle => new OracleConnection(connectionInfo.GetConnectionString()),
         _ => throw new NotSupportedException()
     };
+
+    /// <summary>
+    /// Escapes a SQL Server identifier by replacing ] with ]]
+    /// </summary>
+    private string EscapeSqlServerIdentifier(string identifier)
+    {
+        if (string.IsNullOrEmpty(identifier))
+            return identifier;
+        
+        // SQL Server uses square brackets, escape ] by doubling it
+        return identifier.Replace("]", "]]");
+    }
+
+    /// <summary>
+    /// Escapes a PostgreSQL identifier by replacing " with ""
+    /// </summary>
+    private string EscapePostgresIdentifier(string identifier)
+    {
+        if (string.IsNullOrEmpty(identifier))
+            return identifier;
+        
+        // PostgreSQL uses double quotes, escape " by doubling it
+        return identifier.Replace("\"", "\"\"");
+    }
+
+    /// <summary>
+    /// Validates and sanitizes database identifiers to prevent SQL injection
+    /// </summary>
+    private string ValidateIdentifier(string identifier, string parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ArgumentException($"{parameterName} cannot be null or empty", parameterName);
+
+        // Allow only alphanumeric, underscore - most conservative for database identifiers
+        // This is a defense-in-depth measure for identifiers used in dynamic SQL
+        var sanitized = new string(identifier.Where(c => 
+            char.IsLetterOrDigit(c) || c == '_').ToArray());
+
+        if (string.IsNullOrEmpty(sanitized))
+        {
+            throw new ArgumentException($"{parameterName} contains no valid identifier characters", parameterName);
+        }
+
+        if (sanitized != identifier)
+        {
+            Log($"[ValidateIdentifier] WARNING: Identifier '{identifier}' contains potentially unsafe characters");
+            throw new ArgumentException(
+                $"{parameterName} contains invalid characters. Only letters, digits, and underscores are allowed. " +
+                $"Provided: '{identifier}'", parameterName);
+        }
+
+        return sanitized;
+    }
 }
 
 /// <summary>
