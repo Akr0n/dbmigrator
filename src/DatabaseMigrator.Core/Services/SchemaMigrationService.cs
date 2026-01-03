@@ -291,10 +291,7 @@ public class SchemaMigrationService
     {
         var constraints = new Dictionary<string, ConstraintInfo>();
         
-        // Validate identifiers to prevent SQL injection - defense in depth
-        schema = ValidateIdentifier(schema, nameof(schema));
-        tableName = ValidateIdentifier(tableName, nameof(tableName));
-        
+        // Parameterized queries are used below to prevent SQL injection
         string query = dbType switch
         {
             DatabaseType.SqlServer => GetSqlServerConstraintsWithColumnsQuery(),
@@ -1067,34 +1064,6 @@ public class SchemaMigrationService
         
         // PostgreSQL uses double quotes, escape " by doubling it
         return identifier.Replace("\"", "\"\"");
-    }
-
-    /// <summary>
-    /// Validates database identifiers to prevent SQL injection by enforcing a strict character set.
-    /// Only allows alphanumeric characters and underscores - the most conservative approach for database identifiers.
-    /// This is a defense-in-depth measure for identifiers used in dynamic SQL construction.
-    /// Note: This may reject legitimate identifiers containing special characters that are valid when quoted.
-    /// </summary>
-    private string ValidateIdentifier(string identifier, string parameterName)
-    {
-        if (string.IsNullOrWhiteSpace(identifier))
-            throw new ArgumentException($"{parameterName} cannot be null or empty", parameterName);
-
-        // Allow only alphanumeric characters and underscore - most conservative for database identifiers.
-        // This is a defense-in-depth measure for identifiers used in dynamic SQL.
-        // Use foreach for early exit on first invalid character for better performance
-        foreach (char c in identifier)
-        {
-            if (!(char.IsLetterOrDigit(c) || c == '_'))
-            {
-                Log($"[ValidateIdentifier] WARNING: Identifier '{identifier}' contains potentially unsafe characters");
-                throw new ArgumentException(
-                    $"{parameterName} contains invalid characters. Only letters, digits, and underscores are allowed. " +
-                    $"Provided: '{identifier}'", parameterName);
-            }
-        }
-
-        return identifier;
     }
 
     /// <summary>
