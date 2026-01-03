@@ -107,13 +107,15 @@ c:\_repositories\dbmigrator
 |---------|-------------|
 | **Cross-DB Migration** | SQL Server ↔ PostgreSQL ↔ Oracle |
 | **Migration Modes** | Schema+Data, Schema Only, Data Only |
+| **Constraint Migration** | Primary Keys and UNIQUE constraints |
 | **Auto Rollback** | Tables dropped on failure (Schema+Data) |
 | **Type Mapping** | 25+ automatic type conversions |
+| **Case Handling** | PostgreSQL: lowercase, Oracle: UPPERCASE |
 | **Batch Processing** | 1000 rows per batch |
 | **Progress Tracking** | Real-time progress bar |
 | **Config Save/Load** | JSON configuration files |
 | **Table Filtering** | Search and filter tables |
-| **Parallel Execution** | Controlled concurrency for large DBs |
+| **Thread-Safe UI** | Async operations with proper UI thread marshalling |
 
 ---
 

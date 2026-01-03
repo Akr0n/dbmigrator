@@ -85,8 +85,8 @@ Copy-Item release\DatabaseMigrator.exe "C:\Program Files\DatabaseMigrator\"
 
 ### 3. Migration Mode
 Select the appropriate mode:
-- **Schema + Data**: Full migration with automatic rollback on failure
-- **Schema Only**: Create table structures only
+- **Schema + Data**: Full migration with constraints and automatic rollback on failure
+- **Schema Only**: Create table structures with Primary Keys and UNIQUE constraints
 - **Data Only**: Migrate data only (tables must exist)
 
 ### 4. Start Migration

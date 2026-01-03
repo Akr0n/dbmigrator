@@ -98,11 +98,14 @@ Choose a migration mode before starting:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
-| **Schema + Data** | Creates tables and migrates data | Full migration to new database |
-| **Schema Only** | Creates empty tables | Prepare target for manual data load |
+| **Schema + Data** | Creates tables with constraints and migrates data | Full migration to new database |
+| **Schema Only** | Creates tables with Primary Keys and UNIQUE constraints | Prepare target for manual data load |
 | **Data Only** | Migrates data only | Tables already exist in target |
 
-**Important**: In "Schema + Data" mode, if migration fails, all created tables are automatically dropped (rollback).
+**Important**: 
+- In "Schema + Data" mode, if migration fails, all created tables are automatically dropped (rollback)
+- Primary Keys and UNIQUE constraints are automatically migrated
+- Identifier case is handled automatically (PostgreSQL: lowercase, Oracle: UPPERCASE)
 
 ---
 
@@ -116,7 +119,9 @@ In the **"Migration"** tab:
 
 What happens automatically:
 - ✅ Creates target database if it doesn't exist
-- ✅ Creates tables with correct schema
+- ✅ Creates tables with correct schema and data types
+- ✅ Migrates Primary Keys and UNIQUE constraints
+- ✅ Applies correct identifier case for target database
 - ✅ Migrates data in batches
 - ✅ Shows progress percentage
 - ✅ Rollback on failure (Schema + Data mode)

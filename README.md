@@ -1,6 +1,6 @@
 # Database Migrator
 
-A cross-platform tool for migrating data between relational databases (SQL Server, Oracle, PostgreSQL).
+A Windows tool for migrating data between relational databases (SQL Server, Oracle, PostgreSQL).
 
 ## Features
 
@@ -9,6 +9,7 @@ A cross-platform tool for migrating data between relational databases (SQL Serve
 - 🎨 Modern graphical interface (Avalonia UI)
 - 📊 Selective table selection with search/filter
 - 🔧 Automatic data type mapping
+- 🔑 Primary Key and UNIQUE constraint migration
 - 📈 Real-time progress bar
 - 🚀 Automatic target database creation
 - 💾 Single-file executable (.exe)
@@ -18,7 +19,7 @@ A cross-platform tool for migrating data between relational databases (SQL Serve
 
 ## Requirements
 
-- Windows 10/11 (64-bit) or Linux
+- Windows 10/11 (64-bit)
 - .NET 8.0 Runtime (included in standalone exe)
 
 ## Installation
@@ -146,6 +147,7 @@ The application automatically maps data types between different database systems
 
 - **Connection failures**: Clear error messages with troubleshooting hints
 - **Schema creation errors**: Detailed logging of DDL operations
+- **Constraint migration**: Primary Keys and UNIQUE constraints are automatically recreated
 - **Data migration errors**: Automatic rollback of created tables (in Schema+Data mode)
 - **Validation**: Data-only mode validates table existence before starting
 
