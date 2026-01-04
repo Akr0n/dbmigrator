@@ -13,7 +13,7 @@
 - **File**: `DatabaseMigrator.exe` (~166 MB)
 - **Location**: `/release/`
 - **Requirements**: Windows 10/11 64-bit, no external dependencies
-- **Runtime**: .NET 8.0 (self-contained)
+- **Runtime**: .NET 10.0 (self-contained)
 
 ## Installation
 
@@ -237,7 +237,7 @@ Before starting an important migration:
 
 **Current Version**: 1.0.0  
 **Release Date**: January 2026  
-**Build**: Win-x64, .NET 8.0 self-contained
+**Build**: Win-x64, .NET 10.0 self-contained
 
 ### Release Notes v1.0.0
 - ✅ SQL Server, Oracle, PostgreSQL support
@@ -252,4 +252,4 @@ Before starting an important migration:
 
 ---
 
-**Built with**: .NET 8.0, Avalonia 11.0, ReactiveUI
+**Built with**: .NET 10.0, Avalonia 11.3, ReactiveUI
