@@ -20,7 +20,7 @@ A Windows tool for migrating data between relational databases (SQL Server, Orac
 ## Requirements
 
 - Windows 10/11 (64-bit)
-- .NET 8.0 Runtime (included in standalone exe)
+- .NET 10.0 Runtime (included in standalone exe)
 
 ## Installation
 
@@ -32,7 +32,7 @@ A Windows tool for migrating data between relational databases (SQL Server, Orac
 ### Method 2: Build from Source
 
 #### Build Prerequisites:
-- .NET 8.0 SDK
+- .NET 10.0 SDK
 - PowerShell 7+ (Windows)
 
 #### Build and Publish:

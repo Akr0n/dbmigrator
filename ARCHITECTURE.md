@@ -59,12 +59,12 @@
 
 ### DatabaseMigrator.Core (Library)
 
-**Target Framework**: .NET 8.0
+**Target Framework**: .NET 10.0
 
 **Dependencies**:
-- Microsoft.Data.SqlClient 5.2.0
-- Npgsql 8.0.3
-- Oracle.ManagedDataAccess.Core 23.4.0
+- Microsoft.Data.SqlClient 6.1.3
+- Npgsql 10.0.1
+- Oracle.ManagedDataAccess.Core 23.26.0
 
 **Namespace Structure**:
 ```
@@ -84,9 +84,9 @@ DatabaseMigrator.Core
 
 ### DatabaseMigrator (UI Application)
 
-**Target Framework**: .NET 8.0  
+**Target Framework**: .NET 10.0  
 **Runtime**: win-x64 (self-contained)  
-**UI Framework**: Avalonia 11.0.10  
+**UI Framework**: Avalonia 11.3.10  
 **Binding**: ReactiveUI + System.Reactive
 
 **Namespace Structure**:

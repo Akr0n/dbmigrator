@@ -2,18 +2,18 @@
 
 ## Overview
 
-Database Migrator is a professional-grade Windows tool for migrating data between relational database systems. Built with .NET 8.0 and Avalonia UI, it provides a modern graphical interface for managing database migrations.
+Database Migrator is a professional-grade Windows tool for migrating data between relational database systems. Built with .NET 10.0 and Avalonia UI, it provides a modern graphical interface for managing database migrations.
 
 ## Technology Stack
 
 | Component | Technology |
 |-----------|------------|
-| **Runtime** | .NET 8.0 |
-| **UI Framework** | Avalonia 11.0.10 |
+| **Runtime** | .NET 10.0 |
+| **UI Framework** | Avalonia 11.3.10 |
 | **MVVM Binding** | ReactiveUI + System.Reactive |
-| **SQL Server Driver** | Microsoft.Data.SqlClient 5.2.0 |
-| **PostgreSQL Driver** | Npgsql 8.0.3 |
-| **Oracle Driver** | Oracle.ManagedDataAccess.Core 23.4.0 |
+| **SQL Server Driver** | Microsoft.Data.SqlClient 6.1.3 |
+| **PostgreSQL Driver** | Npgsql 10.0.1 |
+| **Oracle Driver** | Oracle.ManagedDataAccess.Core 23.26.0 |
 | **Packaging** | Single-file, self-contained executable |
 | **Installer** | NSIS |
 

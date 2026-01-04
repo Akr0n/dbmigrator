@@ -61,10 +61,10 @@ jobs:
               }
           }
 
-      - name: Set up .NET 8.0
+      - name: Set up .NET 10.0
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Restore dependencies
         run: dotnet restore DatabaseMigrator.sln
@@ -92,7 +92,7 @@ jobs:
           echo "This is a stable production release." >> RELEASE_NOTES.txt
           echo "" >> RELEASE_NOTES.txt
           echo "## Build Information:" >> RELEASE_NOTES.txt
-          echo "- .NET 8.0" >> RELEASE_NOTES.txt
+          echo "- .NET 10.0" >> RELEASE_NOTES.txt
           echo "- Platform: Windows x64 (win-x64)" >> RELEASE_NOTES.txt
           echo "- Self-contained executable" >> RELEASE_NOTES.txt
 
