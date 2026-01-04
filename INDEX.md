@@ -37,7 +37,7 @@ c:\_repositories\dbmigrator
 │
 ├── 🔨 publish.ps1 .................... Build script (PowerShell)
 ├── 🔨 publish.bat .................... Build script (Batch)
-├──  docker-compose.yml ............. Docker test environment
+├── 🐳 docker-compose.yml ............. Docker test environment
 │
 ├── 📂 src/
 │   ├── DatabaseMigrator/ ............. 🎨 UI Application (Avalonia)
