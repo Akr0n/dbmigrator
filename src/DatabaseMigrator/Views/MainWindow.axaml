@@ -17,7 +17,7 @@
                 <Separator/>
                 <MenuItem Header="Esci" x:Name="ExitMenuItem"/>
             </MenuItem>
-            <MenuItem Header="? Aiuto">
+            <MenuItem Header="Aiuto">
                 <MenuItem Header="Informazioni" x:Name="AboutMenuItem"/>
             </MenuItem>
         </Menu>
@@ -135,7 +135,7 @@
                         <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="1" Margin="0,0,0,15">
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBox Grid.Column="0" x:Name="TableSearchTextBox" Watermark="Cerca tabelle per nome o schema..." Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
-                                <Button Grid.Column="1" x:Name="ClearSearchButton" Content="X" Background="#455a64" Foreground="White" Padding="10,8" FontSize="12" Margin="10,0,0,0" CornerRadius="4" ToolTip.Tip="Cancella ricerca"/>
+                                <Button Grid.Column="1" x:Name="ClearSearchButton" Content="×" Background="#455a64" Foreground="White" Padding="10,8" FontSize="12" Margin="10,0,0,0" CornerRadius="4" ToolTip.Tip="Cancella ricerca"/>
                             </Grid>
                         </Border>
 
