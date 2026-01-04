@@ -17,22 +17,13 @@
 
 ## Installation
 
-### Option 1: Direct Execution
+### Direct Execution
 ```powershell
 # Copy exe to your preferred folder
 Copy-Item release\DatabaseMigrator.exe "C:\Program Files\DatabaseMigrator\"
 
 # Run
 & "C:\Program Files\DatabaseMigrator\DatabaseMigrator.exe"
-```
-
-### Option 2: NSIS Installer (Recommended for Distribution)
-```powershell
-# Generate the installer
-& "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi
-
-# Result: DatabaseMigrator-Setup-v1.0.0.exe
-# Run the installer and follow the wizard
 ```
 
 ## System Requirements
@@ -223,12 +214,6 @@ Before starting an important migration:
 
 ## Uninstallation
 
-### If Installed via NSIS:
-1. Control Panel → Programs → Programs and Features
-2. Select "Database Migrator"
-3. Click "Uninstall"
-
-### If Using Standalone Executable:
 1. Delete the DatabaseMigrator.exe file
 2. Delete the installation folder
 3. Optionally delete configurations from `%LOCALAPPDATA%\DatabaseMigrator\`
