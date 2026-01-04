@@ -17,8 +17,8 @@
 
 ### 🚀 If You Need to **Deploy**
 1. Read: **[DEPLOYMENT.md](DEPLOYMENT.md)** (requirements and best practices)
-2. Create: NSIS installer with `makensis installer.nsi`
-3. Distribute: `DatabaseMigrator-Setup-v1.0.0.exe`
+2. Build: `dotnet publish` or `.\publish.ps1`
+3. Distribute: `DatabaseMigrator.exe`
 4. Support: Use troubleshooting guides
 
 ---
@@ -37,7 +37,6 @@ c:\_repositories\dbmigrator
 │
 ├── 🔨 publish.ps1 .................... Build script (PowerShell)
 ├── 🔨 publish.bat .................... Build script (Batch)
-├── 📦 installer.nsi .................. NSIS installer config
 ├── 🐳 docker-compose.yml ............. Docker test environment
 │
 ├── 📂 src/

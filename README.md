@@ -25,9 +25,8 @@ A Windows tool for migrating data between relational databases (SQL Server, Orac
 ## Installation
 
 ### Method 1: Standalone Executable (Recommended)
-1. Download `DatabaseMigrator-Setup-v1.0.0.exe` from Releases
-2. Run the installer
-3. Launch the application from Start Menu
+1. Download `DatabaseMigrator.exe` from Releases
+2. Run the executable directly
 
 ### Method 2: Build from Source
 

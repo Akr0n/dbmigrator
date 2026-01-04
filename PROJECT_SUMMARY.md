@@ -15,7 +15,6 @@ Database Migrator is a professional-grade Windows tool for migrating data betwee
 | **PostgreSQL Driver** | Npgsql 10.0.1 |
 | **Oracle Driver** | Oracle.ManagedDataAccess.Core 23.26.0 |
 | **Packaging** | Single-file, self-contained executable |
-| **Installer** | NSIS |
 
 ## Supported Database Combinations
 
