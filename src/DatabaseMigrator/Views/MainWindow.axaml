@@ -11,19 +11,19 @@
     <DockPanel Background="#1a1a1a">
         <!-- Menu Bar -->
         <Menu DockPanel.Dock="Top" Background="#0d47a1" Foreground="White">
-            <MenuItem Header="📁 File">
-                <MenuItem Header="💾 Salva Configurazione..." x:Name="SaveConfigMenuItem"/>
-                <MenuItem Header="📂 Carica Configurazione..." x:Name="LoadConfigMenuItem"/>
+            <MenuItem Header="File">
+                <MenuItem Header="Salva Configurazione..." x:Name="SaveConfigMenuItem"/>
+                <MenuItem Header="Carica Configurazione..." x:Name="LoadConfigMenuItem"/>
                 <Separator/>
-                <MenuItem Header="❌ Esci" x:Name="ExitMenuItem"/>
+                <MenuItem Header="Esci" x:Name="ExitMenuItem"/>
             </MenuItem>
-            <MenuItem Header="❓ Aiuto">
-                <MenuItem Header="📖 Informazioni" x:Name="AboutMenuItem"/>
+            <MenuItem Header="Aiuto">
+                <MenuItem Header="Informazioni" x:Name="AboutMenuItem"/>
             </MenuItem>
         </Menu>
 
         <Border DockPanel.Dock="Top" Background="#0d47a1" Padding="20">
-            <TextBlock Text="🗄️ Database Migrator" FontSize="32" FontWeight="Bold" Foreground="White"/>
+            <TextBlock Text="Database Migrator" FontSize="32" FontWeight="Bold" Foreground="White"/>
         </Border>
 
         <Grid RowDefinitions="*,Auto" Margin="20" Background="#1a1a1a">
@@ -31,14 +31,14 @@
                 <!-- Tab 1: Connections -->
                 <TabItem Background="#2a2a2a" Foreground="White" Padding="15,10">
                     <TabItem.Header>
-                        <TextBlock Text="📊 Connessioni Database" FontSize="13" Foreground="White"/>
+                        <TextBlock Text="Connessioni Database" FontSize="13" Foreground="White"/>
                     </TabItem.Header>
                     <ScrollViewer VerticalScrollBarVisibility="Auto" Background="#1a1a1a">
                         <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,*" Margin="20" Background="#1a1a1a">
                             <!-- Source -->
                             <Border Grid.Row="0" Grid.Column="0" Background="#2a2a2a" CornerRadius="8" Padding="20" BorderBrush="#0d47a1" BorderThickness="2" Margin="0,0,15,0">
                                 <StackPanel Spacing="15">
-                                    <TextBlock Text="📥 Database Sorgente" FontSize="16" FontWeight="Bold" Foreground="#64b5f6"/>
+                                    <TextBlock Text="Database Sorgente" FontSize="16" FontWeight="Bold" Foreground="#64b5f6"/>
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Tipo Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
@@ -79,7 +79,7 @@
                             <!-- Target -->
                             <Border Grid.Row="0" Grid.Column="1" Background="#2a2a2a" CornerRadius="8" Padding="20" BorderBrush="#0d47a1" BorderThickness="2" Margin="15,0,0,0">
                                 <StackPanel Spacing="15">
-                                    <TextBlock Text="📤 Database Target" FontSize="16" FontWeight="Bold" Foreground="#64b5f6"/>
+                                    <TextBlock Text="Database Target" FontSize="16" FontWeight="Bold" Foreground="#64b5f6"/>
                                     
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Tipo Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
@@ -119,7 +119,7 @@
 
                             <!-- Connect Button -->
                             <Button Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" x:Name="ConnectButton" Background="#1976d2" Foreground="White" Padding="12" Height="50" FontSize="14" FontWeight="Bold" Margin="0,20,0,0" CornerRadius="4">
-                                ✅ Connetti ai Database
+                                Connetti ai Database
                             </Button>
                         </Grid>
                     </ScrollViewer>
@@ -128,40 +128,39 @@
                 <!-- Tab 2: Tables -->
                 <TabItem x:Name="TablesTab" Background="#2a2a2a" Foreground="White" Padding="15,10" IsEnabled="False">
                     <TabItem.Header>
-                        <TextBlock Text="📋 Selezione Tabelle" FontSize="13" Foreground="White"/>
+                        <TextBlock Text="Selezione Tabelle" FontSize="13" Foreground="White"/>
                     </TabItem.Header>
                     <Grid RowDefinitions="Auto,Auto,*,Auto" ColumnDefinitions="*,*" Margin="20,20,20,40" Background="#1a1a1a">
                         <!-- Search Bar Row -->
                         <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="1" Margin="0,0,0,15">
-                            <Grid ColumnDefinitions="Auto,*,Auto">
-                                <TextBlock Grid.Column="0" Text="🔍" FontSize="18" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                                <TextBox Grid.Column="1" x:Name="TableSearchTextBox" Watermark="Cerca tabelle per nome o schema..." Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
-                                <Button Grid.Column="2" x:Name="ClearSearchButton" Content="✕" Background="#455a64" Foreground="White" Padding="10,8" FontSize="12" Margin="10,0,0,0" CornerRadius="4" ToolTip.Tip="Cancella ricerca"/>
-                            </Grid>
+                            <DockPanel LastChildFill="True">
+                                <Button DockPanel.Dock="Right" x:Name="ClearSearchButton" Content="×" Background="#455a64" Foreground="White" Padding="10,8" FontSize="12" Margin="10,0,0,0" CornerRadius="4" ToolTip.Tip="Cancella ricerca"/>
+                                <TextBox x:Name="TableSearchTextBox" Watermark="Cerca tabelle per nome o schema..." Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                            </DockPanel>
                         </Border>
 
                         <!-- Sorgente: Buttons row -->
                         <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="10" Margin="15,10,15,15">
                             <Button x:Name="SelectAllButton" Click="SelectAllButton_Click" Background="#1976d2" Foreground="White" Padding="12" Height="40" FontSize="12" FontWeight="Bold" CornerRadius="4">
-                                ✓ Seleziona Tutto
+                                Seleziona Tutto
                             </Button>
                             <Button x:Name="DeselectAllButton" Click="DeselectAllButton_Click" Background="#455a64" Foreground="White" Padding="12" Height="40" FontSize="12" FontWeight="Bold" CornerRadius="4">
-                                ✗ Deseleziona Tutto
+                                Deseleziona Tutto
                             </Button>
                             <Button x:Name="RefreshSourceButton" Background="#ff9800" Foreground="White" Padding="12" Height="40" FontSize="12" FontWeight="Bold" CornerRadius="4" ToolTip.Tip="Ricarica tabelle dal database sorgente">
-                                🔄 Aggiorna
+                                Aggiorna
                             </Button>
                         </StackPanel>
 
                         <!-- Target: Placeholder row -->
                         <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="10" Margin="35,0,0,15">
-                            <TextBlock Text="📊 Tabelle Destinazione (Create Automaticamente)" FontWeight="Bold" Foreground="#64b5f6" FontSize="12" VerticalAlignment="Center"/>
+                            <TextBlock Text="Tabelle Destinazione (Create Automaticamente)" FontWeight="Bold" Foreground="#64b5f6" FontSize="12" VerticalAlignment="Center"/>
                         </StackPanel>
 
                         <!-- Sorgente: Tables List -->
                         <Border Grid.Row="2" Grid.Column="0" Background="#2a2a2a" CornerRadius="8" BorderBrush="#0d47a1" BorderThickness="2" Padding="15" Margin="0,0,15,0">
                             <Grid RowDefinitions="Auto,*">
-                                <TextBlock Grid.Row="0" x:Name="SourceTablesHeader" Text="📥 Sorgente: Seleziona Tabelle" FontWeight="Bold" Foreground="#64b5f6" FontSize="13" Margin="0,0,0,10"/>
+                                <TextBlock Grid.Row="0" x:Name="SourceTablesHeader" Text="Sorgente: Seleziona Tabelle" FontWeight="Bold" Foreground="#64b5f6" FontSize="13" Margin="0,0,0,10"/>
                                 <ListBox Grid.Row="1" x:Name="SourceTablesListBox" Background="#1a1a1a" BorderBrush="#0d47a1" BorderThickness="1" Foreground="White">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
@@ -181,7 +180,7 @@
                         <!-- Target: Tables List (Display Only) -->
                         <Border Grid.Row="2" Grid.Column="1" Background="#2a2a2a" CornerRadius="8" BorderBrush="#0d47a1" BorderThickness="2" Padding="15" Margin="15,0,0,0">
                             <Grid RowDefinitions="Auto,*">
-                                <TextBlock Grid.Row="0" Text="📤 Destinazione: Schema da Creare" FontWeight="Bold" Foreground="#64b5f6" FontSize="13" Margin="0,0,0,10"/>
+                                <TextBlock Grid.Row="0" Text="Destinazione: Schema da Creare" FontWeight="Bold" Foreground="#64b5f6" FontSize="13" Margin="0,0,0,10"/>
                                 <ListBox Grid.Row="1" x:Name="TargetTablesListBox" Background="#1a1a1a" BorderBrush="#0d47a1" BorderThickness="1" Foreground="White">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
@@ -200,12 +199,12 @@
                         <!-- Statistics -->
                         <Grid Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" ColumnDefinitions="*,*" Margin="15,5,0,0">
                             <StackPanel Grid.Column="0" Spacing="5">
-                                <TextBlock x:Name="SourceCountTextBlock" Foreground="#9e9e9e" FontWeight="Bold" FontSize="12" Text="📋 Tabelle sorgente: 0"/>
-                                <TextBlock x:Name="SelectedCountTextBlock" Foreground="#64b5f6" FontWeight="Bold" FontSize="12" Text="✓ Tabelle selezionate: 0"/>
+                                <TextBlock x:Name="SourceCountTextBlock" Foreground="#9e9e9e" FontWeight="Bold" FontSize="12" Text="Tabelle sorgente: 0"/>
+                                <TextBlock x:Name="SelectedCountTextBlock" Foreground="#64b5f6" FontWeight="Bold" FontSize="12" Text="Tabelle selezionate: 0"/>
                             </StackPanel>
                             <StackPanel Grid.Column="1" Spacing="5" Margin="20,0,0,0">
-                                <TextBlock x:Name="TargetCountTextBlock" Foreground="#9e9e9e" FontWeight="Bold" FontSize="12" Text="📋 Tabelle destinazione: 0"/>
-                                <TextBlock x:Name="TotalRowsTextBlock" Foreground="#a5d6a7" FontWeight="Bold" FontSize="12" Text="📊 Righe totali da migrare: 0"/>
+                                <TextBlock x:Name="TargetCountTextBlock" Foreground="#9e9e9e" FontWeight="Bold" FontSize="12" Text="Tabelle destinazione: 0"/>
+                                <TextBlock x:Name="TotalRowsTextBlock" Foreground="#a5d6a7" FontWeight="Bold" FontSize="12" Text="Righe totali da migrare: 0"/>
                             </StackPanel>
                         </Grid>
                     </Grid>
@@ -214,31 +213,22 @@
                 <!-- Tab 3: Migration -->
                 <TabItem x:Name="MigrationTab" Background="#2a2a2a" Foreground="White" Padding="15,10" IsEnabled="False">
                     <TabItem.Header>
-                        <TextBlock Text="🚀 Migrazione" FontSize="13" Foreground="White"/>
+                        <TextBlock Text="Migrazione" FontSize="13" Foreground="White"/>
                     </TabItem.Header>
                     <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto" Margin="20" Background="#1a1a1a">
                         <!-- Migration Mode Selection -->
                         <Border Grid.Row="0" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#ff9800" BorderThickness="2" Margin="0,0,0,15">
                             <StackPanel Spacing="10">
-                                <TextBlock Text="⚙️ Modalità Migrazione:" FontWeight="Bold" FontSize="14" Foreground="#ffb74d"/>
+                                <TextBlock Text="Modalità Migrazione:" FontWeight="Bold" FontSize="14" Foreground="#ffb74d"/>
                                 <StackPanel Orientation="Horizontal" Spacing="20">
                                     <RadioButton x:Name="ModeSchemaAndData" GroupName="MigrationMode" IsChecked="True" Foreground="#e0e0e0" FontSize="12">
-                                        <StackPanel Orientation="Horizontal" Spacing="5">
-                                            <TextBlock Text="📦" FontSize="14"/>
-                                            <TextBlock Text="Schema + Dati" VerticalAlignment="Center"/>
-                                        </StackPanel>
+                                        <TextBlock Text="Schema + Dati" VerticalAlignment="Center"/>
                                     </RadioButton>
                                     <RadioButton x:Name="ModeSchemaOnly" GroupName="MigrationMode" Foreground="#e0e0e0" FontSize="12">
-                                        <StackPanel Orientation="Horizontal" Spacing="5">
-                                            <TextBlock Text="🏗️" FontSize="14"/>
-                                            <TextBlock Text="Solo Schema" VerticalAlignment="Center"/>
-                                        </StackPanel>
+                                        <TextBlock Text="Solo Schema" VerticalAlignment="Center"/>
                                     </RadioButton>
                                     <RadioButton x:Name="ModeDataOnly" GroupName="MigrationMode" Foreground="#e0e0e0" FontSize="12">
-                                        <StackPanel Orientation="Horizontal" Spacing="5">
-                                            <TextBlock Text="📊" FontSize="14"/>
-                                            <TextBlock Text="Solo Dati" VerticalAlignment="Center"/>
-                                        </StackPanel>
+                                        <TextBlock Text="Solo Dati" VerticalAlignment="Center"/>
                                     </RadioButton>
                                 </StackPanel>
                                 <TextBlock x:Name="MigrationModeDescription" Foreground="#9e9e9e" FontSize="11" TextWrapping="Wrap" 
@@ -248,7 +238,7 @@
 
                         <!-- Selected Tables Summary -->
                         <StackPanel Grid.Row="1" Spacing="8" Margin="0,0,0,15">
-                            <TextBlock Text="📊 Tabelle da migrare:" FontWeight="Bold" FontSize="13" Foreground="#64b5f6"/>
+                            <TextBlock Text="Tabelle da migrare:" FontWeight="Bold" FontSize="13" Foreground="#64b5f6"/>
                             <TextBlock Text="{Binding SelectedTablesCount, StringFormat='Tabelle selezionate: {0}'}" Foreground="#e0e0e0" FontSize="12"/>
                             <TextBlock Text="{Binding TotalRowsToMigrate, StringFormat='Righe totali: {0}'}" Foreground="#e0e0e0" FontSize="12"/>
                             <ListBox Background="#2a2a2a" Foreground="#e0e0e0" MaxHeight="120" ItemsSource="{Binding SelectedTablesForMigration}">
@@ -269,7 +259,7 @@
                         <Border Grid.Row="2" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="1" Margin="0,15,0,0">
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
                                 <StackPanel Spacing="10">
-                                    <TextBlock Text="📝 Status:" FontWeight="Bold" FontSize="13" Foreground="#64b5f6"/>
+                                    <TextBlock Text="Status:" FontWeight="Bold" FontSize="13" Foreground="#64b5f6"/>
                                     <TextBlock x:Name="StatusTextBlock" Foreground="#e0e0e0" TextWrapping="Wrap" FontSize="12" MinHeight="100" Text="Pronto"/>
                                 </StackPanel>
                             </ScrollViewer>
@@ -281,10 +271,10 @@
                         </StackPanel>
                         
                         <Button x:Name="StartMigrationButton" Grid.Row="4" Background="#1976d2" Foreground="White" Padding="12" Height="50" FontSize="16" FontWeight="Bold" Margin="15,15,0,0" CornerRadius="4" IsEnabled="False">
-                            🚀 Avvia Migrazione
+                            Avvia Migrazione
                         </Button>
                         
-                        <TextBlock Grid.Row="5" Foreground="#9e9e9e" TextWrapping="Wrap" FontSize="11" Margin="0,15,0,0" Text="ℹ️ Seleziona prima le tabelle nel tab 'Selezione Tabelle', poi scegli la modalità di migrazione."/>
+                        <TextBlock Grid.Row="5" Foreground="#9e9e9e" TextWrapping="Wrap" FontSize="11" Margin="0,15,0,0" Text="Seleziona prima le tabelle nel tab 'Selezione Tabelle', poi scegli la modalità di migrazione."/>
                         
                         <Border Grid.Row="6" Background="#1b5e20" CornerRadius="5" Padding="12" BorderBrush="#43a047" BorderThickness="1" Margin="0,15,0,0">
                             <TextBlock x:Name="ErrorTextBlock" Foreground="#a5d6a7" TextWrapping="Wrap" FontSize="11" Text=""/>
