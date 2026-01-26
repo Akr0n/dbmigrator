@@ -1244,7 +1244,7 @@ internal class ColumnDefinition
     public int? MaxLength { get; set; }
     public int? NumericPrecision { get; set; }
     public int? NumericScale { get; set; }
-    public int? DateTimePrecision { get; set; }  // For datetime2, time, datetimeoffset precision (0-7)
+    public int? DateTimePrecision { get; set; }  // Fractional seconds precision for datetime/time types as reported by the source database
     public string? DefaultValue { get; set; }
     public DatabaseType SourceDbType { get; set; }
 }
