@@ -263,6 +263,9 @@ public class SchemaMigrationService
                         NumericScale = reader["Scale"] != DBNull.Value 
                             ? Convert.ToInt32(reader["Scale"]) 
                             : null,
+                        DateTimePrecision = reader["DateTimePrecision"] != DBNull.Value 
+                            ? Convert.ToInt32(reader["DateTimePrecision"]) 
+                            : null,
                         DefaultValue = reader["DefaultValue"]?.ToString(),
                         SourceDbType = dbType
                     });
@@ -460,7 +463,7 @@ public class SchemaMigrationService
     {
         string colName = FormatColumnName(dbType, column.Name);
         string dataType = MapDataType(column.SourceDbType, dbType, column.DataType, 
-            column.MaxLength, column.NumericPrecision, column.NumericScale);
+            column.MaxLength, column.NumericPrecision, column.NumericScale, column.DateTimePrecision);
         
         // Oracle has different NULL/NOT NULL semantics:
         // - Columns are nullable by default in Oracle
@@ -503,7 +506,7 @@ public class SchemaMigrationService
     }
 
     private string MapDataType(DatabaseType sourceDbType, DatabaseType targetDbType, 
-        string sourceDataType, int? maxLength, int? precision, int? scale)
+        string sourceDataType, int? maxLength, int? precision, int? scale, int? dateTimePrecision)
     {
         // Normalize the source data type
         string normalized = sourceDataType.ToLowerInvariant().Trim();
@@ -514,7 +517,7 @@ public class SchemaMigrationService
         // Same database type: preserve original types with their sizes
         if (sourceDbType == targetDbType)
         {
-            return BuildSameDbTypeMapping(sourceDbType, normalized, maxLength, precision, scale, isMaxLength);
+            return BuildSameDbTypeMapping(sourceDbType, normalized, maxLength, precision, scale, isMaxLength, dateTimePrecision);
         }
 
         // Mapping cross-database
@@ -526,11 +529,13 @@ public class SchemaMigrationService
                 "bigint" => "bigint",
                 "smallint" => "smallint",
                 "tinyint" => "smallint",
-                "decimal" => precision.HasValue 
+                "decimal" or "numeric" => precision.HasValue 
                     ? $"numeric({precision},{scale ?? 0})" 
                     : "numeric",
                 "float" => "double precision",
                 "real" => "real",
+                "money" => "numeric(19,4)",
+                "smallmoney" => "numeric(10,4)",
                 "varchar" => isMaxLength ? "text" : (maxLength.HasValue && maxLength > 0 
                     ? $"varchar({maxLength})" 
                     : "text"),
@@ -545,15 +550,25 @@ public class SchemaMigrationService
                     : "char(1)",
                 "text" => "text",
                 "ntext" => "text",
-                "datetime" => "timestamp",
-                "datetime2" => "timestamp",
-                "smalldatetime" => "timestamp",
+                "datetime" => "timestamp(3)",  // datetime has ~3.33ms precision
+                "datetime2" => dateTimePrecision.HasValue 
+                    ? $"timestamp({Math.Min(dateTimePrecision.Value, 6)})"  // PostgreSQL max is 6
+                    : "timestamp(6)",
+                "smalldatetime" => "timestamp(0)",
                 "date" => "date",
-                "time" => "time",
+                "time" => dateTimePrecision.HasValue 
+                    ? $"time({Math.Min(dateTimePrecision.Value, 6)})" 
+                    : "time(6)",
+                "datetimeoffset" => dateTimePrecision.HasValue 
+                    ? $"timestamptz({Math.Min(dateTimePrecision.Value, 6)})" 
+                    : "timestamptz(6)",
                 "bit" => "boolean",
-                "binary" => "bytea",
+                "binary" => maxLength.HasValue && maxLength > 0 ? "bytea" : "bytea",
                 "varbinary" => "bytea",
+                "image" => "bytea",
                 "uniqueidentifier" => "uuid",
+                "xml" => "xml",
+                "sql_variant" => "text",
                 _ => normalized
             };
         }
@@ -566,11 +581,13 @@ public class SchemaMigrationService
                 "bigint" => "NUMBER(19)",
                 "smallint" => "NUMBER(5)",
                 "tinyint" => "NUMBER(3)",
-                "decimal" => precision.HasValue 
+                "decimal" or "numeric" => precision.HasValue 
                     ? $"NUMBER({precision},{scale ?? 0})" 
                     : "NUMBER",
-                "float" => "BINARY_DOUBLE",
+                "float" => precision.HasValue && precision <= 24 ? "BINARY_FLOAT" : "BINARY_DOUBLE",
                 "real" => "BINARY_FLOAT",
+                "money" => "NUMBER(19,4)",
+                "smallmoney" => "NUMBER(10,4)",
                 "varchar" => isMaxLength ? "CLOB" : (maxLength.HasValue && maxLength > 0 
                     ? $"VARCHAR2({Math.Min(maxLength.Value, 4000)})" 
                     : "VARCHAR2(4000)"),
@@ -585,15 +602,28 @@ public class SchemaMigrationService
                     : "NCHAR(1)",
                 "text" => "CLOB",
                 "ntext" => "NCLOB",
-                "datetime" => "TIMESTAMP(6)",
-                "datetime2" => "TIMESTAMP(6)",
+                "datetime" => "TIMESTAMP(3)",  // datetime has ~3.33ms precision
+                "datetime2" => dateTimePrecision.HasValue 
+                    ? $"TIMESTAMP({Math.Min(dateTimePrecision.Value, 9)})"  // Oracle max is 9
+                    : "TIMESTAMP(6)",
                 "smalldatetime" => "TIMESTAMP(0)",
                 "date" => "DATE",
-                "time" => "TIMESTAMP(0)",
+                "time" => dateTimePrecision.HasValue 
+                    ? $"TIMESTAMP({Math.Min(dateTimePrecision.Value, 9)})" 
+                    : "TIMESTAMP(0)",  // Oracle doesn't have TIME, use TIMESTAMP
+                "datetimeoffset" => dateTimePrecision.HasValue 
+                    ? $"TIMESTAMP({Math.Min(dateTimePrecision.Value, 9)}) WITH TIME ZONE" 
+                    : "TIMESTAMP(6) WITH TIME ZONE",
                 "bit" => "NUMBER(1)",
-                "binary" => "RAW",
-                "varbinary" => isMaxLength ? "BLOB" : "RAW(2000)",
+                "binary" => maxLength.HasValue && maxLength > 0 
+                    ? $"RAW({Math.Min(maxLength.Value, 2000)})" 
+                    : "RAW(1)",
+                "varbinary" => isMaxLength ? "BLOB" : (maxLength.HasValue && maxLength > 0 
+                    ? $"RAW({Math.Min(maxLength.Value, 2000)})" 
+                    : "RAW(2000)"),
+                "image" => "BLOB",
                 "uniqueidentifier" => "RAW(16)",
+                "xml" => "XMLTYPE",
                 _ => "VARCHAR2(4000)"
             };
         }
@@ -602,27 +632,44 @@ public class SchemaMigrationService
         {
             return normalized switch
             {
-                "integer" => "int",
-                "bigint" => "bigint",
-                "smallint" => "smallint",
-                "numeric" => precision.HasValue 
+                "integer" or "int" or "int4" => "int",
+                "bigint" or "int8" => "bigint",
+                "smallint" or "int2" => "smallint",
+                "numeric" or "decimal" => precision.HasValue 
                     ? $"decimal({precision},{scale ?? 0})" 
                     : "decimal(18,2)",
-                "double precision" => "float",
-                "real" => "real",
-                "varchar" => maxLength.HasValue && maxLength > 0 
+                "double precision" or "float8" => "float",
+                "real" or "float4" => "real",
+                "money" => "decimal(19,4)",
+                "varchar" or "character varying" => maxLength.HasValue && maxLength > 0 
                     ? $"varchar({maxLength})" 
                     : "varchar(max)",
                 "text" => "varchar(max)",
-                "char" => maxLength.HasValue 
+                "char" or "character" => maxLength.HasValue && maxLength > 0
                     ? $"char({maxLength})" 
-                    : "char(10)",
-                "boolean" => "bit",
+                    : "char(1)",
+                "boolean" or "bool" => "bit",
                 "bytea" => "varbinary(max)",
                 "uuid" => "uniqueidentifier",
-                "timestamp" => "datetime2",
+                "timestamp" or "timestamp without time zone" => dateTimePrecision.HasValue 
+                    ? $"datetime2({Math.Min(dateTimePrecision.Value, 7)})" 
+                    : "datetime2(6)",
+                "timestamptz" or "timestamp with time zone" => dateTimePrecision.HasValue 
+                    ? $"datetimeoffset({Math.Min(dateTimePrecision.Value, 7)})" 
+                    : "datetimeoffset(6)",
                 "date" => "date",
-                "time" => "time",
+                "time" or "time without time zone" => dateTimePrecision.HasValue 
+                    ? $"time({Math.Min(dateTimePrecision.Value, 7)})" 
+                    : "time(6)",
+                "timetz" or "time with time zone" => dateTimePrecision.HasValue 
+                    ? $"time({Math.Min(dateTimePrecision.Value, 7)})" 
+                    : "time(6)",  // SQL Server doesn't have time with tz
+                "interval" => "varchar(100)",  // No direct equivalent
+                "json" or "jsonb" => "nvarchar(max)",
+                "xml" => "xml",
+                "serial" => "int",  // IDENTITY will be handled separately
+                "bigserial" => "bigint",
+                "smallserial" => "smallint",
                 _ => "varchar(max)"
             };
         }
@@ -631,27 +678,44 @@ public class SchemaMigrationService
         {
             return normalized switch
             {
-                "integer" => "NUMBER(10)",
-                "bigint" => "NUMBER(19)",
-                "smallint" => "NUMBER(5)",
-                "numeric" => precision.HasValue 
+                "integer" or "int" or "int4" => "NUMBER(10)",
+                "bigint" or "int8" => "NUMBER(19)",
+                "smallint" or "int2" => "NUMBER(5)",
+                "numeric" or "decimal" => precision.HasValue 
                     ? $"NUMBER({precision},{scale ?? 0})" 
                     : "NUMBER",
-                "double precision" => "BINARY_DOUBLE",
-                "real" => "BINARY_FLOAT",
-                "varchar" => maxLength.HasValue && maxLength > 0 
-                    ? $"VARCHAR2({maxLength})" 
+                "double precision" or "float8" => "BINARY_DOUBLE",
+                "real" or "float4" => "BINARY_FLOAT",
+                "money" => "NUMBER(19,4)",
+                "varchar" or "character varying" => maxLength.HasValue && maxLength > 0 
+                    ? $"VARCHAR2({Math.Min(maxLength.Value, 4000)})" 
                     : "VARCHAR2(4000)",
                 "text" => "CLOB",
-                "char" => maxLength.HasValue 
-                    ? $"CHAR({maxLength})" 
-                    : "CHAR(10)",
-                "boolean" => "NUMBER(1)",
+                "char" or "character" => maxLength.HasValue && maxLength > 0
+                    ? $"CHAR({Math.Min(maxLength.Value, 2000)})" 
+                    : "CHAR(1)",
+                "boolean" or "bool" => "NUMBER(1)",
                 "bytea" => "BLOB",
                 "uuid" => "RAW(16)",
-                "timestamp" => "TIMESTAMP",
+                "timestamp" or "timestamp without time zone" => dateTimePrecision.HasValue 
+                    ? $"TIMESTAMP({Math.Min(dateTimePrecision.Value, 9)})" 
+                    : "TIMESTAMP(6)",
+                "timestamptz" or "timestamp with time zone" => dateTimePrecision.HasValue 
+                    ? $"TIMESTAMP({Math.Min(dateTimePrecision.Value, 9)}) WITH TIME ZONE" 
+                    : "TIMESTAMP(6) WITH TIME ZONE",
                 "date" => "DATE",
-                "time" => "TIMESTAMP",
+                "time" or "time without time zone" => dateTimePrecision.HasValue 
+                    ? $"TIMESTAMP({Math.Min(dateTimePrecision.Value, 9)})" 
+                    : "TIMESTAMP(0)",  // Oracle doesn't have TIME type
+                "timetz" or "time with time zone" => dateTimePrecision.HasValue 
+                    ? $"TIMESTAMP({Math.Min(dateTimePrecision.Value, 9)}) WITH TIME ZONE" 
+                    : "TIMESTAMP(0) WITH TIME ZONE",
+                "interval" => "INTERVAL DAY TO SECOND",
+                "json" or "jsonb" => "CLOB",  // Oracle 21c+ has JSON, but CLOB is safer
+                "xml" => "XMLTYPE",
+                "serial" => "NUMBER(10)",
+                "bigserial" => "NUMBER(19)",
+                "smallserial" => "NUMBER(5)",
                 _ => "VARCHAR2(4000)"
             };
         }
@@ -661,10 +725,14 @@ public class SchemaMigrationService
             return normalized switch
             {
                 "number" => precision.HasValue 
-                    ? $"decimal({precision},{scale ?? 0})" 
+                    ? (scale.HasValue && scale > 0 
+                        ? $"decimal({precision},{scale})" 
+                        : (precision <= 10 ? "int" : (precision <= 19 ? "bigint" : $"decimal({precision},0)")))
                     : "decimal(18,2)",
                 "integer" => "int",
-                "float" => "float",
+                "float" => precision.HasValue 
+                    ? (precision <= 24 ? "real" : "float") 
+                    : "float",
                 "binary_float" => "real",
                 "binary_double" => "float",
                 "varchar2" => maxLength.HasValue && maxLength > 0 
@@ -673,18 +741,36 @@ public class SchemaMigrationService
                 "nvarchar2" => maxLength.HasValue && maxLength > 0 
                     ? $"nvarchar({maxLength})" 
                     : "nvarchar(max)",
-                "char" => maxLength.HasValue 
+                "char" => maxLength.HasValue && maxLength > 0
                     ? $"char({maxLength})" 
-                    : "char(10)",
-                "nchar" => maxLength.HasValue 
+                    : "char(1)",
+                "nchar" => maxLength.HasValue && maxLength > 0
                     ? $"nchar({maxLength})" 
-                    : "nchar(10)",
+                    : "nchar(1)",
                 "clob" => "varchar(max)",
                 "nclob" => "nvarchar(max)",
                 "blob" => "varbinary(max)",
-                "date" => "datetime2",
-                "timestamp" => "datetime2",
-                "raw" => "varbinary(max)",
+                "long" => "varchar(max)",
+                "long raw" => "varbinary(max)",
+                "date" => "datetime2(0)",  // Oracle DATE has second precision
+                "timestamp" => dateTimePrecision.HasValue 
+                    ? $"datetime2({Math.Min(dateTimePrecision.Value, 7)})" 
+                    : "datetime2(6)",
+                "timestamp with time zone" => dateTimePrecision.HasValue 
+                    ? $"datetimeoffset({Math.Min(dateTimePrecision.Value, 7)})" 
+                    : "datetimeoffset(6)",
+                "timestamp with local time zone" => dateTimePrecision.HasValue 
+                    ? $"datetimeoffset({Math.Min(dateTimePrecision.Value, 7)})" 
+                    : "datetimeoffset(6)",
+                "interval year to month" => "varchar(50)",
+                "interval day to second" => "varchar(50)",
+                "raw" => maxLength.HasValue && maxLength > 0 
+                    ? $"varbinary({maxLength})" 
+                    : "varbinary(max)",
+                "rowid" => "varchar(18)",
+                "urowid" => "varchar(4000)",
+                "xmltype" => "xml",
+                "bfile" => "varbinary(max)",
                 _ => "varchar(max)"
             };
         }
@@ -694,10 +780,14 @@ public class SchemaMigrationService
             return normalized switch
             {
                 "number" => precision.HasValue 
-                    ? $"numeric({precision},{scale ?? 0})" 
+                    ? (scale.HasValue && scale > 0 
+                        ? $"numeric({precision},{scale})" 
+                        : (precision <= 5 ? "smallint" : (precision <= 10 ? "integer" : (precision <= 19 ? "bigint" : $"numeric({precision},0)"))))
                     : "numeric",
                 "integer" => "integer",
-                "float" => "double precision",
+                "float" => precision.HasValue 
+                    ? (precision <= 24 ? "real" : "double precision") 
+                    : "double precision",
                 "binary_float" => "real",
                 "binary_double" => "double precision",
                 "varchar2" => maxLength.HasValue && maxLength > 0 
@@ -706,18 +796,34 @@ public class SchemaMigrationService
                 "nvarchar2" => maxLength.HasValue && maxLength > 0 
                     ? $"varchar({maxLength})" 
                     : "text",
-                "char" => maxLength.HasValue 
+                "char" => maxLength.HasValue && maxLength > 0
                     ? $"char({maxLength})" 
-                    : "char(10)",
-                "nchar" => maxLength.HasValue 
+                    : "char(1)",
+                "nchar" => maxLength.HasValue && maxLength > 0
                     ? $"char({maxLength})" 
-                    : "char(10)",
+                    : "char(1)",
                 "clob" => "text",
                 "nclob" => "text",
                 "blob" => "bytea",
-                "date" => "timestamp",
-                "timestamp" => "timestamp",
+                "long" => "text",
+                "long raw" => "bytea",
+                "date" => "timestamp(0)",  // Oracle DATE has second precision
+                "timestamp" => dateTimePrecision.HasValue 
+                    ? $"timestamp({Math.Min(dateTimePrecision.Value, 6)})" 
+                    : "timestamp(6)",
+                "timestamp with time zone" => dateTimePrecision.HasValue 
+                    ? $"timestamptz({Math.Min(dateTimePrecision.Value, 6)})" 
+                    : "timestamptz(6)",
+                "timestamp with local time zone" => dateTimePrecision.HasValue 
+                    ? $"timestamptz({Math.Min(dateTimePrecision.Value, 6)})" 
+                    : "timestamptz(6)",
+                "interval year to month" => "interval",
+                "interval day to second" => "interval",
                 "raw" => "bytea",
+                "rowid" => "varchar(18)",
+                "urowid" => "varchar(4000)",
+                "xmltype" => "xml",
+                "bfile" => "bytea",
                 _ => "text"
             };
         }
@@ -731,7 +837,7 @@ public class SchemaMigrationService
     /// Preserves original types with correct sizes, handling special cases like MAX.
     /// </summary>
     private string BuildSameDbTypeMapping(DatabaseType dbType, string normalized, 
-        int? maxLength, int? precision, int? scale, bool isMaxLength)
+        int? maxLength, int? precision, int? scale, bool isMaxLength, int? dateTimePrecision)
     {
         if (dbType == DatabaseType.SqlServer)
         {
@@ -748,7 +854,18 @@ public class SchemaMigrationService
                 "binary" => maxLength.HasValue && maxLength > 0 ? $"binary({maxLength})" : "binary(1)",
                 "decimal" or "numeric" => precision.HasValue 
                     ? $"{normalized}({precision},{scale ?? 0})" : $"{normalized}(18,0)",
-                "float" => precision.HasValue ? $"float({precision})" : "float",
+                "float" => precision.HasValue && precision <= 53 ? $"float({precision})" : "float",
+                // DateTime types with precision preservation
+                "datetime2" => dateTimePrecision.HasValue ? $"datetime2({dateTimePrecision})" : "datetime2(7)",
+                "time" => dateTimePrecision.HasValue ? $"time({dateTimePrecision})" : "time(7)",
+                "datetimeoffset" => dateTimePrecision.HasValue ? $"datetimeoffset({dateTimePrecision})" : "datetimeoffset(7)",
+                // Types that don't need size specification
+                "int" or "bigint" or "smallint" or "tinyint" or "bit" => normalized,
+                "money" or "smallmoney" => normalized,
+                "real" => normalized,
+                "date" or "datetime" or "smalldatetime" => normalized,
+                "text" or "ntext" or "image" => normalized,
+                "uniqueidentifier" or "xml" or "sql_variant" => normalized,
                 _ => normalized
             };
         }
@@ -763,6 +880,17 @@ public class SchemaMigrationService
                     ? $"char({maxLength})" : "char(1)",
                 "numeric" or "decimal" => precision.HasValue 
                     ? $"numeric({precision},{scale ?? 0})" : "numeric",
+                // DateTime types with precision preservation (PostgreSQL max is 6)
+                "timestamp" or "timestamp without time zone" => dateTimePrecision.HasValue 
+                    ? $"timestamp({dateTimePrecision})" : "timestamp(6)",
+                "timestamptz" or "timestamp with time zone" => dateTimePrecision.HasValue 
+                    ? $"timestamptz({dateTimePrecision})" : "timestamptz(6)",
+                "time" or "time without time zone" => dateTimePrecision.HasValue 
+                    ? $"time({dateTimePrecision})" : "time(6)",
+                "timetz" or "time with time zone" => dateTimePrecision.HasValue 
+                    ? $"timetz({dateTimePrecision})" : "timetz(6)",
+                "interval" => dateTimePrecision.HasValue 
+                    ? $"interval({dateTimePrecision})" : "interval",
                 _ => normalized
             };
         }
@@ -781,8 +909,19 @@ public class SchemaMigrationService
                     ? $"NCHAR({Math.Min(maxLength.Value, 1000)})" : "NCHAR(1)",
                 "number" => precision.HasValue 
                     ? $"NUMBER({precision},{scale ?? 0})" : "NUMBER",
+                "float" => precision.HasValue 
+                    ? $"FLOAT({precision})" : "FLOAT",
                 "raw" => maxLength.HasValue && maxLength > 0 
                     ? $"RAW({Math.Min(maxLength.Value, 2000)})" : "RAW(2000)",
+                // DateTime types with precision preservation (Oracle max is 9)
+                "timestamp" => dateTimePrecision.HasValue 
+                    ? $"TIMESTAMP({dateTimePrecision})" : "TIMESTAMP(6)",
+                "timestamp with time zone" => dateTimePrecision.HasValue 
+                    ? $"TIMESTAMP({dateTimePrecision}) WITH TIME ZONE" : "TIMESTAMP(6) WITH TIME ZONE",
+                "timestamp with local time zone" => dateTimePrecision.HasValue 
+                    ? $"TIMESTAMP({dateTimePrecision}) WITH LOCAL TIME ZONE" : "TIMESTAMP(6) WITH LOCAL TIME ZONE",
+                "interval day to second" => dateTimePrecision.HasValue 
+                    ? $"INTERVAL DAY TO SECOND({dateTimePrecision})" : "INTERVAL DAY TO SECOND",
                 _ => normalized.ToUpperInvariant()
             };
         }
@@ -960,6 +1099,7 @@ public class SchemaMigrationService
                 CHARACTER_MAXIMUM_LENGTH as MaxLength,
                 NUMERIC_PRECISION as Precision,
                 NUMERIC_SCALE as Scale,
+                DATETIME_PRECISION as DateTimePrecision,
                 COLUMN_DEFAULT as DefaultValue
             FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{tableName}'
@@ -976,6 +1116,7 @@ public class SchemaMigrationService
                 character_maximum_length as MaxLength,
                 numeric_precision as Precision,
                 numeric_scale as Scale,
+                datetime_precision as DateTimePrecision,
                 column_default as DefaultValue
             FROM information_schema.columns
             WHERE table_schema = '{schema}' AND table_name = '{tableName}'
@@ -992,6 +1133,7 @@ public class SchemaMigrationService
                 data_length as MaxLength,
                 data_precision as Precision,
                 data_scale as Scale,
+                CASE WHEN data_type LIKE 'TIMESTAMP%' THEN data_scale ELSE NULL END as DateTimePrecision,
                 data_default as DefaultValue
             FROM all_tab_columns
             WHERE owner = '{schema}' AND table_name = '{tableName}'
@@ -1102,6 +1244,7 @@ internal class ColumnDefinition
     public int? MaxLength { get; set; }
     public int? NumericPrecision { get; set; }
     public int? NumericScale { get; set; }
+    public int? DateTimePrecision { get; set; }  // For datetime2, time, datetimeoffset precision (0-7)
     public string? DefaultValue { get; set; }
     public DatabaseType SourceDbType { get; set; }
 }
