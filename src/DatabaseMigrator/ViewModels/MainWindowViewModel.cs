@@ -39,6 +39,8 @@ public class MainWindowViewModel : ViewModelBase
     private ObservableCollection<TableInfo> _filteredTables = new();
     private ObservableCollection<TableInfo> _filteredTargetTables = new();
     private ObservableCollection<TableInfo> _selectedTablesForMigration = new();
+    private bool _isRefreshingTables;  // Flag to prevent UpdateTableStatistics during refresh
+    private readonly Dictionary<TableInfo, IDisposable> _tableSubscriptions = new();  // Track subscriptions for cleanup
 
     public ConnectionViewModel? SourceConnection
     {
@@ -188,8 +190,35 @@ public class MainWindowViewModel : ViewModelBase
 
     private void SubscribeToTableChanges(TableInfo table)
     {
-        table.WhenAnyValue(t => t.IsSelected)
-            .Subscribe(_ => UpdateTableStatistics());
+        // Dispose existing subscription if any
+        if (_tableSubscriptions.TryGetValue(table, out var existingSubscription))
+        {
+            existingSubscription.Dispose();
+            _tableSubscriptions.Remove(table);
+        }
+        
+        var subscription = table.WhenAnyValue(t => t.IsSelected)
+            .Subscribe(_ => 
+            {
+                // Skip updates during refresh to prevent race conditions
+                if (!_isRefreshingTables)
+                {
+                    UpdateTableStatistics();
+                }
+            });
+        _tableSubscriptions[table] = subscription;
+    }
+    
+    /// <summary>
+    /// Disposes all table subscriptions to prevent memory leaks and race conditions during refresh.
+    /// </summary>
+    private void DisposeAllTableSubscriptions()
+    {
+        foreach (var subscription in _tableSubscriptions.Values)
+        {
+            subscription.Dispose();
+        }
+        _tableSubscriptions.Clear();
     }
 
     private async Task ConnectDatabasesAsync()
@@ -654,6 +683,9 @@ public class MainWindowViewModel : ViewModelBase
         {
             Log("[RefreshTablesAsync] Starting tables refresh...");
             
+            // Set flag to prevent UpdateTableStatistics during refresh
+            _isRefreshingTables = true;
+            
             // Update UI on main thread
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -688,7 +720,14 @@ public class MainWindowViewModel : ViewModelBase
             // Aggiorna le collezioni sul thread UI
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                // Dispose all existing subscriptions before clearing
+                DisposeAllTableSubscriptions();
+                
                 Tables.Clear();
+                FilteredTables.Clear();
+                FilteredTargetTables.Clear();
+                SelectedTablesForMigration.Clear();
+                
                 foreach (var table in tables)
                 {
                     // Ripristina la selezione se la tabella era selezionata
@@ -700,6 +739,9 @@ public class MainWindowViewModel : ViewModelBase
                     SubscribeToTableChanges(table);
                 }
 
+                // Re-enable updates before applying filter and statistics
+                _isRefreshingTables = false;
+                
                 // Applica il filtro corrente
                 ApplyTableFilter();
                 UpdateTableStatistics();
@@ -711,6 +753,7 @@ public class MainWindowViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
+            _isRefreshingTables = false;  // Reset flag on error
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 ErrorMessage = $"❌ Errore nel ricaricamento: {ex.Message}";
