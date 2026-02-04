@@ -679,6 +679,12 @@ public class MainWindowViewModel : ViewModelBase
     /// </summary>
     public async Task RefreshTablesAsync()
     {
+        if (_isRefreshingTables)
+        {
+            Log("[RefreshTablesAsync] Refresh already in progress, skipping.");
+            return;
+        }
+
         try
         {
             Log("[RefreshTablesAsync] Starting tables refresh...");
@@ -753,13 +759,16 @@ public class MainWindowViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _isRefreshingTables = false;  // Reset flag on error
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 ErrorMessage = $"❌ Errore nel ricaricamento: {ex.Message}";
                 StatusMessage = "Errore durante il ricaricamento";
             });
             Log($"[RefreshTablesAsync] Error: {ex.Message}");
+        }
+        finally
+        {
+            _isRefreshingTables = false;
         }
     }
 
