@@ -49,7 +49,7 @@ public class ConnectionInfo
     private string BuildOracleConnectionString()
     {
         // Oracle connection string using TNS format
-        // For XE: Server=localhost, Port=1521, Database=XE (the SID)
+        // For oracle-free: Server=localhost, Port=1521, Database=FREEPDB1 (the PDB service)
         // Escape password if it contains special characters like ;
         //
         // IMPORTANT: Database/user creation operations (e.g. CREATE USER, GRANT privileges)

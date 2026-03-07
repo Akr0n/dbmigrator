@@ -226,7 +226,7 @@ public class DatabaseService : IDatabaseService
                 Username = connectionInfo.Username,
                 Password = connectionInfo.Password,
                 TrustServerCertificate = connectionInfo.TrustServerCertificate,
-                Database = connectionInfo.DatabaseType == DatabaseType.Oracle ? "XE" : "master"
+                Database = connectionInfo.DatabaseType == DatabaseType.Oracle ? "FREEPDB1" : "master"
             };
 
             using (var connection = CreateConnection(connInfo))
@@ -291,7 +291,7 @@ public class DatabaseService : IDatabaseService
                 TrustServerCertificate = connectionInfo.TrustServerCertificate,
                 Database = connectionInfo.DatabaseType switch
                 {
-                    DatabaseType.Oracle => "XE",  // SID di sistema per Oracle
+                    DatabaseType.Oracle => "FREEPDB1",  // PDB di default per oracle-free
                     DatabaseType.PostgreSQL => "postgres",  // PostgreSQL system database
                     _ => "master"  // SQL Server system database
                 }
