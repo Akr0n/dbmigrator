@@ -44,9 +44,6 @@ coverage/
 *.log
 *.txt
 *.env
-!RELEASE_NOTES.txt
-!README.md
-!DOCKER_E2E_TESTING.md
 
 # OS
 .DS_Store
@@ -66,6 +63,7 @@ mssql_data/
 *~
 
 # IDE
+.cursor/
 .idea/
 *.sublime-workspace
 *.sublime-project
