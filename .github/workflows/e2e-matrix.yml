@@ -1,5 +1,8 @@
 name: E2E Cross-DB Matrix
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   schedule:
