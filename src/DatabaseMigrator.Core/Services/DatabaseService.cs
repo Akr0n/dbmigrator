@@ -4,6 +4,7 @@ using System.Data;
 using System.Data.Common;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
@@ -14,23 +15,110 @@ namespace DatabaseMigrator.Core.Services;
 
 public class DatabaseService : IDatabaseService
 {
-    private const int BatchSize = 1000;
-    private const int CommandTimeout = 300; // 5 minutes
+    private readonly int _batchSize;
+    private readonly int _commandTimeoutSeconds;
+    private readonly int _rowCountMaxConcurrency;
+    private readonly int _retryCount;
+    private readonly int _retryInitialDelayMilliseconds;
+    private readonly bool _enableTransientRetries;
 
     private static void Log(string message) => LoggerService.Log(message);
+
+    public DatabaseService()
+    {
+        var options = RuntimeOptionsProvider.Current.Database;
+        _batchSize = options.BatchSize;
+        _commandTimeoutSeconds = options.CommandTimeoutSeconds;
+        _rowCountMaxConcurrency = options.RowCountMaxConcurrency;
+        _retryCount = options.RetryCount;
+        _retryInitialDelayMilliseconds = options.RetryInitialDelayMilliseconds;
+        _enableTransientRetries = options.EnableTransientRetries;
+    }
+
+    private static string DescribeConnection(ConnectionInfo connectionInfo)
+    {
+        return $"{connectionInfo.DatabaseType} {connectionInfo.Server}:{connectionInfo.Port}/{connectionInfo.Database}";
+    }
+
+    private async Task ExecuteWithRetryAsync(Func<Task> operation, string operationName)
+    {
+        await ExecuteWithRetryAsync(async () =>
+        {
+            await operation();
+            return true;
+        }, operationName);
+    }
+
+    private async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> operation, string operationName)
+    {
+        int attempt = 0;
+
+        while (true)
+        {
+            try
+            {
+                return await operation();
+            }
+            catch (Exception ex) when (_enableTransientRetries && attempt < _retryCount && IsTransient(ex))
+            {
+                attempt++;
+                int delayMs = (int)Math.Min(_retryInitialDelayMilliseconds * Math.Pow(2, attempt - 1), 10_000);
+                Log($"[{operationName}] Transient error detected (attempt {attempt}/{_retryCount}). Retrying in {delayMs}ms. Error: {ex.Message}");
+                await Task.Delay(delayMs);
+            }
+        }
+    }
+
+    private static bool IsTransient(Exception ex)
+    {
+        if (ex is TimeoutException)
+        {
+            return true;
+        }
+
+        if (ex is SqlException sqlEx)
+        {
+            return sqlEx.Number is -2 or 53 or 1205 or 4060 or 10928 or 10929 or 10053 or 10054 or 10060;
+        }
+
+        if (ex is NpgsqlException npgsqlEx && npgsqlEx.IsTransient)
+        {
+            return true;
+        }
+
+        if (ex is OracleException oracleEx)
+        {
+            return oracleEx.Number is 1013 or 1033 or 1034 or 1089 or 1090 or 1092 or 12514 or 12537 or 12541;
+        }
+
+        if (ex is IOException)
+        {
+            return true;
+        }
+
+        if (ex.InnerException != null)
+        {
+            return IsTransient(ex.InnerException);
+        }
+
+        string message = ex.Message.ToLowerInvariant();
+        return message.Contains("timeout") ||
+               message.Contains("deadlock") ||
+               message.Contains("network") ||
+               message.Contains("transport-level error") ||
+               message.Contains("connection is broken");
+    }
 
     public async Task<bool> TestConnectionAsync(ConnectionInfo connectionInfo)
     {
         try
         {
-            Log($"TestConnectionAsync started for {connectionInfo.DatabaseType}");
-            var connStr = connectionInfo.GetConnectionString();
-            Log($"Connection string: {connStr}");
+            Log($"TestConnectionAsync started for {DescribeConnection(connectionInfo)}");
             
             using (var connection = CreateConnection(connectionInfo))
             {
-                Log($"Opening connection...");
-                await connection.OpenAsync();
+                Log("Opening connection...");
+                await ExecuteWithRetryAsync(() => connection.OpenAsync(), "TestConnectionAsync.Open");
                 Log($"Connection opened successfully!");
                 return connection.State == ConnectionState.Open;
             }
@@ -53,7 +141,7 @@ public class DatabaseService : IDatabaseService
             
             using (var connection = CreateConnection(connectionInfo))
             {
-                await connection.OpenAsync();
+                await ExecuteWithRetryAsync(() => connection.OpenAsync(), "GetTablesAsync.Open");
                 Log($"Connection opened for GetTablesAsync");
 
                 string query = connectionInfo.DatabaseType switch
@@ -84,9 +172,9 @@ public class DatabaseService : IDatabaseService
                 using (var command = connection.CreateCommand())
                 {
                     command.CommandText = query;
-                    command.CommandTimeout = CommandTimeout;
+                    command.CommandTimeout = _commandTimeoutSeconds;
 
-                    using (var reader = await command.ExecuteReaderAsync())
+                    using (var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "GetTablesAsync.ExecuteReader"))
                     {
                         while (await reader.ReadAsync())
                         {
@@ -137,12 +225,13 @@ public class DatabaseService : IDatabaseService
                 Port = connectionInfo.Port,
                 Username = connectionInfo.Username,
                 Password = connectionInfo.Password,
+                TrustServerCertificate = connectionInfo.TrustServerCertificate,
                 Database = connectionInfo.DatabaseType == DatabaseType.Oracle ? "XE" : "master"
             };
 
             using (var connection = CreateConnection(connInfo))
             {
-                await connection.OpenAsync();
+                await ExecuteWithRetryAsync(() => connection.OpenAsync(), "DatabaseExistsAsync.Open");
 
                 // Use parameterized queries to prevent SQL injection
                 string query = connectionInfo.DatabaseType switch
@@ -156,7 +245,7 @@ public class DatabaseService : IDatabaseService
                 using (var command = connection.CreateCommand())
                 {
                     command.CommandText = query;
-                    command.CommandTimeout = CommandTimeout;
+                    command.CommandTimeout = _commandTimeoutSeconds;
                     
                     // Add parameter to prevent SQL injection
                     var param = command.CreateParameter();
@@ -166,7 +255,7 @@ public class DatabaseService : IDatabaseService
                         : connectionInfo.Database;
                     command.Parameters.Add(param);
                     
-                    var scalarResult = await command.ExecuteScalarAsync();
+                    var scalarResult = await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "DatabaseExistsAsync.ExecuteScalar");
                     return scalarResult != null;
                 }
             }
@@ -199,6 +288,7 @@ public class DatabaseService : IDatabaseService
                 Port = connectionInfo.Port,
                 Username = connectionInfo.Username,
                 Password = connectionInfo.Password,
+                TrustServerCertificate = connectionInfo.TrustServerCertificate,
                 Database = connectionInfo.DatabaseType switch
                 {
                     DatabaseType.Oracle => "XE",  // SID di sistema per Oracle
@@ -209,7 +299,7 @@ public class DatabaseService : IDatabaseService
 
             using (var connection = CreateConnection(systemConnInfo))
             {
-                await connection.OpenAsync();
+                await ExecuteWithRetryAsync(() => connection.OpenAsync(), "CreateDatabaseAsync.Open");
 
                 string createQuery = "";
                 string? usedPassword = null;  // Traccia la password usata
@@ -243,8 +333,8 @@ public class DatabaseService : IDatabaseService
                 using (var command = connection.CreateCommand())
                 {
                     command.CommandText = createQuery;
-                    command.CommandTimeout = CommandTimeout;
-                    await command.ExecuteNonQueryAsync();
+                    command.CommandTimeout = _commandTimeoutSeconds;
+                    await ExecuteWithRetryAsync(() => command.ExecuteNonQueryAsync(), "CreateDatabaseAsync.ExecuteCreate");
                     Log($"Database {connectionInfo.Database} created successfully");
                     
                     // For Oracle, after creating the user, assign necessary privileges
@@ -256,7 +346,7 @@ public class DatabaseService : IDatabaseService
                         
                         var grantQuery = $"GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE TO {safeDbName}";
                         command.CommandText = grantQuery;
-                        await command.ExecuteNonQueryAsync();
+                        await ExecuteWithRetryAsync(() => command.ExecuteNonQueryAsync(), "CreateDatabaseAsync.ExecuteGrant");
                         Log($"Privileges granted to user {safeDbName}");
                     }
                 }
@@ -368,7 +458,7 @@ public class DatabaseService : IDatabaseService
     {
         using (var connection = CreateConnection(connectionInfo))
         {
-            await connection.OpenAsync();
+            await ExecuteWithRetryAsync(() => connection.OpenAsync(), "GetTableSchemaAsync.Open");
 
             string query = connectionInfo.DatabaseType switch
             {
@@ -381,12 +471,12 @@ public class DatabaseService : IDatabaseService
             using (var command = connection.CreateCommand())
             {
                 command.CommandText = query;
-                command.CommandTimeout = CommandTimeout;
+                command.CommandTimeout = _commandTimeoutSeconds;
 
                 var script = new System.Text.StringBuilder();
                 script.AppendLine($"-- Tabella: {schema}.{tableName}");
 
-                using (var reader = await command.ExecuteReaderAsync())
+                using (var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "GetTableSchemaAsync.ExecuteReader"))
                 {
                     while (await reader.ReadAsync())
                     {
@@ -404,8 +494,8 @@ public class DatabaseService : IDatabaseService
         using (var sourceConn = CreateConnection(source))
         using (var targetConn = CreateConnection(target))
         {
-            await sourceConn.OpenAsync();
-            await targetConn.OpenAsync();
+            await ExecuteWithRetryAsync(() => sourceConn.OpenAsync(), "MigrateTableAsync.SourceOpen");
+            await ExecuteWithRetryAsync(() => targetConn.OpenAsync(), "MigrateTableAsync.TargetOpen");
 
             // Diagnostica: logga lo schema e l'utente per Oracle
             if (target.DatabaseType == DatabaseType.Oracle && targetConn is OracleConnection oracleConn)
@@ -415,7 +505,7 @@ public class DatabaseService : IDatabaseService
                     using (var diagCmd = targetConn.CreateCommand())
                     {
                         diagCmd.CommandText = "SELECT USER FROM DUAL";
-                        var currentUser = await diagCmd.ExecuteScalarAsync();
+                        var currentUser = await ExecuteWithRetryAsync(() => diagCmd.ExecuteScalarAsync(), "MigrateTableAsync.OracleCurrentUser");
                         Log($"[MigrateTableAsync] Oracle current user: {currentUser}");
                     }
                 }
@@ -452,8 +542,8 @@ public class DatabaseService : IDatabaseService
                         truncateCommand.CommandText = truncateQuery;
                         if (transaction != null)
                             truncateCommand.Transaction = transaction;
-                        truncateCommand.CommandTimeout = CommandTimeout;
-                        await truncateCommand.ExecuteNonQueryAsync();
+                        truncateCommand.CommandTimeout = _commandTimeoutSeconds;
+                        await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.Truncate");
                     }
                     Log($"[MigrateTableAsync] Table truncated successfully");
                 }
@@ -472,23 +562,20 @@ public class DatabaseService : IDatabaseService
                 using (var sourceCommand = sourceConn.CreateCommand())
                 {
                     sourceCommand.CommandText = sourceQuery;
-                    sourceCommand.CommandTimeout = CommandTimeout;
+                    sourceCommand.CommandTimeout = _commandTimeoutSeconds;
 
-                    using (var reader = await sourceCommand.ExecuteReaderAsync())
+                    using (var reader = await ExecuteWithRetryAsync(() => sourceCommand.ExecuteReaderAsync(), "MigrateTableAsync.SourceReader"))
                     {
-                        var batch = new DataTable();
-                        batch.Load(reader);
+                        var columnNames = Enumerable.Range(0, reader.FieldCount)
+                            .Select(reader.GetName)
+                            .ToList();
 
-                        if (batch.Rows.Count == 0)
+                        if (columnNames.Count == 0)
                         {
                             progress?.Report(100);
                             await FinalizeTransactionAsync(targetConn, transaction, target.DatabaseType, true);
                             return;
                         }
-
-                        int columnCount = batch.Columns.Count;
-                        int processedBatches = 0;
-                        int totalBatches = (int)Math.Ceiling((double)batch.Rows.Count / BatchSize);
 
                         // For SQL Server: check if table has IDENTITY column and enable IDENTITY_INSERT
                         bool hasIdentity = false;
@@ -503,10 +590,10 @@ public class DatabaseService : IDatabaseService
                                 using (var identityCmd = targetConn.CreateCommand())
                                 {
                                     identityCmd.CommandText = $"SET IDENTITY_INSERT {formattedTableName} ON";
-                                    identityCmd.CommandTimeout = CommandTimeout;
+                                    identityCmd.CommandTimeout = _commandTimeoutSeconds;
                                     if (transaction != null)
                                         identityCmd.Transaction = transaction;
-                                    await identityCmd.ExecuteNonQueryAsync();
+                                    await ExecuteWithRetryAsync(() => identityCmd.ExecuteNonQueryAsync(), "MigrateTableAsync.IdentityInsertOn");
                                 }
                             }
                         }
@@ -516,61 +603,79 @@ public class DatabaseService : IDatabaseService
                             // Inserisci i dati nel target in batch
                             using (var targetCommand = targetConn.CreateCommand())
                             {
-                                targetCommand.CommandTimeout = CommandTimeout;
+                                targetCommand.CommandTimeout = _commandTimeoutSeconds;
                                 if (transaction != null)
                                     targetCommand.Transaction = transaction;
 
-                                for (int i = 0; i < batch.Rows.Count; i += BatchSize)
+                                async Task InsertBatchAsync(List<object?[]> rowsBatch)
                                 {
-                                    var batchRows = batch.Rows.Cast<DataRow>()
-                                        .Skip(i)
-                                        .Take(BatchSize)
-                                        .ToList();
+                                    string insertQuery = BuildInsertQuery(
+                                        target.DatabaseType,
+                                        table.Schema,
+                                        table.TableName,
+                                        columnNames,
+                                        rowsBatch);
 
-                                    string insertQuery = BuildInsertQuery(target.DatabaseType, table.Schema, table.TableName, batch.Columns, batchRows);
-                                    
-                                    try
+                                    // For Oracle: execute each INSERT individually
+                                    if (target.DatabaseType == DatabaseType.Oracle)
                                     {
-                                        // For Oracle: execute each INSERT individually
-                                        if (target.DatabaseType == DatabaseType.Oracle)
+                                        // Split queries using robust parser that respects string literals
+                                        var queries = SplitSqlStatements(insertQuery);
+                                        Log($"[MigrateTableAsync] Oracle batch: {rowsBatch.Count} rows, {queries.Count} INSERT statements");
+
+                                        int rowsInserted = 0;
+                                        foreach (var cleanQuery in queries.Select(q => q.Trim()).Where(q => !string.IsNullOrEmpty(q)))
                                         {
-                                            // Split queries using robust parser that respects string literals
-                                            var queries = SplitSqlStatements(insertQuery);
-                                            Log($"[MigrateTableAsync] Oracle batch: {batchRows.Count} rows, {queries.Count} INSERT statements");
-                                            
-                                            int rowsInserted = 0;
-                                            foreach (var cleanQuery in queries.Select(q => q.Trim()).Where(q => !string.IsNullOrEmpty(q)))
-                                            {
-                                                targetCommand.CommandText = cleanQuery;
-                                                var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
-                                                rowsInserted += rowsAffected;
-                                            }
-                                            
-                                            Log($"[MigrateTableAsync] Oracle batch completed ({rowsInserted} rows inserted)");
-                                            // Note: COMMIT will be executed once at the end of migration
-                                            // This improves performance for large migrations, but means that if an error occurs,
-                                            // all data inserted in the current transaction will be rolled back.
-                                            // Consider the tradeoff between performance and data safety for your use case.
+                                            targetCommand.CommandText = cleanQuery;
+                                            var rowsAffected = await ExecuteWithRetryAsync(() => targetCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.OracleInsert");
+                                            rowsInserted += rowsAffected;
                                         }
-                                        else
-                                        {
-                                            // For SQL Server and PostgreSQL: execute the batch
-                                            targetCommand.CommandText = insertQuery;
-                                            var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
-                                            Log($"[MigrateTableAsync] Batch INSERT executed, rows affected: {rowsAffected}");
-                                        }
-                                        
+
+                                        Log($"[MigrateTableAsync] Oracle batch completed ({rowsInserted} rows inserted)");
+                                    }
+                                    else
+                                    {
+                                        // For SQL Server and PostgreSQL: execute the batch
+                                        targetCommand.CommandText = insertQuery;
+                                        var rowsAffected = await ExecuteWithRetryAsync(() => targetCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.BatchInsert");
+                                        Log($"[MigrateTableAsync] Batch INSERT executed, rows affected: {rowsAffected}");
+                                    }
+                                }
+
+                                var batchRows = new List<object?[]>(_batchSize);
+                                while (await reader.ReadAsync())
+                                {
+                                    var rowValues = new object[reader.FieldCount];
+                                    reader.GetValues(rowValues);
+                                    batchRows.Add(rowValues);
+
+                                    if (batchRows.Count >= _batchSize)
+                                    {
+                                        var insertRows = batchRows.ToList();
+                                        await InsertBatchAsync(insertRows);
                                         migratedRows += batchRows.Count;
-                                        processedBatches++;
-
-                                        int percentage = (int)((processedBatches / (double)totalBatches) * 100);
+                                        int percentage = totalRows > 0
+                                            ? (int)((migratedRows / (double)totalRows) * 100)
+                                            : 100;
                                         progress?.Report(Math.Min(percentage, 100));
+                                        batchRows.Clear();
                                     }
-                                    catch (Exception ex)
-                                    {
-                                        throw new InvalidOperationException(
-                                            $"Error during batch insert for {table.Schema}.{table.TableName}: {ex.Message}", ex);
-                                    }
+                                }
+
+                                if (batchRows.Count > 0)
+                                {
+                                    var insertRows = batchRows.ToList();
+                                    await InsertBatchAsync(insertRows);
+                                    migratedRows += batchRows.Count;
+                                    int percentage = totalRows > 0
+                                        ? (int)((migratedRows / (double)totalRows) * 100)
+                                        : 100;
+                                    progress?.Report(Math.Min(percentage, 100));
+                                }
+
+                                if (migratedRows == 0)
+                                {
+                                    progress?.Report(100);
                                 }
                             }
                         }
@@ -586,10 +691,10 @@ public class DatabaseService : IDatabaseService
                                     using (var identityCmd = targetConn.CreateCommand())
                                     {
                                         identityCmd.CommandText = $"SET IDENTITY_INSERT {formattedTableName} OFF";
-                                        identityCmd.CommandTimeout = CommandTimeout;
+                                        identityCmd.CommandTimeout = _commandTimeoutSeconds;
                                         if (transaction != null)
                                             identityCmd.Transaction = transaction;
-                                        await identityCmd.ExecuteNonQueryAsync();
+                                        await ExecuteWithRetryAsync(() => identityCmd.ExecuteNonQueryAsync(), "MigrateTableAsync.IdentityInsertOff");
                                     }
                                 }
                                 catch (Exception ex)
@@ -624,8 +729,8 @@ public class DatabaseService : IDatabaseService
                 using (var cmd = connection.CreateCommand())
                 {
                     cmd.CommandText = commit ? "COMMIT" : "ROLLBACK";
-                    cmd.CommandTimeout = CommandTimeout;
-                    await cmd.ExecuteNonQueryAsync();
+                    cmd.CommandTimeout = _commandTimeoutSeconds;
+                    await ExecuteWithRetryAsync(() => cmd.ExecuteNonQueryAsync(), "FinalizeTransactionAsync.CommitRollback");
                     Log($"[FinalizeTransactionAsync] Oracle {(commit ? "COMMIT" : "ROLLBACK")} executed");
                 }
             }
@@ -665,7 +770,7 @@ public class DatabaseService : IDatabaseService
                 WHERE s.name = @Schema
                   AND t.name = @TableName
                   AND c.is_identity = 1";
-            command.CommandTimeout = CommandTimeout;
+            command.CommandTimeout = _commandTimeoutSeconds;
             if (transaction != null)
                 command.Transaction = transaction;
 
@@ -679,7 +784,7 @@ public class DatabaseService : IDatabaseService
             tableParam.Value = tableName;
             command.Parameters.Add(tableParam);
 
-            var result = await command.ExecuteScalarAsync();
+            var result = await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "HasIdentityColumnAsync.ExecuteScalar");
             var count = Convert.ToInt32(result ?? 0);
             Log($"[HasIdentityColumnAsync] Table {schema}.{tableName} has {count} identity column(s)");
             return count > 0;
@@ -696,21 +801,21 @@ public class DatabaseService : IDatabaseService
             return;
 
         // Use a semaphore to limit concurrent operations (prevents overwhelming the database)
-        const int maxConcurrency = 10;
-        using var semaphore = new System.Threading.SemaphoreSlim(maxConcurrency);
+        using var semaphore = new SemaphoreSlim(_rowCountMaxConcurrency);
 
-        // Process tables in parallel with controlled concurrency
+        // Process tables in parallel with controlled concurrency and assign results after all tasks complete
         var tasks = tables.Select(async table =>
         {
             await semaphore.WaitAsync();
             try
             {
-                table.RowCount = await GetTableRowCountAsync(connectionInfo, table.Schema, table.TableName);
+                var rowCount = await GetTableRowCountAsync(connectionInfo, table.Schema, table.TableName);
+                return (table, rowCount);
             }
             catch (Exception ex)
             {
                 Log($"Error getting row count for {table.Schema}.{table.TableName}: {ex.Message}");
-                table.RowCount = 0;
+                return (table, rowCount: 0L);
             }
             finally
             {
@@ -718,7 +823,11 @@ public class DatabaseService : IDatabaseService
             }
         });
 
-        await Task.WhenAll(tasks);
+        var results = await Task.WhenAll(tasks);
+        foreach (var (table, rowCount) in results)
+        {
+            table.RowCount = rowCount;
+        }
     }
 
     private async Task<long> GetTableRowCountAsync(ConnectionInfo connectionInfo, string schema, string tableName)
@@ -727,15 +836,15 @@ public class DatabaseService : IDatabaseService
         {
             using (var connection = CreateConnection(connectionInfo))
             {
-                await connection.OpenAsync();
+                await ExecuteWithRetryAsync(() => connection.OpenAsync(), "GetTableRowCountAsync.Open");
 
                 string query = $"SELECT COUNT(*) FROM {FormatTableName(connectionInfo.DatabaseType, schema, tableName)}";
 
                 using (var command = connection.CreateCommand())
                 {
                     command.CommandText = query;
-                    command.CommandTimeout = CommandTimeout;
-                    var result = await command.ExecuteScalarAsync();
+                    command.CommandTimeout = _commandTimeoutSeconds;
+                    var result = await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "GetTableRowCountAsync.ExecuteScalar");
                     return Convert.ToInt64(result ?? 0);
                 }
             }
@@ -752,14 +861,18 @@ public class DatabaseService : IDatabaseService
         return dbType switch
         {
             DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
-            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(tableName)}\"",
+            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema.ToLowerInvariant())}\".\"{EscapePostgresIdentifier(tableName.ToLowerInvariant())}\"",
             DatabaseType.Oracle => tableName.ToUpperInvariant(),  // Oracle: uppercase, no schema prefix
             _ => throw new NotSupportedException()
         };
     }
 
-    private string BuildInsertQuery(DatabaseType dbType, string schema, string tableName, 
-        DataColumnCollection columns, List<DataRow> rows)
+    private string BuildInsertQuery(
+        DatabaseType dbType,
+        string schema,
+        string tableName,
+        IReadOnlyList<string> columns,
+        IReadOnlyList<object?[]> rows)
     {
         var sb = new System.Text.StringBuilder();
         string tableRef = FormatTableName(dbType, schema, tableName);
@@ -768,7 +881,7 @@ public class DatabaseService : IDatabaseService
         var columnNames = new List<string>();
         for (int i = 0; i < columns.Count; i++)
         {
-            string colName = columns[i].ColumnName;
+            string colName = columns[i];
             columnNames.Add(dbType switch
             {
                 DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(colName)}]",
@@ -795,7 +908,6 @@ public class DatabaseService : IDatabaseService
             }
             var result = string.Join("; ", queries) + ";";
             Log($"[BuildInsertQuery] Generated Oracle INSERT queries (full length: {result.Length} chars)");
-            Log($"[BuildInsertQuery] Oracle query: {result}");
             return result;
         }
         else
@@ -830,7 +942,11 @@ public class DatabaseService : IDatabaseService
         return value switch
         {
             string s => $"'{EscapeSqlString(s)}'",
-            bool b => b ? "1" : "0",
+            bool b => dbType switch
+            {
+                DatabaseType.PostgreSQL => b ? "TRUE" : "FALSE",
+                _ => b ? "1" : "0"
+            },
             byte[] bytes => dbType switch
             {
                 DatabaseType.PostgreSQL => $"'\\x{BitConverter.ToString(bytes).Replace("-", "").ToLower()}'",
@@ -845,6 +961,8 @@ public class DatabaseService : IDatabaseService
                 DatabaseType.Oracle => $"TO_DATE('{dt:yyyy-MM-dd HH:mm:ss}','YYYY-MM-DD HH24:MI:SS')",
                 _ => $"'{dt:yyyy-MM-dd HH:mm:ss}'"
             },
+            double d => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            float f => f.ToString(System.Globalization.CultureInfo.InvariantCulture),
             decimal d => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
             _ => value.ToString() ?? "NULL"
         };

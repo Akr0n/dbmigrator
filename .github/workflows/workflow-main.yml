@@ -62,21 +62,25 @@ jobs:
           }
 
       - name: Set up .NET 10.0
+        if: env.MERGE_FROM_DEVELOP == 'true'
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
       - name: Restore dependencies
+        if: env.MERGE_FROM_DEVELOP == 'true'
         run: dotnet restore DatabaseMigrator.sln
 
       - name: Build solution (Release)
+        if: env.MERGE_FROM_DEVELOP == 'true'
         run: dotnet build DatabaseMigrator.sln --configuration Release --no-restore
 
       - name: Run unit tests
+        if: env.MERGE_FROM_DEVELOP == 'true'
         run: dotnet test DatabaseMigrator.sln --configuration Release --no-build --verbosity normal
-        continue-on-error: true
 
       - name: Publish application (win-x64)
+        if: env.MERGE_FROM_DEVELOP == 'true'
         run: |
           dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj `
             --configuration Release `
@@ -85,6 +89,7 @@ jobs:
             --output ./publish
 
       - name: Create release notes
+        if: env.MERGE_FROM_DEVELOP == 'true'
         run: |
           echo "# DatabaseMigrator - Production Release" > RELEASE_NOTES.txt
           echo "" >> RELEASE_NOTES.txt
@@ -98,6 +103,7 @@ jobs:
 
       - name: Get last dev tag
         id: get_tag
+        if: env.MERGE_FROM_DEVELOP == 'true'
         run: |
           # elenco tutti i tag e prendo l’ultimo che finisce con -dev
           git fetch --tags
@@ -118,13 +124,15 @@ jobs:
           "release_version=$releaseVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Create and push tag
+        if: env.MERGE_FROM_DEVELOP == 'true'
         run: |
-          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
           git tag ${{ env.release_tag }}
           git push origin ${{ env.release_tag }}
 
       - name: Fetch tag locally and verify
+        if: env.MERGE_FROM_DEVELOP == 'true'
         run: |
           echo "Fetching all tags from remote..."
           git fetch origin --tags
@@ -142,11 +150,13 @@ jobs:
 
       - name: Generate changelog
         id: changelog
+        if: env.MERGE_FROM_DEVELOP == 'true'
         uses: mikepenz/release-changelog-builder-action@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create Release with changelog and assets
+        if: env.MERGE_FROM_DEVELOP == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.release_tag }}

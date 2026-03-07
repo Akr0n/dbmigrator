@@ -10,6 +10,7 @@ public class ConnectionViewModel : ViewModelBase
     private string _database = "";
     private string _username = "";
     private string _password = "";
+    private bool _trustServerCertificate = RuntimeOptionsProvider.Current.Security.TrustServerCertificateByDefault;
     private DatabaseType _selectedDatabaseType = DatabaseType.SqlServer;
 
     public string Server
@@ -40,6 +41,12 @@ public class ConnectionViewModel : ViewModelBase
     {
         get => _password;
         set => this.RaiseAndSetIfChanged(ref _password, value);
+    }
+
+    public bool TrustServerCertificate
+    {
+        get => _trustServerCertificate;
+        set => this.RaiseAndSetIfChanged(ref _trustServerCertificate, value);
     }
 
     public DatabaseType SelectedDatabaseType
@@ -78,7 +85,8 @@ public class ConnectionViewModel : ViewModelBase
                 Port = Port,
                 Database = Database,
                 Username = Username ?? "", // Può essere vuoto
-                Password = Password ?? ""   // Può essere vuoto
+                Password = Password ?? "",   // Può essere vuoto
+                TrustServerCertificate = TrustServerCertificate
             };
         }
     }

@@ -10,6 +10,7 @@ public class ConnectionInfo
     public string Database { get; set; } = string.Empty;
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
+    public bool TrustServerCertificate { get; set; } = RuntimeOptionsProvider.Current.Security.TrustServerCertificateByDefault;
 
     public string GetConnectionString() => DatabaseType switch
     {
@@ -21,17 +22,19 @@ public class ConnectionInfo
 
     private string BuildSqlServerConnectionString()
     {
+        string trustOption = TrustServerCertificate ? "True" : "False";
+
         // Se username è vuoto, usa Integrated Security (connessione trusted)
         if (string.IsNullOrWhiteSpace(Username))
         {
-            return $"Server={Server},{Port};Database={Database};Integrated Security=true;TrustServerCertificate=True;";
+            System.Diagnostics.Debug.WriteLine(
+                $"[ConnectionInfo] SQL Server target {Server}:{Port}/{Database} (IntegratedSecurity=True, TrustServerCertificate={trustOption})");
+            return $"Server={Server},{Port};Database={Database};Integrated Security=true;Encrypt=True;TrustServerCertificate={trustOption};";
         }
-        else
-        {
-            var cs = $"Server={Server},{Port};Database={Database};User Id={Username};Password={Password};TrustServerCertificate=True;";
-            System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] SQL Server: {cs}");
-            return cs;
-        }
+
+        System.Diagnostics.Debug.WriteLine(
+            $"[ConnectionInfo] SQL Server target {Server}:{Port}/{Database} (SqlAuth user={Username}, TrustServerCertificate={trustOption})");
+        return $"Server={Server},{Port};Database={Database};User Id={Username};Password={Password};Encrypt=True;TrustServerCertificate={trustOption};";
     }
 
     private string BuildPostgresConnectionString()
@@ -39,7 +42,7 @@ public class ConnectionInfo
         // Escape password se contiene caratteri speciali
         string escapedPassword = EscapePostgresPassword(Password);
         var cs = $"Host={Server};Port={Port};Database={Database};Username={Username};Password={escapedPassword};";
-        System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] PostgreSQL: {cs}");
+        System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] PostgreSQL target {Server}:{Port}/{Database} (user={Username})");
         return cs;
     }
 
@@ -75,7 +78,7 @@ public class ConnectionInfo
             cs += "DBA Privilege=SYSDBA;";
         }
         
-        System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] Oracle: {cs}");
+        System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] Oracle target {Server}:{Port}/{Database} (user={Username})");
         return cs;
     }
 

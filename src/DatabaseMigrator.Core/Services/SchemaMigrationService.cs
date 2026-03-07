@@ -20,9 +20,14 @@ namespace DatabaseMigrator.Core.Services;
 /// </summary>
 public class SchemaMigrationService
 {
-    private const int CommandTimeout = 300;
+    private readonly int _commandTimeoutSeconds;
 
     private static void Log(string message) => LoggerService.Log(message);
+
+    public SchemaMigrationService()
+    {
+        _commandTimeoutSeconds = RuntimeOptionsProvider.Current.Database.CommandTimeoutSeconds;
+    }
 
     /// <summary>
     /// Checks if a table exists in the specified database.
@@ -67,7 +72,7 @@ public class SchemaMigrationService
                 using (var command = connection.CreateCommand())
                 {
                     command.CommandText = dropQuery;
-                    command.CommandTimeout = CommandTimeout;
+                    command.CommandTimeout = _commandTimeoutSeconds;
                     await command.ExecuteNonQueryAsync();
                 }
                 
@@ -129,7 +134,7 @@ public class SchemaMigrationService
                         using (var command = targetConn.CreateCommand())
                         {
                             command.CommandText = createTableDdl;
-                            command.CommandTimeout = CommandTimeout;
+                            command.CommandTimeout = _commandTimeoutSeconds;
                             await command.ExecuteNonQueryAsync();
                         }
                         Log($"[SchemaMigration] Table created successfully");
@@ -151,7 +156,7 @@ public class SchemaMigrationService
                             using (var command = targetConn.CreateCommand())
                             {
                                 command.CommandText = constraintDdl;
-                                command.CommandTimeout = CommandTimeout;
+                                command.CommandTimeout = _commandTimeoutSeconds;
                                 try
                                 {
                                     Log($"[SchemaMigration] Executing constraint: {constraintDdl}");
@@ -200,7 +205,7 @@ public class SchemaMigrationService
             using (var command = connection.CreateCommand())
             {
                 command.CommandText = query;
-                command.CommandTimeout = CommandTimeout;
+                command.CommandTimeout = _commandTimeoutSeconds;
                 
                 // Add parameters to prevent SQL injection
                 if (dbType != DatabaseType.Oracle)
@@ -234,16 +239,26 @@ public class SchemaMigrationService
         
         string query = dbType switch
         {
-            DatabaseType.SqlServer => GetSqlServerColumnsQuery(schema, tableName),
-            DatabaseType.PostgreSQL => GetPostgresColumnsQuery(schema, tableName),
-            DatabaseType.Oracle => GetOracleColumnsQuery(schema, tableName),
+            DatabaseType.SqlServer => GetSqlServerColumnsQuery(),
+            DatabaseType.PostgreSQL => GetPostgresColumnsQuery(),
+            DatabaseType.Oracle => GetOracleColumnsQuery(),
             _ => throw new NotSupportedException()
         };
 
         using (var command = connection.CreateCommand())
         {
             command.CommandText = query;
-            command.CommandTimeout = CommandTimeout;
+            command.CommandTimeout = _commandTimeoutSeconds;
+
+            var schemaParam = command.CreateParameter();
+            schemaParam.ParameterName = dbType == DatabaseType.Oracle ? ":schema" : "@schema";
+            schemaParam.Value = dbType == DatabaseType.Oracle ? schema.ToUpperInvariant() : schema;
+            command.Parameters.Add(schemaParam);
+
+            var tableParam = command.CreateParameter();
+            tableParam.ParameterName = dbType == DatabaseType.Oracle ? ":tableName" : "@tableName";
+            tableParam.Value = dbType == DatabaseType.Oracle ? tableName.ToUpperInvariant() : tableName;
+            command.Parameters.Add(tableParam);
 
             using (var reader = await command.ExecuteReaderAsync())
             {
@@ -306,7 +321,7 @@ public class SchemaMigrationService
         using (var command = connection.CreateCommand())
         {
             command.CommandText = query;
-            command.CommandTimeout = CommandTimeout;
+            command.CommandTimeout = _commandTimeoutSeconds;
             
             // Use parameters to prevent SQL injection
             var schemaParam = command.CreateParameter();
@@ -406,16 +421,26 @@ public class SchemaMigrationService
         
         string query = dbType switch
         {
-            DatabaseType.SqlServer => GetSqlServerConstraintsQuery(schema, tableName),
-            DatabaseType.PostgreSQL => GetPostgresConstraintsQuery(schema, tableName),
-            DatabaseType.Oracle => GetOracleConstraintsQuery(schema, tableName),
+            DatabaseType.SqlServer => GetSqlServerConstraintsQuery(),
+            DatabaseType.PostgreSQL => GetPostgresConstraintsQuery(),
+            DatabaseType.Oracle => GetOracleConstraintsQuery(),
             _ => throw new NotSupportedException()
         };
 
         using (var command = connection.CreateCommand())
         {
             command.CommandText = query;
-            command.CommandTimeout = CommandTimeout;
+            command.CommandTimeout = _commandTimeoutSeconds;
+
+            var schemaParam = command.CreateParameter();
+            schemaParam.ParameterName = dbType == DatabaseType.Oracle ? ":schema" : "@schema";
+            schemaParam.Value = dbType == DatabaseType.Oracle ? schema.ToUpperInvariant() : schema;
+            command.Parameters.Add(schemaParam);
+
+            var tableParam = command.CreateParameter();
+            tableParam.ParameterName = dbType == DatabaseType.Oracle ? ":tableName" : "@tableName";
+            tableParam.Value = dbType == DatabaseType.Oracle ? tableName.ToUpperInvariant() : tableName;
+            command.Parameters.Add(tableParam);
 
             using (var reader = await command.ExecuteReaderAsync())
             {
@@ -1089,9 +1114,9 @@ public class SchemaMigrationService
         };
     }
 
-    private string GetSqlServerColumnsQuery(string schema, string tableName)
+    private string GetSqlServerColumnsQuery()
     {
-        return $@"
+        return @"
             SELECT 
                 COLUMN_NAME as ColumnName,
                 DATA_TYPE as DataType,
@@ -1102,13 +1127,13 @@ public class SchemaMigrationService
                 DATETIME_PRECISION as DateTimePrecision,
                 COLUMN_DEFAULT as DefaultValue
             FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{tableName}'
+            WHERE TABLE_SCHEMA = @schema AND TABLE_NAME = @tableName
             ORDER BY ORDINAL_POSITION";
     }
 
-    private string GetPostgresColumnsQuery(string schema, string tableName)
+    private string GetPostgresColumnsQuery()
     {
-        return $@"
+        return @"
             SELECT 
                 column_name as ColumnName,
                 data_type as DataType,
@@ -1119,13 +1144,13 @@ public class SchemaMigrationService
                 datetime_precision as DateTimePrecision,
                 column_default as DefaultValue
             FROM information_schema.columns
-            WHERE table_schema = '{schema}' AND table_name = '{tableName}'
+            WHERE table_schema = @schema AND table_name = @tableName
             ORDER BY ordinal_position";
     }
 
-    private string GetOracleColumnsQuery(string schema, string tableName)
+    private string GetOracleColumnsQuery()
     {
-        return $@"
+        return @"
             SELECT 
                 column_name as ColumnName,
                 data_type as DataType,
@@ -1136,34 +1161,34 @@ public class SchemaMigrationService
                 CASE WHEN data_type LIKE 'TIMESTAMP%' THEN data_scale ELSE NULL END as DateTimePrecision,
                 data_default as DefaultValue
             FROM all_tab_columns
-            WHERE owner = '{schema}' AND table_name = '{tableName}'
+            WHERE owner = :schema AND table_name = :tableName
             ORDER BY column_id";
     }
 
-    private string GetSqlServerConstraintsQuery(string schema, string tableName)
+    private string GetSqlServerConstraintsQuery()
     {
-        return $@"
+        return @"
             SELECT CONSTRAINT_NAME
             FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
-            WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{tableName}'
+            WHERE TABLE_SCHEMA = @schema AND TABLE_NAME = @tableName
             AND CONSTRAINT_TYPE IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')";
     }
 
-    private string GetPostgresConstraintsQuery(string schema, string tableName)
+    private string GetPostgresConstraintsQuery()
     {
-        return $@"
+        return @"
             SELECT constraint_name
             FROM information_schema.table_constraints
-            WHERE table_schema = '{schema}' AND table_name = '{tableName}'
+            WHERE table_schema = @schema AND table_name = @tableName
             AND constraint_type IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')";
     }
 
-    private string GetOracleConstraintsQuery(string schema, string tableName)
+    private string GetOracleConstraintsQuery()
     {
-        return $@"
+        return @"
             SELECT constraint_name
             FROM all_constraints
-            WHERE owner = '{schema}' AND table_name = '{tableName}'
+            WHERE owner = :schema AND table_name = :tableName
             AND constraint_type IN ('P', 'U', 'R')";
     }
 

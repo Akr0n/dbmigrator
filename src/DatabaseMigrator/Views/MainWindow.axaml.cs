@@ -224,14 +224,13 @@ namespace DatabaseMigrator.Views;
         return userConfirmed;
     }
     
-    private void SelectAllButton_Click(object? sender, RoutedEventArgs e)
+    private async void SelectAllButton_Click(object? sender, RoutedEventArgs e)
     {
         Log("[SelectAllButton_Click] Button clicked!");
         if (_vm != null)
         {
-            Log("[SelectAllButton_Click] Calling SelectAllTables directly...");
-            // Call the method directly instead of using the command
-            _vm.SelectAllTablesDirectly();
+            Log("[SelectAllButton_Click] Calling SelectAllTables...");
+            await _vm.SelectAllTablesDirectlyAsync();
             Log("[SelectAllButton_Click] SelectAllTables executed");
         }
         else
@@ -240,14 +239,13 @@ namespace DatabaseMigrator.Views;
         }
     }
     
-    private void DeselectAllButton_Click(object? sender, RoutedEventArgs e)
+    private async void DeselectAllButton_Click(object? sender, RoutedEventArgs e)
     {
         Log("[DeselectAllButton_Click] Button clicked!");
         if (_vm != null)
         {
-            Log("[DeselectAllButton_Click] Calling DeselectAllTables directly...");
-            // Call the method directly instead of using the command
-            _vm.DeselectAllTablesDirectly();
+            Log("[DeselectAllButton_Click] Calling DeselectAllTables...");
+            await _vm.DeselectAllTablesDirectlyAsync();
             Log("[DeselectAllButton_Click] DeselectAllTables executed");
         }
         else

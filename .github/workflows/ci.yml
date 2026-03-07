@@ -60,7 +60,6 @@ jobs:
 
       - name: Run unit tests
         run: dotnet test DatabaseMigrator.sln --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
-        continue-on-error: true
 
       - name: Upload test results
         uses: actions/upload-artifact@v6
