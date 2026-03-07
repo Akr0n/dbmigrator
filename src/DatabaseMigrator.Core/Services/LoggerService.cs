@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Linq;
+using DatabaseMigrator.Core.Models;
 
 namespace DatabaseMigrator.Core.Services;
 
@@ -13,10 +15,12 @@ public static class LoggerService
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "DatabaseMigrator");
 
-    private static readonly string LogPath = Path.Combine(LogDirectory, "debug.log");
-    private static readonly string ErrorLogPath = Path.Combine(LogDirectory, "error.log");
-
     private static readonly object LockObject = new object();
+    private static readonly LoggingRuntimeOptions LoggingOptions = RuntimeOptionsProvider.Current.Logging;
+
+    private static string LogPath => Path.Combine(LogDirectory, "debug.log");
+    private static string ErrorLogPath => Path.Combine(LogDirectory, "error.log");
+    private static long MaxFileSizeBytes => LoggingOptions.MaxFileSizeMb * 1024L * 1024L;
 
     /// <summary>
     /// Logs a debug message to the debug log file.
@@ -32,6 +36,7 @@ public static class LoggerService
             
             lock (LockObject)
             {
+                RotateIfNeeded(LogPath);
                 File.AppendAllText(LogPath, fullMessage);
             }
             
@@ -68,6 +73,8 @@ public static class LoggerService
             
             lock (LockObject)
             {
+                RotateIfNeeded(ErrorLogPath);
+                RotateIfNeeded(LogPath);
                 File.AppendAllText(ErrorLogPath, fullMessage);
                 File.AppendAllText(LogPath, fullMessage);
             }
@@ -94,6 +101,67 @@ public static class LoggerService
     /// Gets the path to the error log file.
     /// </summary>
     public static string GetErrorLogPath() => ErrorLogPath;
+
+    private static void RotateIfNeeded(string filePath)
+    {
+        try
+        {
+            if (!File.Exists(filePath))
+            {
+                return;
+            }
+
+            var info = new FileInfo(filePath);
+            if (info.Length < MaxFileSizeBytes)
+            {
+                return;
+            }
+
+            string archiveName = $"{Path.GetFileNameWithoutExtension(filePath)}.{DateTime.Now:yyyyMMddHHmmss}.log";
+            string archivePath = Path.Combine(LogDirectory, archiveName);
+            File.Move(filePath, archivePath, overwrite: true);
+
+            CleanupArchivedLogs(Path.GetFileNameWithoutExtension(filePath));
+        }
+        catch
+        {
+            // Ignore rotation failures to avoid impacting application flow.
+        }
+    }
+
+    private static void CleanupArchivedLogs(string baseName)
+    {
+        try
+        {
+            var pattern = $"{baseName}.*.log";
+            var archives = Directory
+                .GetFiles(LogDirectory, pattern, SearchOption.TopDirectoryOnly)
+                .Select(path => new FileInfo(path))
+                .OrderByDescending(file => file.CreationTimeUtc)
+                .ToList();
+
+            var retentionCutoff = DateTime.UtcNow.AddDays(-LoggingOptions.RetentionDays);
+            foreach (var archive in archives.Where(file => file.CreationTimeUtc < retentionCutoff))
+            {
+                archive.Delete();
+            }
+
+            archives = Directory
+                .GetFiles(LogDirectory, pattern, SearchOption.TopDirectoryOnly)
+                .Select(path => new FileInfo(path))
+                .OrderByDescending(file => file.CreationTimeUtc)
+                .ToList();
+
+            for (int idx = LoggingOptions.MaxArchivedFiles; idx < archives.Count; idx++)
+            {
+                archives[idx].Delete();
+            }
+        }
+        catch
+        {
+            // Ignore cleanup failures to avoid impacting application flow.
+        }
+    }
 
     private static void EnsureLogDirectoryExists()
     {

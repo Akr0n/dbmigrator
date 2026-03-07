@@ -21,6 +21,20 @@ docker-compose up -d
 docker-compose ps
 ```
 
+## Automated Cross-DB Matrix
+
+Run the automated E2E matrix (SQL Server <-> PostgreSQL <-> Oracle):
+
+```powershell
+# Starts containers, waits for health checks, runs E2E tests, then stops containers
+.\scripts\run-e2e-matrix.ps1
+
+# Keep containers running after tests
+.\scripts\run-e2e-matrix.ps1 -KeepContainers
+```
+
+The script executes xUnit tests marked with `Category=E2E` and sets `DBMIGRATOR_RUN_E2E=true`.
+
 ## Connection Credentials
 
 ### PostgreSQL

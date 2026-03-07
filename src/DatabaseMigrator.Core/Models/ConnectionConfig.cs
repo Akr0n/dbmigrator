@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json.Serialization;
+using DatabaseMigrator.Core.Services;
 
 namespace DatabaseMigrator.Core.Models;
 
@@ -44,11 +45,27 @@ public class DatabaseConnectionData
     [JsonPropertyName("password")]
     public string Password { get; set; } = string.Empty;
 
+    [JsonPropertyName("passwordProtected")]
+    public bool PasswordProtected { get; set; }
+
+    [JsonPropertyName("trustServerCertificate")]
+    public bool TrustServerCertificate { get; set; } = RuntimeOptionsProvider.Current.Security.TrustServerCertificateByDefault;
+
     /// <summary>
     /// Converte in ConnectionInfo per l'uso interno
     /// </summary>
     public ConnectionInfo ToConnectionInfo()
     {
+        string resolvedPassword = Password;
+        if (PasswordProtected && !string.IsNullOrEmpty(Password))
+        {
+            if (!CredentialProtectionService.TryUnprotect(Password, out resolvedPassword))
+            {
+                throw new InvalidOperationException(
+                    "Impossibile decifrare la password della configurazione. Verificare che il file sia stato creato dallo stesso utente Windows.");
+            }
+        }
+
         return new ConnectionInfo
         {
             DatabaseType = Enum.Parse<DatabaseType>(DatabaseType),
@@ -56,7 +73,8 @@ public class DatabaseConnectionData
             Port = Port,
             Database = Database,
             Username = Username,
-            Password = Password
+            Password = resolvedPassword,
+            TrustServerCertificate = TrustServerCertificate
         };
     }
 
@@ -65,6 +83,23 @@ public class DatabaseConnectionData
     /// </summary>
     public static DatabaseConnectionData FromConnectionInfo(ConnectionInfo info)
     {
+        string serializedPassword = info.Password;
+        bool passwordProtected = false;
+
+        if (!string.IsNullOrEmpty(info.Password))
+        {
+            if (CredentialProtectionService.TryProtect(info.Password, out var protectedPassword))
+            {
+                serializedPassword = protectedPassword;
+                passwordProtected = true;
+            }
+            else if (!RuntimeOptionsProvider.Current.Security.AllowPlaintextConfigFallback)
+            {
+                throw new InvalidOperationException(
+                    "Impossibile proteggere la password con DPAPI. Abilitare AllowPlaintextConfigFallback solo se strettamente necessario.");
+            }
+        }
+
         return new DatabaseConnectionData
         {
             DatabaseType = info.DatabaseType.ToString(),
@@ -72,7 +107,9 @@ public class DatabaseConnectionData
             Port = info.Port,
             Database = info.Database,
             Username = info.Username,
-            Password = info.Password
+            Password = serializedPassword,
+            PasswordProtected = passwordProtected,
+            TrustServerCertificate = info.TrustServerCertificate
         };
     }
 }

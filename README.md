@@ -123,6 +123,19 @@ The application supports saving and loading connection configurations:
 - **Load**: File → Load Configuration (or Ctrl+O)
 
 Configurations are saved as JSON files and include both source and target connection settings.
+Passwords are protected with Windows DPAPI (`passwordProtected: true`) by default.
+
+## Runtime Settings
+
+Runtime settings can be configured with:
+
+- `src/DatabaseMigrator/appsettings.json` (copied to output/publish)
+- environment variables (override file settings), for example:
+  - `DBMIGRATOR_BATCH_SIZE`
+  - `DBMIGRATOR_COMMAND_TIMEOUT_SECONDS`
+  - `DBMIGRATOR_RETRY_COUNT`
+  - `DBMIGRATOR_LOG_MAX_FILE_MB`
+  - `DBMIGRATOR_TRUST_SERVER_CERTIFICATE`
 
 ## Data Type Mapping
 
@@ -158,6 +171,18 @@ The application logs all operations to help with troubleshooting:
 - Schema DDL generation
 - Data migration progress
 - Error details with stack traces
+
+Log files are automatically rotated and retained according to runtime settings.
+
+## E2E Matrix
+
+Cross-database E2E matrix automation is available via:
+
+```powershell
+.\scripts\run-e2e-matrix.ps1
+```
+
+See `DOCKER_E2E_TESTING.md` for prerequisites and details.
 
 ## License
 

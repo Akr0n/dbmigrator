@@ -37,7 +37,6 @@ jobs:
 
       - name: Run unit tests
         run: dotnet test DatabaseMigrator.sln --configuration Release --no-build --verbosity normal
-        continue-on-error: true
 
       - name: Publish application (win-x64)
         run: |
@@ -130,8 +129,8 @@ jobs:
 
       - name: Create and push tag
         run: |
-          git config --global user.email "federico.bot@gmail.com"
-          git config --global user.name "Akr0n"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
           git tag ${{ env.VERSION_TAG }}
           git push origin ${{ env.VERSION_TAG }}
 

@@ -50,7 +50,7 @@ services:
       - sqlserver_data:/var/opt/mssql
       - ./init-scripts/sqlserver-init.sql:/docker-entrypoint-initdb.d/01-init.sql
     healthcheck:
-      test: ["CMD", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "SqlServer@123", "-Q", "SELECT 1"]
+      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "SqlServer@123", "-C", "-Q", "SELECT 1"]
       interval: 10s
       timeout: 5s
       retries: 5
