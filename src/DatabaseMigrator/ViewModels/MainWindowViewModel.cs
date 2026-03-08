@@ -184,6 +184,8 @@ public class MainWindowViewModel : ViewModelBase
             .Do(canStart => CanStartMigration = canStart);
 
         ConnectDatabasesCommand = ReactiveCommand.CreateFromTask(ConnectDatabasesAsync);
+        ConnectDatabasesCommand.ThrownExceptions.Subscribe(ex =>
+            LoggerService.LogError("ConnectDatabasesCommand unhandled exception", ex));
         StartMigrationCommand = ReactiveCommand.CreateFromTask(StartMigrationAsync, 
             this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating, 
                 (connected, migrating) => connected && !migrating));
@@ -204,14 +206,16 @@ public class MainWindowViewModel : ViewModelBase
         }
         
         var subscription = table.WhenAnyValue(t => t.IsSelected)
-            .ObserveOn(RxApp.MainThreadScheduler)
-            .Subscribe(_ => 
+            .Subscribe(_ =>
             {
-                // Skip updates during refresh/bulk changes to prevent re-entrancy and collection races
-                if (!_isRefreshingTables && !_suppressTableSelectionUpdates)
+                // Must run on Avalonia UI thread - RxApp.MainThreadScheduler may not be configured for Avalonia
+                Dispatcher.UIThread.Post(() =>
                 {
-                    RecomputeTableViews();
-                }
+                    if (!_isRefreshingTables && !_suppressTableSelectionUpdates)
+                    {
+                        RecomputeTableViews();
+                    }
+                });
             });
         _tableSubscriptions[table] = subscription;
     }
@@ -351,12 +355,18 @@ public class MainWindowViewModel : ViewModelBase
             });
 
             ProgressPercentage = 100;
-            IsConnected = true;
             ErrorMessage = "";
             StatusMessage = $"✅ Connesso! Trovate {tables.Count} tabelle";
+
+            // Defer IsConnected to next UI frame to avoid potential crash when tab becomes visible
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                IsConnected = true;
+            });
         }
         catch (Exception ex)
         {
+            LoggerService.LogError("ConnectDatabasesAsync failed", ex);
             ErrorMessage = $"❌ Errore: {ex.Message}";
             StatusMessage = "Errore durante la connessione";
             IsConnected = false;
@@ -410,20 +420,13 @@ public class MainWindowViewModel : ViewModelBase
                 StatusMessage = "Creazione database target...";
                 var usedPassword = await _databaseService.CreateDatabaseAsync(TargetConnection.ConnectionInfo);
                 
-                // Se è Oracle, aggiorna sia username che password per la nuova connessione
-                if (TargetConnection.ConnectionInfo.DatabaseType == DatabaseType.Oracle)
+                // Se è Oracle, aggiorna credenziali SOLO quando abbiamo creato un nuovo user (usedPassword non null)
+                if (TargetConnection.ConnectionInfo.DatabaseType == DatabaseType.Oracle && !string.IsNullOrWhiteSpace(usedPassword))
                 {
-                    // Lo username diventa lo schema/database che abbiamo creato
                     var schemaName = TargetConnection.ConnectionInfo.Database;
                     TargetConnection.ConnectionInfo.Username = schemaName;
-                    
-                    // Aggiorna anche la password se è stata escappata
-                    if (!string.IsNullOrWhiteSpace(usedPassword))
-                    {
-                        TargetConnection.ConnectionInfo.Password = usedPassword;
-                    }
-                    
-                    Log($"[StartMigrationAsync] Updated target connection for Oracle: Username={schemaName}, Password updated");
+                    TargetConnection.ConnectionInfo.Password = usedPassword;
+                    Log($"[StartMigrationAsync] Updated target connection for Oracle: Username={schemaName}");
                 }
                 
                 Log($"[StartMigrationAsync] Database created successfully");
@@ -711,6 +714,7 @@ public class MainWindowViewModel : ViewModelBase
         {
             Log("[RefreshTablesAsync] Starting tables refresh...");
             _isRefreshingTables = true;
+            IsMigrating = true;  // Disable Refresh/Start buttons on UI thread before any await
             
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -763,6 +767,7 @@ public class MainWindowViewModel : ViewModelBase
         finally
         {
             _isRefreshingTables = false;
+            await Dispatcher.UIThread.InvokeAsync(() => IsMigrating = false);
         }
     }
 

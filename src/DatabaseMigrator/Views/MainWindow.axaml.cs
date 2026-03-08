@@ -65,8 +65,11 @@ namespace DatabaseMigrator.Views;
                 _vm.TableSearchFilter = "";
             };
             
-            // Wire up refresh button using ViewModel command
-            RefreshSourceButton.Command = _vm.RefreshTablesCommand;
+            // Wire up refresh button with Click (avoids ReactiveCommand threading crash)
+            RefreshSourceButton.IsEnabled = _vm.IsConnected && !_vm.IsMigrating;
+            RefreshSourceButton.Click += OnRefreshClicked;
+            _vm.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating, (c, m) => c && !m)
+                .Subscribe(canRefresh => Avalonia.Threading.Dispatcher.UIThread.Post(() => RefreshSourceButton.IsEnabled = canRefresh));
             
             // Bind statistics
             SourceCountTextBlock.Bind(TextBlock.TextProperty, new Binding("Tables.Count") { Source = _vm, StringFormat = "📋 Tabelle sorgente: {0}" });
@@ -251,6 +254,24 @@ namespace DatabaseMigrator.Views;
         else
         {
             Log("[DeselectAllButton_Click] ViewModel is null!");
+        }
+    }
+
+    private async void OnRefreshClicked(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null || !_vm.IsConnected || _vm.IsMigrating) return;
+        try
+        {
+            await _vm.RefreshTablesAsync();
+        }
+        catch (Exception ex)
+        {
+            Log($"[OnRefreshClicked] Error: {ex}");
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _vm.ErrorMessage = $"❌ Errore: {ex.Message}";
+                _vm.StatusMessage = "Errore durante il ricaricamento";
+            });
         }
     }
 
