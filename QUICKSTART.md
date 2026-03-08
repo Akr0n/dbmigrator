@@ -45,7 +45,7 @@ Password:           postgres123
 Database Type:      Oracle
 Server:             localhost
 Port:               1521
-Database:           XE
+Database:           FREEPDB1
 Username:           system
 Password:           oracle123
 ```

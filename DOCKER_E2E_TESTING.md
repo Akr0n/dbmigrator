@@ -1,6 +1,6 @@
 # E2E Testing Setup with Docker
 
-This setup starts 3 Docker containers with PostgreSQL, Oracle, and SQL Server, preloaded with test data for testing the DatabaseMigrator application.
+This setup starts 3 Docker containers with PostgreSQL, Oracle (gvenzl/oracle-free), and SQL Server, preloaded with test data for testing the DatabaseMigrator application.
 
 ## Prerequisites
 
@@ -48,7 +48,7 @@ The script executes xUnit tests marked with `Category=E2E` and sets `DBMIGRATOR_
 ### Oracle
 - **Host**: `localhost`
 - **Port**: `1521`
-- **Database/SID**: `XE`
+- **Database/Service**: `FREEPDB1`
 - **User**: `migration_test`
 - **Password**: `oraclepass123`
 
@@ -93,7 +93,7 @@ Expected: 4 users + 5 products + 8 orders + 4 audit_log = 21 records migrated
 ### Test 2: PostgreSQL → Oracle
 ```
 Source: PostgreSQL (localhost:5432, migration_test.*)
-Target: Oracle (localhost:1521, XE)
+Target: Oracle (localhost:1521, FREEPDB1)
 
 Expected: Same 21 records + type mapping (BYTEA → BLOB)
 ```
@@ -179,7 +179,7 @@ docker ps
 # Test connectivity:
 # PostgreSQL: psql -h localhost -U pguser -d testdb
 # SQL Server: sqlcmd -S localhost -U sa -P SqlServer@123
-# Oracle: sqlplus migration_test/oraclepass123@localhost:1521/XE
+# Oracle: sqlplus migration_test/oraclepass123@localhost:1521/FREEPDB1
 ```
 
 ### Port Already in Use
@@ -207,7 +207,7 @@ docker exec dbmigrator-sqlserver /opt/mssql-tools/bin/sqlcmd -S localhost -U sa 
 
 ### Oracle
 ```bash
-docker exec dbmigrator-oracle sqlplus -S migration_test/oraclepass123@localhost:1521/XE <<< "SELECT COUNT(*) FROM users;"
+docker exec dbmigrator-oracle sqlplus -S migration_test/oraclepass123@localhost:1521/FREEPDB1 <<< "SELECT COUNT(*) FROM users;"
 ```
 
 ## Test Data Details

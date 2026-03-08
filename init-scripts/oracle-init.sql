@@ -1,14 +1,14 @@
--- Oracle Database Initialization Script
+-- Oracle Database Free Initialization Script
 -- Create test user, schema and tables with BLOB for binary data
+-- Uses FREEPDB1 pluggable database (oracle-free default)
 
--- Create test user
-ALTER SESSION SET "_ORACLE_SCRIPT"=true;
+ALTER SESSION SET CONTAINER=FREEPDB1;
 
-CREATE USER migration_test IDENTIFIED BY "oraclepass123";
-GRANT CONNECT, RESOURCE, UNLIMITED TABLESPACE TO migration_test;
+CREATE USER migration_test IDENTIFIED BY "oraclepass123" QUOTA UNLIMITED ON USERS;
+GRANT CONNECT, RESOURCE TO migration_test;
 
 -- Connect as migration_test user (commands will run in their schema)
-CONNECT migration_test/oraclepass123;
+CONNECT migration_test/oraclepass123@//localhost/FREEPDB1;
 
 -- Users Table
 CREATE TABLE users (

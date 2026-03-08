@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui" 
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:models="clr-namespace:DatabaseMigrator.Core.Models;assembly=DatabaseMigrator.Core"
         x:Class="DatabaseMigrator.Views.MainWindow"
         Title="Database Migrator" 
         Width="1400" 
@@ -163,7 +164,7 @@
                                 <TextBlock Grid.Row="0" x:Name="SourceTablesHeader" Text="Sorgente: Seleziona Tabelle" FontWeight="Bold" Foreground="#64b5f6" FontSize="13" Margin="0,0,0,10"/>
                                 <ListBox Grid.Row="1" x:Name="SourceTablesListBox" Background="#1a1a1a" BorderBrush="#0d47a1" BorderThickness="1" Foreground="White">
                                     <ListBox.ItemTemplate>
-                                        <DataTemplate>
+                                        <DataTemplate DataType="{x:Type models:TableInfo}">
                                             <StackPanel Orientation="Horizontal" Spacing="10" Margin="5,8">
                                                 <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center"/>
                                                 <TextBlock Text="{Binding Schema}" Foreground="#64b5f6" FontSize="12"/>
@@ -183,7 +184,7 @@
                                 <TextBlock Grid.Row="0" Text="Destinazione: Schema da Creare" FontWeight="Bold" Foreground="#64b5f6" FontSize="13" Margin="0,0,0,10"/>
                                 <ListBox Grid.Row="1" x:Name="TargetTablesListBox" Background="#1a1a1a" BorderBrush="#0d47a1" BorderThickness="1" Foreground="White">
                                     <ListBox.ItemTemplate>
-                                        <DataTemplate>
+                                        <DataTemplate DataType="{x:Type models:TableInfo}">
                                             <StackPanel Orientation="Horizontal" Spacing="10" Margin="5,8">
                                                 <TextBlock Text="{Binding Schema}" Foreground="#64b5f6" FontSize="12"/>
                                                 <TextBlock Text="." Foreground="#a5d6a7" FontSize="12"/>
@@ -243,7 +244,7 @@
                             <TextBlock Text="{Binding TotalRowsToMigrate, StringFormat='Righe totali: {0}'}" Foreground="#e0e0e0" FontSize="12"/>
                             <ListBox Background="#2a2a2a" Foreground="#e0e0e0" MaxHeight="120" ItemsSource="{Binding SelectedTablesForMigration}">
                                 <ListBox.ItemTemplate>
-                                    <DataTemplate>
+                                    <DataTemplate DataType="{x:Type models:TableInfo}">
                                         <StackPanel Orientation="Horizontal" Spacing="10">
                                             <TextBlock IsVisible="{Binding IsSelected}" Text="✓" Foreground="#43a047" FontSize="11"/>
                                             <TextBlock Text="{Binding Schema}" Foreground="#64b5f6" FontSize="11"/>

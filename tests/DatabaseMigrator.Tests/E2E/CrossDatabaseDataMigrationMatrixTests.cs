@@ -82,7 +82,7 @@ public class CrossDatabaseDataMigrationMatrixTests
                 DatabaseType = DatabaseType.Oracle,
                 Server = "localhost",
                 Port = 1521,
-                Database = "XE",
+                Database = "FREEPDB1",
                 Username = "migration_test",
                 Password = "oraclepass123"
             },

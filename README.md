@@ -103,7 +103,7 @@ Select one of three migration modes:
 - **Type**: Oracle
 - **Server**: TNS name or IP
 - **Port**: 1521 (default)
-- **Database**: SID or service name (e.g., XE, ORCL)
+- **Database**: SID or service name (e.g., FREEPDB1, XE, ORCL)
 - **Username**: Oracle user
 - **Password**: Account password
 

@@ -217,7 +217,7 @@ public class DatabaseService : IDatabaseService
     {
         try
         {
-            // Crea una connessione senza specificare il database
+            // Crea una connessione (per Oracle usa il service name dall'utente: FREEPDB1, XE, ecc.)
             var connInfo = new ConnectionInfo
             {
                 DatabaseType = connectionInfo.DatabaseType,
@@ -226,7 +226,9 @@ public class DatabaseService : IDatabaseService
                 Username = connectionInfo.Username,
                 Password = connectionInfo.Password,
                 TrustServerCertificate = connectionInfo.TrustServerCertificate,
-                Database = connectionInfo.DatabaseType == DatabaseType.Oracle ? "XE" : "master"
+                Database = connectionInfo.DatabaseType == DatabaseType.Oracle 
+                    ? (string.IsNullOrWhiteSpace(connectionInfo.Database) ? "FREEPDB1" : connectionInfo.Database) 
+                    : "master"
             };
 
             using (var connection = CreateConnection(connInfo))
@@ -234,11 +236,12 @@ public class DatabaseService : IDatabaseService
                 await ExecuteWithRetryAsync(() => connection.OpenAsync(), "DatabaseExistsAsync.Open");
 
                 // Use parameterized queries to prevent SQL injection
+                // For Oracle: use all_users (accessible to normal users), check Username = schema to migrate to
                 string query = connectionInfo.DatabaseType switch
                 {
                     DatabaseType.SqlServer => "SELECT 1 FROM sys.databases WHERE name = @dbName",
                     DatabaseType.PostgreSQL => "SELECT 1 FROM pg_database WHERE datname = @dbName",
-                    DatabaseType.Oracle => "SELECT 1 FROM dba_users WHERE username = :dbName",
+                    DatabaseType.Oracle => "SELECT 1 FROM all_users WHERE username = :userName",
                     _ => throw new NotSupportedException()
                 };
 
@@ -249,9 +252,9 @@ public class DatabaseService : IDatabaseService
                     
                     // Add parameter to prevent SQL injection
                     var param = command.CreateParameter();
-                    param.ParameterName = connectionInfo.DatabaseType == DatabaseType.Oracle ? ":dbName" : "@dbName";
+                    param.ParameterName = connectionInfo.DatabaseType == DatabaseType.Oracle ? ":userName" : "@dbName";
                     param.Value = connectionInfo.DatabaseType == DatabaseType.Oracle 
-                        ? connectionInfo.Database.ToUpperInvariant() 
+                        ? connectionInfo.Username.ToUpperInvariant() 
                         : connectionInfo.Database;
                     command.Parameters.Add(param);
                     
@@ -280,7 +283,7 @@ public class DatabaseService : IDatabaseService
                 return null;
             }
 
-            // Crea connessione al sistema database (senza database specifico)
+            // Crea connessione al sistema database (per Oracle usa il service name dall'utente)
             var systemConnInfo = new ConnectionInfo
             {
                 DatabaseType = connectionInfo.DatabaseType,
@@ -291,7 +294,7 @@ public class DatabaseService : IDatabaseService
                 TrustServerCertificate = connectionInfo.TrustServerCertificate,
                 Database = connectionInfo.DatabaseType switch
                 {
-                    DatabaseType.Oracle => "XE",  // SID di sistema per Oracle
+                    DatabaseType.Oracle => string.IsNullOrWhiteSpace(connectionInfo.Database) ? "FREEPDB1" : connectionInfo.Database,
                     DatabaseType.PostgreSQL => "postgres",  // PostgreSQL system database
                     _ => "master"  // SQL Server system database
                 }
