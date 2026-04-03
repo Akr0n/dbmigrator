@@ -30,6 +30,7 @@ namespace DatabaseMigrator.Views;
         {
             _vm = new MainWindowViewModel();
             DataContext = _vm;
+            _vm.TruncateFailedPromptHandlerAsync = ShowTruncateFailedDialogAsync;
             
             // Bind ViewModel properties to UI
             StatusTextBlock.Bind(TextBlock.TextProperty, new Binding("StatusMessage") { Source = _vm });
@@ -224,6 +225,91 @@ namespace DatabaseMigrator.Views;
         
         await dialog.ShowDialog(this);
         
+        return userConfirmed;
+    }
+
+    private async Task<bool> ShowTruncateFailedDialogAsync(TruncateFailureContext ctx)
+    {
+        if (ctx is null)
+            return false;
+
+        var error = ctx.ErrorMessage ?? "";
+        if (error.Length > 400)
+            error = error.Substring(0, 400) + "...";
+
+        var dialog = new Window
+        {
+            Title = "⚠️ TRUNCATE fallito",
+            Width = 520,
+            Height = 280,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false,
+            ShowInTaskbar = false
+        };
+
+        var stackPanel = new StackPanel
+        {
+            Margin = new Thickness(20),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Spacing = 15
+        };
+
+        var messageText = new TextBlock
+        {
+            Text = $"Impossibile eseguire TRUNCATE su {ctx.Schema}.{ctx.TableName}.\n\n" +
+                   $"Errore: {error}\n\n" +
+                   "Vuoi continuare inserendo comunque i dati?",
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            FontSize = 14
+        };
+
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing = 10,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center
+        };
+
+        bool userConfirmed = false;
+
+        var continueButton = new Button
+        {
+            Content = "Continua",
+            Width = 140,
+            Padding = new Thickness(10, 5),
+            Background = Avalonia.Media.Brushes.DodgerBlue,
+            Foreground = Avalonia.Media.Brushes.White,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center
+        };
+
+        var cancelButton = new Button
+        {
+            Content = "Annulla",
+            Width = 140,
+            Padding = new Thickness(10, 5),
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center
+        };
+
+        continueButton.Click += (s, e) =>
+        {
+            userConfirmed = true;
+            dialog.Close();
+        };
+
+        cancelButton.Click += (s, e) =>
+        {
+            dialog.Close();
+        };
+
+        buttonPanel.Children.Add(continueButton);
+        buttonPanel.Children.Add(cancelButton);
+
+        stackPanel.Children.Add(messageText);
+        stackPanel.Children.Add(buttonPanel);
+
+        dialog.Content = stackPanel;
+
+        await dialog.ShowDialog(this);
         return userConfirmed;
     }
     

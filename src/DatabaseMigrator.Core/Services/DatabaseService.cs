@@ -24,6 +24,12 @@ public class DatabaseService : IDatabaseService
 
     private static void Log(string message) => LoggerService.Log(message);
 
+    /// <summary>
+    /// Optional handler invoked when TRUNCATE TABLE fails during data migration.
+    /// Returns true to continue inserting, false to abort the migration.
+    /// </summary>
+    public Func<TruncateFailureContext, Task<bool>>? TruncateFailedHandlerAsync { get; set; }
+
     public DatabaseService()
     {
         var options = RuntimeOptionsProvider.Current.Database;
@@ -553,7 +559,22 @@ public class DatabaseService : IDatabaseService
                 catch (Exception ex)
                 {
                     Log($"[MigrateTableAsync] Warning: Could not truncate table: {ex.Message}");
-                    // Se TRUNCATE fallisce, continuiamo comunque (potrebbe essere una tabella vuota)
+
+                    var handler = TruncateFailedHandlerAsync;
+                    if (handler != null)
+                    {
+                        var ctx = new TruncateFailureContext(table.Schema, table.TableName, ex.Message);
+                        bool shouldContinue = await handler(ctx);
+
+                        if (!shouldContinue)
+                        {
+                            throw new InvalidOperationException(
+                                $"TRUNCATE fallito per {table.Schema}.{table.TableName} e migrazione annullata dall'utente.",
+                                ex);
+                        }
+                    }
+
+                    // Default behavior (no handler): keep previous semantics and continue.
                 }
 
                 // Leggi i dati dalla sorgente in batch
@@ -630,7 +651,7 @@ public class DatabaseService : IDatabaseService
                                         foreach (var cleanQuery in queries.Select(q => q.Trim()).Where(q => !string.IsNullOrEmpty(q)))
                                         {
                                             targetCommand.CommandText = cleanQuery;
-                                            var rowsAffected = await ExecuteWithRetryAsync(() => targetCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.OracleInsert");
+                                            var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
                                             rowsInserted += rowsAffected;
                                         }
 
@@ -640,7 +661,7 @@ public class DatabaseService : IDatabaseService
                                     {
                                         // For SQL Server and PostgreSQL: execute the batch
                                         targetCommand.CommandText = insertQuery;
-                                        var rowsAffected = await ExecuteWithRetryAsync(() => targetCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.BatchInsert");
+                                        var rowsAffected = await targetCommand.ExecuteNonQueryAsync();
                                         Log($"[MigrateTableAsync] Batch INSERT executed, rows affected: {rowsAffected}");
                                     }
                                 }

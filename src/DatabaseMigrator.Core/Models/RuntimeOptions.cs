@@ -64,9 +64,26 @@ public static class RuntimeOptionsProvider
                     Merge(current, parsed);
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Keep defaults if config parsing fails.
+                // Keep defaults if config parsing fails, but write a minimal breadcrumb on disk
+                // to make troubleshooting possible without relying on LoggerService (which depends
+                // on RuntimeOptionsProvider itself).
+                try
+                {
+                    var logDirectory = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "DatabaseMigrator");
+                    Directory.CreateDirectory(logDirectory);
+
+                    var logPath = Path.Combine(logDirectory, "config_parse_error.log");
+                    var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - Failed to parse {path}: {ex.GetType().Name}: {ex.Message}{Environment.NewLine}";
+                    File.AppendAllText(logPath, line);
+                }
+                catch
+                {
+                    // Ignore logging errors.
+                }
             }
         }
 
