@@ -14,6 +14,32 @@ using DatabaseMigrator.Core.Models;
 
 namespace DatabaseMigrator.Core.Services;
 
+public sealed class SchemaMigrationResult
+{
+    public IReadOnlyList<ConstraintAddedInfo> ConstraintsAdded { get; }
+
+    public SchemaMigrationResult(IReadOnlyList<ConstraintAddedInfo> constraintsAdded)
+    {
+        ConstraintsAdded = constraintsAdded;
+    }
+}
+
+public sealed class ConstraintAddedInfo
+{
+    public string Schema { get; }
+    public string TableName { get; }
+    public string ConstraintName { get; }
+    public string ConstraintType { get; } // e.g. "PRIMARY KEY" or "UNIQUE"
+
+    public ConstraintAddedInfo(string schema, string tableName, string constraintName, string constraintType)
+    {
+        Schema = schema;
+        TableName = tableName;
+        ConstraintName = constraintName;
+        ConstraintType = constraintType;
+    }
+}
+
 /// <summary>
 /// Service for schema migration (DDL) between different database types.
 /// Handles cross-database data type mapping.
@@ -88,12 +114,62 @@ public class SchemaMigrationService
     }
 
     /// <summary>
+    /// Drops a PK/UNIQUE constraint from the target database.
+    /// Used to rollback schema changes when data migration fails.
+    /// </summary>
+    public async Task<bool> DropConstraintAsync(
+        ConnectionInfo connectionInfo,
+        string schema,
+        string tableName,
+        string constraintName,
+        string constraintType)
+    {
+        try
+        {
+            using (var connection = CreateConnection(connectionInfo))
+            {
+                await connection.OpenAsync();
+
+                string tableRef = FormatTableNameForTarget(connectionInfo.DatabaseType, schema, tableName);
+
+                string dropQuery = connectionInfo.DatabaseType switch
+                {
+                    DatabaseType.SqlServer =>
+                        $"ALTER TABLE {tableRef} DROP CONSTRAINT [{EscapeSqlServerIdentifier(constraintName)}]",
+                    DatabaseType.PostgreSQL =>
+                        $"ALTER TABLE {tableRef} DROP CONSTRAINT \"{EscapePostgresIdentifier(constraintName)}\"",
+                    DatabaseType.Oracle =>
+                        $"ALTER TABLE {tableRef} DROP CONSTRAINT \"{EscapeOracleIdentifier(constraintName)}\"",
+                    _ => throw new NotSupportedException()
+                };
+
+                using (var command = connection.CreateCommand())
+                {
+                    command.CommandText = dropQuery;
+                    command.CommandTimeout = _commandTimeoutSeconds;
+                    await command.ExecuteNonQueryAsync();
+                }
+
+                Log($"[DropConstraintAsync] Dropped constraint '{constraintName}' ({constraintType}) on {schema}.{tableName}");
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"[DropConstraintAsync] Error dropping constraint '{constraintName}' ({constraintType}) on {schema}.{tableName}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Creates the schema in the target database based on the source database.
     /// Handles automatic data type mapping.
     /// </summary>
-    public async Task MigrateSchemaAsync(ConnectionInfo source, ConnectionInfo target, 
+    public async Task<SchemaMigrationResult> MigrateSchemaAsync(ConnectionInfo source, ConnectionInfo target, 
         List<TableInfo> tablesToMigrate)
     {
+        var constraintsAdded = new List<ConstraintAddedInfo>();
+
         using (var sourceConn = CreateConnection(source))
         using (var targetConn = CreateConnection(target))
         {
@@ -127,7 +203,7 @@ public class SchemaMigrationService
                         Log($"[SchemaMigration] Building CREATE TABLE statement for target...");
                         string createTableDdl = BuildCreateTableStatement(target.DatabaseType, 
                             table.Schema, table.TableName, columns);
-                        Log($"[SchemaMigration] DDL:\n{createTableDdl}");
+                        Log($"[SchemaMigration] CREATE TABLE DDL built for {table.Schema}.{table.TableName} (len={createTableDdl.Length})");
 
                         // Execute the DDL in the target
                         Log($"[SchemaMigration] Executing DDL on target...");
@@ -148,26 +224,63 @@ public class SchemaMigrationService
                     
                     foreach (var constraint in constraintsWithColumns)
                     {
-                        string constraintDdl = BuildConstraintDdl(constraint, target.DatabaseType, 
-                            table.Schema, table.TableName);
-                        
-                        if (!string.IsNullOrEmpty(constraintDdl))
+                        if (string.IsNullOrWhiteSpace(constraint.ConstraintName) ||
+                            string.IsNullOrWhiteSpace(constraint.ConstraintType))
                         {
-                            using (var command = targetConn.CreateCommand())
+                            // Skip malformed constraint metadata from the source.
+                            continue;
+                        }
+
+                        string constraintTypeUpper = constraint.ConstraintType.ToUpperInvariant();
+                        string generatedConstraintName = GenerateConstraintName(
+                            constraint.ConstraintName,
+                            target.DatabaseType,
+                            table.Schema,
+                            table.TableName,
+                            constraintTypeUpper);
+
+                        bool constraintExists = await ConstraintExistsAsync(
+                            targetConn,
+                            target.DatabaseType,
+                            table.Schema,
+                            table.TableName,
+                            generatedConstraintName,
+                            constraintTypeUpper);
+
+                        if (constraintExists)
+                        {
+                            Log($"[SchemaMigration] Constraint already exists, skipping: {generatedConstraintName} ({constraintTypeUpper}) on {table.Schema}.{table.TableName}");
+                            continue;
+                        }
+
+                        string constraintDdl = BuildConstraintDdl(constraint, target.DatabaseType, table.Schema, table.TableName);
+                        if (string.IsNullOrEmpty(constraintDdl))
+                        {
+                            continue;
+                        }
+
+                        using (var command = targetConn.CreateCommand())
+                        {
+                            command.CommandText = constraintDdl;
+                            command.CommandTimeout = _commandTimeoutSeconds;
+
+                            try
                             {
-                                command.CommandText = constraintDdl;
-                                command.CommandTimeout = _commandTimeoutSeconds;
-                                try
-                                {
-                                    Log($"[SchemaMigration] Executing constraint: {constraintDdl}");
-                                    await command.ExecuteNonQueryAsync();
-                                    Log($"[SchemaMigration] Constraint {constraint.ConstraintName} ({constraint.ConstraintType}) created successfully");
-                                }
-                                catch (Exception ex)
-                                {
-                                    Log($"[SchemaMigration] Constraint failed (ignored): {ex.Message}");
-                                    // Some constraints may fail, continue
-                                }
+                                await command.ExecuteNonQueryAsync();
+                                Log($"[SchemaMigration] Constraint created: {generatedConstraintName} ({constraintTypeUpper}) on {table.Schema}.{table.TableName}");
+                                constraintsAdded.Add(new ConstraintAddedInfo(
+                                    table.Schema,
+                                    table.TableName,
+                                    generatedConstraintName,
+                                    constraintTypeUpper));
+                            }
+                            catch (Exception ex)
+                            {
+                                // Fail fast: if we couldn't create a constraint that didn't exist,
+                                // we should abort the schema migration to avoid silent partial schemas.
+                                throw new InvalidOperationException(
+                                    $"Failed to create constraint '{generatedConstraintName}' ({constraintTypeUpper}) on {table.Schema}.{table.TableName}. {ex.Message}",
+                                    ex);
                             }
                         }
                     }
@@ -181,6 +294,8 @@ public class SchemaMigrationService
                 }
             }
         }
+
+        return new SchemaMigrationResult(constraintsAdded);
     }
 
     private async Task<bool> TableExistsAsync(DbConnection connection, DatabaseType dbType, 
@@ -196,9 +311,9 @@ public class SchemaMigrationService
                 DatabaseType.PostgreSQL => 
                     "SELECT 1 FROM information_schema.tables WHERE table_schema = @schema AND table_name = @tableName",
                 DatabaseType.Oracle => 
-                    // For Oracle: search only by table name (independent of source schema)
-                    // because migrated tables go into the connected user's schema
-                    "SELECT 1 FROM all_tables WHERE table_name = :tableName",
+                    // For Oracle: the target "schema" is the connected user, so use USER_TABLES.
+                    // This avoids false positives from other owners visible in ALL_TABLES.
+                    "SELECT 1 FROM user_tables WHERE table_name = :tableName",
                 _ => throw new NotSupportedException()
             };
 
@@ -229,6 +344,125 @@ public class SchemaMigrationService
         {
             Log($"[TableExistsAsync] Error checking if table exists: {ex.Message}");
             return false;
+        }
+    }
+
+    private async Task<bool> ConstraintExistsAsync(
+        DbConnection connection,
+        DatabaseType dbType,
+        string schema,
+        string tableName,
+        string constraintName,
+        string constraintTypeUpper)
+    {
+        // constraintTypeUpper is expected to be "PRIMARY KEY" or "UNIQUE"
+        if (string.IsNullOrWhiteSpace(constraintName) || string.IsNullOrWhiteSpace(constraintTypeUpper))
+            return false;
+
+        string query = dbType switch
+        {
+            DatabaseType.Oracle => @"
+                SELECT 1
+                FROM user_constraints
+                WHERE constraint_name = :constraintName
+                  AND table_name = UPPER(:tableName)
+                  AND constraint_type = :constraintType",
+            DatabaseType.SqlServer => @"
+                SELECT 1
+                FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+                WHERE TABLE_SCHEMA = @schema
+                  AND TABLE_NAME = @tableName
+                  AND CONSTRAINT_NAME = @constraintName
+                  AND CONSTRAINT_TYPE = @constraintType",
+            DatabaseType.PostgreSQL => @"
+                SELECT 1
+                FROM information_schema.table_constraints
+                WHERE table_schema = @schema
+                  AND table_name = @tableName
+                  AND constraint_name = @constraintName
+                  AND constraint_type = @constraintType",
+            _ => throw new NotSupportedException()
+        };
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = query;
+            command.CommandTimeout = _commandTimeoutSeconds;
+
+            if (dbType == DatabaseType.Oracle)
+            {
+                string oracleConstraintType = constraintTypeUpper switch
+                {
+                    "PRIMARY KEY" => "P",
+                    "UNIQUE" => "U",
+                    _ => ""
+                };
+
+                if (string.IsNullOrWhiteSpace(oracleConstraintType))
+                    return false;
+
+                var cnParam = command.CreateParameter();
+                cnParam.ParameterName = ":constraintName";
+                cnParam.Value = EscapeOracleIdentifier(constraintName);
+                command.Parameters.Add(cnParam);
+
+                var tnParam = command.CreateParameter();
+                tnParam.ParameterName = ":tableName";
+                tnParam.Value = tableName.ToUpperInvariant();
+                command.Parameters.Add(tnParam);
+
+                var ctParam = command.CreateParameter();
+                ctParam.ParameterName = ":constraintType";
+                ctParam.Value = oracleConstraintType;
+                command.Parameters.Add(ctParam);
+            }
+            else if (dbType == DatabaseType.PostgreSQL)
+            {
+                var schemaParam = command.CreateParameter();
+                schemaParam.ParameterName = "@schema";
+                schemaParam.Value = schema.ToLowerInvariant();
+                command.Parameters.Add(schemaParam);
+
+                var tableParam = command.CreateParameter();
+                tableParam.ParameterName = "@tableName";
+                tableParam.Value = tableName.ToLowerInvariant();
+                command.Parameters.Add(tableParam);
+
+                var constraintNameParam = command.CreateParameter();
+                constraintNameParam.ParameterName = "@constraintName";
+                constraintNameParam.Value = constraintName.ToLowerInvariant();
+                command.Parameters.Add(constraintNameParam);
+
+                var constraintTypeParam = command.CreateParameter();
+                constraintTypeParam.ParameterName = "@constraintType";
+                constraintTypeParam.Value = constraintTypeUpper;
+                command.Parameters.Add(constraintTypeParam);
+            }
+            else
+            {
+                var schemaParam = command.CreateParameter();
+                schemaParam.ParameterName = "@schema";
+                schemaParam.Value = schema;
+                command.Parameters.Add(schemaParam);
+
+                var tableParam = command.CreateParameter();
+                tableParam.ParameterName = "@tableName";
+                tableParam.Value = tableName;
+                command.Parameters.Add(tableParam);
+
+                var constraintNameParam = command.CreateParameter();
+                constraintNameParam.ParameterName = "@constraintName";
+                constraintNameParam.Value = constraintName;
+                command.Parameters.Add(constraintNameParam);
+
+                var constraintTypeParam = command.CreateParameter();
+                constraintTypeParam.ParameterName = "@constraintType";
+                constraintTypeParam.Value = constraintTypeUpper;
+                command.Parameters.Add(constraintTypeParam);
+            }
+
+            var result = await command.ExecuteScalarAsync();
+            return result != null;
         }
     }
 
@@ -992,7 +1226,7 @@ public class SchemaMigrationService
             _ => throw new NotSupportedException()
         };
 
-        Log($"[BuildConstraintDdl] Generated DDL for {constraintType}: {ddl}");
+        Log($"[BuildConstraintDdl] Generated {constraintType} DDL for {tableName} (len={ddl.Length})");
         return ddl;
     }
 

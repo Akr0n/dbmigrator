@@ -167,6 +167,18 @@ public class MainWindowViewModel : ViewModelBase
         _databaseService = databaseService ?? new DatabaseService();
         _schemaMigrationService = schemaMigrationService ?? new SchemaMigrationService();
 
+        // Wire TRUNCATE-failed prompt handler into the concrete database service (if applicable).
+        if (_databaseService is DatabaseService dbService)
+        {
+            dbService.TruncateFailedHandlerAsync = async ctx =>
+            {
+                // Ensure dialog callbacks run on UI thread.
+                return await Dispatcher.UIThread.InvokeAsync(() =>
+                    TruncateFailedPromptHandlerAsync?.Invoke(ctx) ?? Task.FromResult(true)
+                );
+            };
+        }
+
         SourceConnection = new ConnectionViewModel();
         TargetConnection = new ConnectionViewModel();
         
@@ -195,6 +207,12 @@ public class MainWindowViewModel : ViewModelBase
             this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating,
                 (connected, migrating) => connected && !migrating));
     }
+
+    /// <summary>
+    /// Optional handler that shows a UI confirmation when TRUNCATE TABLE fails.
+    /// Returns true to continue inserting, false to abort migration.
+    /// </summary>
+    public Func<TruncateFailureContext, Task<bool>>? TruncateFailedPromptHandlerAsync { get; set; }
 
     private void SubscribeToTableChanges(TableInfo table)
     {
@@ -382,6 +400,7 @@ public class MainWindowViewModel : ViewModelBase
     {
         // Track tables created during schema migration for rollback on data migration failure
         var tablesCreatedDuringMigration = new List<TableInfo>();
+        var constraintsAddedDuringMigration = new List<ConstraintAddedInfo>();
         
         try
         {
@@ -457,10 +476,11 @@ public class MainWindowViewModel : ViewModelBase
             {
                 Log($"[StartMigrationAsync] Starting schema migration (Mode: {SelectedMigrationMode})...");
                 StatusMessage = "Migrazione schema...";
-                await _schemaMigrationService.MigrateSchemaAsync(
+                var schemaResult = await _schemaMigrationService.MigrateSchemaAsync(
                     SourceConnection.ConnectionInfo,
                     TargetConnection.ConnectionInfo,
                     tablesToMigrate);
+                constraintsAddedDuringMigration = schemaResult.ConstraintsAdded.ToList();
                 Log($"[StartMigrationAsync] Schema migration completed");
             }
             else
@@ -571,6 +591,7 @@ public class MainWindowViewModel : ViewModelBase
 
             // Clear the list since migration was successful
             tablesCreatedDuringMigration.Clear();
+            constraintsAddedDuringMigration.Clear();
 
             Log($"[StartMigrationAsync] Migration completed successfully!");
             ErrorMessage = "";
@@ -589,28 +610,53 @@ public class MainWindowViewModel : ViewModelBase
             Log($"[StartMigrationAsync] ERROR: {ex.Message}");
             Log($"[StartMigrationAsync] Stack trace: {ex.StackTrace}");
             
-            // Rollback: drop tables that were created during this migration if using SchemaAndData mode
+            // Rollback: drop constraints and/or tables that were created during schema migration if data migration fails.
+            // In SchemaAndData mode the schema service can add PK/UNIQUE constraints even when the table already existed.
             if (SelectedMigrationMode == MigrationMode.SchemaAndData && 
-                tablesCreatedDuringMigration.Count > 0 &&
+                (tablesCreatedDuringMigration.Count > 0 || constraintsAddedDuringMigration.Count > 0) &&
                 TargetConnection?.ConnectionInfo != null)
             {
-                Log($"[StartMigrationAsync] Rolling back {tablesCreatedDuringMigration.Count} created tables...");
-                StatusMessage = "Rolling back created tables...";
-                
-                foreach (var table in tablesCreatedDuringMigration)
+                Log($"[StartMigrationAsync] Rolling back schema changes (tablesCreated={tablesCreatedDuringMigration.Count}, constraintsAdded={constraintsAddedDuringMigration.Count})...");
+                StatusMessage = "Rolling back schema changes...";
+
+                // 1) Drop constraints that were added during the schema migration.
+                foreach (var c in constraintsAddedDuringMigration.AsEnumerable().Reverse())
                 {
                     try
                     {
-                        await _schemaMigrationService.DropTableAsync(
-                            TargetConnection.ConnectionInfo, table.Schema, table.TableName);
-                        Log($"[StartMigrationAsync] Rolled back table {table.Schema}.{table.TableName}");
+                        await _schemaMigrationService.DropConstraintAsync(
+                            TargetConnection.ConnectionInfo,
+                            c.Schema,
+                            c.TableName,
+                            c.ConstraintName,
+                            c.ConstraintType);
                     }
-                    catch (Exception rollbackEx)
+                    catch (Exception rollbackConstraintEx)
                     {
-                        Log($"[StartMigrationAsync] Failed to rollback table {table.Schema}.{table.TableName}: {rollbackEx.Message}");
+                        Log($"[StartMigrationAsync] Failed to rollback constraint {c.ConstraintName} on {c.Schema}.{c.TableName}: {rollbackConstraintEx.Message}");
                     }
                 }
-                
+
+                // 2) Drop tables created during schema migration (if any).
+                if (tablesCreatedDuringMigration.Count > 0)
+                {
+                    StatusMessage = "Rolling back created tables...";
+
+                    foreach (var table in tablesCreatedDuringMigration)
+                    {
+                        try
+                        {
+                            await _schemaMigrationService.DropTableAsync(
+                                TargetConnection.ConnectionInfo, table.Schema, table.TableName);
+                            Log($"[StartMigrationAsync] Rolled back table {table.Schema}.{table.TableName}");
+                        }
+                        catch (Exception rollbackEx)
+                        {
+                            Log($"[StartMigrationAsync] Failed to rollback table {table.Schema}.{table.TableName}: {rollbackEx.Message}");
+                        }
+                    }
+                }
+
                 Log($"[StartMigrationAsync] Rollback completed");
             }
             

@@ -67,3 +67,6 @@ mssql_data/
 .idea/
 *.sublime-workspace
 *.sublime-project
+
+#MCP servers
+.serena/
