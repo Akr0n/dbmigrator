@@ -259,8 +259,9 @@ public class DatabaseService : IDatabaseService
                     // Add parameter to prevent SQL injection
                     var param = command.CreateParameter();
                     param.ParameterName = connectionInfo.DatabaseType == DatabaseType.Oracle ? ":userName" : "@dbName";
-                    param.Value = connectionInfo.DatabaseType == DatabaseType.Oracle 
-                        ? connectionInfo.Username.ToUpperInvariant() 
+                    // For Oracle the "database" is a schema/user — check the target Database name, not the login Username.
+                    param.Value = connectionInfo.DatabaseType == DatabaseType.Oracle
+                        ? connectionInfo.Database.ToUpperInvariant()
                         : connectionInfo.Database;
                     command.Parameters.Add(param);
                     
@@ -269,8 +270,11 @@ public class DatabaseService : IDatabaseService
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
+            // Log so the operator can distinguish "DB not found" from a real connection/auth error.
+            // We return false so the caller can attempt creation, but the log makes diagnosis possible.
+            Log($"[DatabaseExistsAsync] Could not verify existence of '{connectionInfo.Database}' on {connectionInfo.Server}: {ex.GetType().Name}: {ex.Message}");
             return false;
         }
     }
@@ -471,7 +475,7 @@ public class DatabaseService : IDatabaseService
 
             string query = connectionInfo.DatabaseType switch
             {
-                DatabaseType.SqlServer => GetSqlServerTableSchema(schema, tableName),
+                DatabaseType.SqlServer => GetSqlServerTableSchema(),
                 DatabaseType.PostgreSQL => GetPostgresTableSchema(schema, tableName),
                 DatabaseType.Oracle => GetOracleTableSchema(schema, tableName),
                 _ => throw new NotSupportedException()
@@ -481,6 +485,20 @@ public class DatabaseService : IDatabaseService
             {
                 command.CommandText = query;
                 command.CommandTimeout = _commandTimeoutSeconds;
+
+                // SQL Server query references @schema and @table as parameters.
+                if (connectionInfo.DatabaseType == DatabaseType.SqlServer)
+                {
+                    var schemaParam = command.CreateParameter();
+                    schemaParam.ParameterName = "@schema";
+                    schemaParam.Value = schema;
+                    command.Parameters.Add(schemaParam);
+
+                    var tableParam = command.CreateParameter();
+                    tableParam.ParameterName = "@table";
+                    tableParam.Value = tableName;
+                    command.Parameters.Add(tableParam);
+                }
 
                 var script = new System.Text.StringBuilder();
                 script.AppendLine($"-- Tabella: {schema}.{tableName}");
@@ -542,7 +560,9 @@ public class DatabaseService : IDatabaseService
                     {
                         DatabaseType.SqlServer => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
                         DatabaseType.PostgreSQL => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)} CASCADE",
-                        DatabaseType.Oracle => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
+                        // Oracle: TRUNCATE is DDL and causes an implicit COMMIT, making rollback impossible.
+                        // Use DELETE FROM instead: it is DML and participates in the manual COMMIT/ROLLBACK flow.
+                        DatabaseType.Oracle => $"DELETE FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
                         _ => throw new NotSupportedException()
                     };
                     
@@ -675,8 +695,7 @@ public class DatabaseService : IDatabaseService
 
                                     if (batchRows.Count >= _batchSize)
                                     {
-                                        var insertRows = batchRows.ToList();
-                                        await InsertBatchAsync(insertRows);
+                                        await InsertBatchAsync(batchRows);
                                         migratedRows += batchRows.Count;
                                         int percentage = totalRows > 0
                                             ? (int)((migratedRows / (double)totalRows) * 100)
@@ -688,8 +707,7 @@ public class DatabaseService : IDatabaseService
 
                                 if (batchRows.Count > 0)
                                 {
-                                    var insertRows = batchRows.ToList();
-                                    await InsertBatchAsync(insertRows);
+                                    await InsertBatchAsync(batchRows);
                                     migratedRows += batchRows.Count;
                                     int percentage = totalRows > 0
                                         ? (int)((migratedRows / (double)totalRows) * 100)
@@ -816,41 +834,33 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
-    /// Gets row counts for all tables using a single connection and controlled parallelism.
-    /// This avoids creating thousands of connections for databases with many tables.
+    /// Gets row counts for all tables reusing a single open connection to avoid per-table
+    /// connection overhead (previously opened N connections serially behind a semaphore).
     /// </summary>
     private async Task GetAllTableRowCountsAsync(ConnectionInfo connectionInfo, List<TableInfo> tables)
     {
         if (tables.Count == 0)
             return;
 
-        // Use a semaphore to limit concurrent operations (prevents overwhelming the database)
-        using var semaphore = new SemaphoreSlim(_rowCountMaxConcurrency);
+        using var connection = CreateConnection(connectionInfo);
+        await ExecuteWithRetryAsync(() => connection.OpenAsync(), "GetAllTableRowCountsAsync.Open");
 
-        // Process tables in parallel with controlled concurrency and assign results after all tasks complete
-        var tasks = tables.Select(async table =>
+        foreach (var table in tables)
         {
-            await semaphore.WaitAsync();
             try
             {
-                var rowCount = await GetTableRowCountAsync(connectionInfo, table.Schema, table.TableName);
-                return (table, rowCount);
+                string query = $"SELECT COUNT(*) FROM {FormatTableName(connectionInfo.DatabaseType, table.Schema, table.TableName)}";
+                using var command = connection.CreateCommand();
+                command.CommandText = query;
+                command.CommandTimeout = _commandTimeoutSeconds;
+                var result = await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "GetAllTableRowCountsAsync.Count");
+                table.RowCount = Convert.ToInt64(result ?? 0);
             }
             catch (Exception ex)
             {
                 Log($"Error getting row count for {table.Schema}.{table.TableName}: {ex.Message}");
-                return (table, rowCount: 0L);
+                table.RowCount = 0;
             }
-            finally
-            {
-                semaphore.Release();
-            }
-        });
-
-        var results = await Task.WhenAll(tasks);
-        foreach (var (table, rowCount) in results)
-        {
-            table.RowCount = rowCount;
         }
     }
 
@@ -886,7 +896,8 @@ public class DatabaseService : IDatabaseService
         {
             DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
             DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema.ToLowerInvariant())}\".\"{EscapePostgresIdentifier(tableName.ToLowerInvariant())}\"",
-            DatabaseType.Oracle => tableName.ToUpperInvariant(),  // Oracle: uppercase, no schema prefix
+            // Oracle: include schema prefix so queries work regardless of which user is connected.
+            DatabaseType.Oracle => $"{schema.ToUpperInvariant()}.{tableName.ToUpperInvariant()}",
             _ => throw new NotSupportedException()
         };
     }
@@ -982,8 +993,16 @@ public class DatabaseService : IDatabaseService
             {
                 DatabaseType.SqlServer => $"'{dt:yyyy-MM-dd HH:mm:ss.fff}'",
                 DatabaseType.PostgreSQL => $"'{dt:yyyy-MM-dd HH:mm:ss.fff}'",
-                DatabaseType.Oracle => $"TO_DATE('{dt:yyyy-MM-dd HH:mm:ss}','YYYY-MM-DD HH24:MI:SS')",
+                // Use TO_TIMESTAMP to preserve sub-second precision; TO_DATE truncates to seconds.
+                DatabaseType.Oracle => $"TO_TIMESTAMP('{dt:yyyy-MM-dd HH:mm:ss.fff}','YYYY-MM-DD HH24:MI:SS.FF3')",
                 _ => $"'{dt:yyyy-MM-dd HH:mm:ss}'"
+            },
+            DateTimeOffset dto => dbType switch
+            {
+                DatabaseType.SqlServer => $"'{dto:yyyy-MM-dd HH:mm:ss.fff zzz}'",
+                DatabaseType.PostgreSQL => $"'{dto:yyyy-MM-dd HH:mm:ss.fff zzz}'",
+                DatabaseType.Oracle => $"TO_TIMESTAMP_TZ('{dto:yyyy-MM-dd HH:mm:ss.fff zzz}','YYYY-MM-DD HH24:MI:SS.FF3 TZH:TZM')",
+                _ => $"'{dto:yyyy-MM-dd HH:mm:ss zzz}'"
             },
             double d => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
             float f => f.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -1208,11 +1227,12 @@ public class DatabaseService : IDatabaseService
         
         return result;
     }
-    private string GetSqlServerTableSchema(string schema, string tableName)
+    // Schema and table are passed as @schema / @table SQL parameters from GetTableSchemaAsync.
+    private string GetSqlServerTableSchema()
     {
-        return $@"
-            SELECT 'CREATE TABLE [' + @schema + '].[' + @table + '] (' + 
-                   STUFF((SELECT ', [' + c.COLUMN_NAME + '] ' + 
+        return @"
+            SELECT 'CREATE TABLE [' + @schema + '].[' + @table + '] (' +
+                   STUFF((SELECT ', [' + c.COLUMN_NAME + '] ' +
                           CASE WHEN c.DATA_TYPE IN ('int', 'bigint', 'smallint', 'tinyint', 'decimal', 'float', 'real') THEN c.DATA_TYPE
                                WHEN c.DATA_TYPE = 'varchar' THEN 'varchar(' + CAST(c.CHARACTER_MAXIMUM_LENGTH AS varchar) + ')'
                                WHEN c.DATA_TYPE = 'nvarchar' THEN 'nvarchar(' + CAST(c.CHARACTER_MAXIMUM_LENGTH AS varchar) + ')'
@@ -1224,7 +1244,7 @@ public class DatabaseService : IDatabaseService
                         FROM INFORMATION_SCHEMA.COLUMNS c
                         WHERE c.TABLE_SCHEMA = @schema AND c.TABLE_NAME = @table
                         ORDER BY c.ORDINAL_POSITION
-                        FOR XML PATH(''), TYPE).value('.', 'varchar(max)'), 1, 2, '') + 
+                        FOR XML PATH(''), TYPE).value('.', 'varchar(max)'), 1, 2, '') +
                    ')'
             FROM INFORMATION_SCHEMA.TABLES t
             WHERE t.TABLE_SCHEMA = @schema AND t.TABLE_NAME = @table";
@@ -1232,10 +1252,12 @@ public class DatabaseService : IDatabaseService
 
     private string GetPostgresTableSchema(string schema, string tableName)
     {
+        // Fix: use EscapeSqlString consistently for all embedded literals, and correct the
+        // spacing/quoting around the dot separator (was: '"" ."" tableName ""').
         return $@"
-            SELECT 'CREATE TABLE ""{EscapeSqlString(schema)}"" ."" {EscapeSqlString(tableName)} "" (' || 
+            SELECT 'CREATE TABLE ""{EscapeSqlString(schema)}"".""{EscapeSqlString(tableName)}"" (' ||
                    COALESCE(array_to_string(ARRAY_AGG(
-                       '""' || a.attname || '"" ' || 
+                       '""' || a.attname || '"" ' ||
                        pg_catalog.format_type(a.atttypid, a.atttypmod) ||
                        CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE '' END
                        ORDER BY a.attnum
@@ -1250,9 +1272,11 @@ public class DatabaseService : IDatabaseService
 
     private string GetOracleTableSchema(string schema, string tableName)
     {
+        // Fix: use EscapeSqlString for the schema/tableName inside the DDL string literal too,
+        // not just in the WHERE clause (previously schema and tableName were interpolated raw).
         return $@"
-            SELECT 'CREATE TABLE {schema}.{tableName} (' ||
-                   LISTAGG(COLUMN_NAME || ' ' || DATA_TYPE || 
+            SELECT 'CREATE TABLE {EscapeSqlString(schema)}.{EscapeSqlString(tableName)} (' ||
+                   LISTAGG(COLUMN_NAME || ' ' || DATA_TYPE ||
                            CASE WHEN NULLABLE = 'N' THEN ' NOT NULL' ELSE '' END, ', ')
                    WITHIN GROUP (ORDER BY COLUMN_ID) || ')'
             FROM ALL_TAB_COLUMNS

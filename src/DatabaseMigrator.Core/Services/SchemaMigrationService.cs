@@ -47,12 +47,64 @@ public sealed class ConstraintAddedInfo
 public class SchemaMigrationService
 {
     private readonly int _commandTimeoutSeconds;
+    private readonly int _retryCount;
+    private readonly int _retryInitialDelayMilliseconds;
+    private readonly bool _enableTransientRetries;
 
     private static void Log(string message) => LoggerService.Log(message);
 
     public SchemaMigrationService()
     {
-        _commandTimeoutSeconds = RuntimeOptionsProvider.Current.Database.CommandTimeoutSeconds;
+        var opts = RuntimeOptionsProvider.Current.Database;
+        _commandTimeoutSeconds = opts.CommandTimeoutSeconds;
+        _retryCount = opts.RetryCount;
+        _retryInitialDelayMilliseconds = opts.RetryInitialDelayMilliseconds;
+        _enableTransientRetries = opts.EnableTransientRetries;
+    }
+
+    private async Task ExecuteWithRetryAsync(Func<Task> operation, string operationName)
+    {
+        await ExecuteWithRetryAsync(async () => { await operation(); return true; }, operationName);
+    }
+
+    private async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> operation, string operationName)
+    {
+        int attempt = 0;
+        while (true)
+        {
+            try
+            {
+                return await operation();
+            }
+            catch (Exception ex) when (_enableTransientRetries && attempt < _retryCount && IsTransient(ex))
+            {
+                attempt++;
+                int delayMs = (int)Math.Min(_retryInitialDelayMilliseconds * Math.Pow(2, attempt - 1), 10_000);
+                Log($"[{operationName}] Transient error (attempt {attempt}/{_retryCount}), retrying in {delayMs}ms: {ex.Message}");
+                await Task.Delay(delayMs);
+            }
+        }
+    }
+
+    private static bool IsTransient(Exception ex)
+    {
+        if (ex is System.IO.IOException or TimeoutException)
+            return true;
+
+        if (ex is Microsoft.Data.SqlClient.SqlException sqlEx)
+            return sqlEx.Number is -2 or 53 or 1205 or 4060 or 10928 or 10929 or 10053 or 10054 or 10060;
+
+        if (ex is Npgsql.NpgsqlException npgsqlEx && npgsqlEx.IsTransient)
+            return true;
+
+        if (ex is Oracle.ManagedDataAccess.Client.OracleException oracleEx)
+            return oracleEx.Number is 1013 or 1033 or 1034 or 1089 or 1090 or 1092 or 12514 or 12537 or 12541;
+
+        if (ex.InnerException != null)
+            return IsTransient(ex.InnerException);
+
+        string msg = ex.Message.ToLowerInvariant();
+        return msg.Contains("timeout") || msg.Contains("deadlock") || msg.Contains("network");
     }
 
     /// <summary>
@@ -66,7 +118,7 @@ public class SchemaMigrationService
     {
         using (var connection = CreateConnection(connectionInfo))
         {
-            await connection.OpenAsync();
+            await ExecuteWithRetryAsync(() => connection.OpenAsync(), "CheckTableExistsAsync.Open");
             return await TableExistsAsync(connection, connectionInfo.DatabaseType, schema, tableName);
         }
     }
@@ -85,13 +137,14 @@ public class SchemaMigrationService
         {
             using (var connection = CreateConnection(connectionInfo))
             {
-                await connection.OpenAsync();
-                
+                await ExecuteWithRetryAsync(() => connection.OpenAsync(), "DropTableAsync.Open");
+
                 string dropQuery = connectionInfo.DatabaseType switch
                 {
                     DatabaseType.SqlServer => $"DROP TABLE [{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
                     DatabaseType.PostgreSQL => $"DROP TABLE \"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(tableName)}\"",
-                    DatabaseType.Oracle => $"DROP TABLE {tableName.ToUpperInvariant()}",
+                    // Oracle: include schema prefix (was missing) so the correct table is dropped.
+                    DatabaseType.Oracle => $"DROP TABLE {schema.ToUpperInvariant()}.{tableName.ToUpperInvariant()}",
                     _ => throw new NotSupportedException()
                 };
 
@@ -99,9 +152,9 @@ public class SchemaMigrationService
                 {
                     command.CommandText = dropQuery;
                     command.CommandTimeout = _commandTimeoutSeconds;
-                    await command.ExecuteNonQueryAsync();
+                    await ExecuteWithRetryAsync(() => command.ExecuteNonQueryAsync(), "DropTableAsync.Execute");
                 }
-                
+
                 Log($"[DropTableAsync] Successfully dropped table {schema}.{tableName}");
                 return true;
             }
@@ -128,7 +181,7 @@ public class SchemaMigrationService
         {
             using (var connection = CreateConnection(connectionInfo))
             {
-                await connection.OpenAsync();
+                await ExecuteWithRetryAsync(() => connection.OpenAsync(), "DropConstraintAsync.Open");
 
                 string tableRef = FormatTableNameForTarget(connectionInfo.DatabaseType, schema, tableName);
 
@@ -147,7 +200,7 @@ public class SchemaMigrationService
                 {
                     command.CommandText = dropQuery;
                     command.CommandTimeout = _commandTimeoutSeconds;
-                    await command.ExecuteNonQueryAsync();
+                    await ExecuteWithRetryAsync(() => command.ExecuteNonQueryAsync(), "DropConstraintAsync.Execute");
                 }
 
                 Log($"[DropConstraintAsync] Dropped constraint '{constraintName}' ({constraintType}) on {schema}.{tableName}");
@@ -1253,7 +1306,8 @@ public class SchemaMigrationService
         {
             DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
             DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema.ToLowerInvariant())}\".\"{EscapePostgresIdentifier(tableName.ToLowerInvariant())}\"",
-            DatabaseType.Oracle => tableName.ToUpperInvariant(),  // Oracle: just table name, uppercase
+            // Oracle: include schema prefix so queries work regardless of which user is connected.
+            DatabaseType.Oracle => $"{schema.ToUpperInvariant()}.{tableName.ToUpperInvariant()}",
             _ => throw new NotSupportedException()
         };
     }
@@ -1332,7 +1386,8 @@ public class SchemaMigrationService
         {
             DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
             DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema.ToLowerInvariant())}\".\"{EscapePostgresIdentifier(tableName.ToLowerInvariant())}\"",
-            DatabaseType.Oracle => tableName.ToUpperInvariant(),  // Oracle: uppercase, no schema prefix
+            // Oracle: include schema prefix so queries work regardless of which user is connected.
+            DatabaseType.Oracle => $"{schema.ToUpperInvariant()}.{tableName.ToUpperInvariant()}",
             _ => throw new NotSupportedException()
         };
     }

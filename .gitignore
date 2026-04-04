@@ -70,3 +70,6 @@ mssql_data/
 
 #MCP servers
 .serena/
+
+#IA
+.claude/
