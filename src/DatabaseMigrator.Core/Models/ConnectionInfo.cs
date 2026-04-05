@@ -94,13 +94,10 @@ public class ConnectionInfo
     {
         if (string.IsNullOrEmpty(password))
             return password;
-        
-        // Oracle: enclose password in quotes if it contains special characters
-        if (password.Contains(";") || password.Contains("=") || password.Contains("(") || password.Contains(")"))
-        {
-            // Escape internal quotes by doubling them
-            return $"\"{password.Replace("\"", "\"\"")}\"";
-        }
-        return password;
+
+        // Always wrap in double quotes to safely handle any special characters
+        // (@, !, #, $, ;, =, spaces, etc.) that could break Oracle connection string parsing.
+        // Escape any internal double-quote characters by doubling them.
+        return $"\"{password.Replace("\"", "\"\"")}\"";
     }
 }

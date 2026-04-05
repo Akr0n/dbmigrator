@@ -13,16 +13,10 @@ using DatabaseMigrator.Core.Models;
 
 namespace DatabaseMigrator.Core.Services;
 
-public class DatabaseService : IDatabaseService
+public class DatabaseService : DatabaseServiceBase, IDatabaseService
 {
     private readonly int _batchSize;
-    private readonly int _commandTimeoutSeconds;
     private readonly int _rowCountMaxConcurrency;
-    private readonly int _retryCount;
-    private readonly int _retryInitialDelayMilliseconds;
-    private readonly bool _enableTransientRetries;
-
-    private static void Log(string message) => LoggerService.Log(message);
 
     /// <summary>
     /// Optional handler invoked when TRUNCATE TABLE fails during data migration.
@@ -34,85 +28,12 @@ public class DatabaseService : IDatabaseService
     {
         var options = RuntimeOptionsProvider.Current.Database;
         _batchSize = options.BatchSize;
-        _commandTimeoutSeconds = options.CommandTimeoutSeconds;
         _rowCountMaxConcurrency = options.RowCountMaxConcurrency;
-        _retryCount = options.RetryCount;
-        _retryInitialDelayMilliseconds = options.RetryInitialDelayMilliseconds;
-        _enableTransientRetries = options.EnableTransientRetries;
     }
 
     private static string DescribeConnection(ConnectionInfo connectionInfo)
     {
         return $"{connectionInfo.DatabaseType} {connectionInfo.Server}:{connectionInfo.Port}/{connectionInfo.Database}";
-    }
-
-    private async Task ExecuteWithRetryAsync(Func<Task> operation, string operationName)
-    {
-        await ExecuteWithRetryAsync(async () =>
-        {
-            await operation();
-            return true;
-        }, operationName);
-    }
-
-    private async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> operation, string operationName)
-    {
-        int attempt = 0;
-
-        while (true)
-        {
-            try
-            {
-                return await operation();
-            }
-            catch (Exception ex) when (_enableTransientRetries && attempt < _retryCount && IsTransient(ex))
-            {
-                attempt++;
-                int delayMs = (int)Math.Min(_retryInitialDelayMilliseconds * Math.Pow(2, attempt - 1), 10_000);
-                Log($"[{operationName}] Transient error detected (attempt {attempt}/{_retryCount}). Retrying in {delayMs}ms. Error: {ex.Message}");
-                await Task.Delay(delayMs);
-            }
-        }
-    }
-
-    private static bool IsTransient(Exception ex)
-    {
-        if (ex is TimeoutException)
-        {
-            return true;
-        }
-
-        if (ex is SqlException sqlEx)
-        {
-            return sqlEx.Number is -2 or 53 or 1205 or 4060 or 10928 or 10929 or 10053 or 10054 or 10060;
-        }
-
-        if (ex is NpgsqlException npgsqlEx && npgsqlEx.IsTransient)
-        {
-            return true;
-        }
-
-        if (ex is OracleException oracleEx)
-        {
-            return oracleEx.Number is 1013 or 1033 or 1034 or 1089 or 1090 or 1092 or 12514 or 12537 or 12541;
-        }
-
-        if (ex is IOException)
-        {
-            return true;
-        }
-
-        if (ex.InnerException != null)
-        {
-            return IsTransient(ex.InnerException);
-        }
-
-        string message = ex.Message.ToLowerInvariant();
-        return message.Contains("timeout") ||
-               message.Contains("deadlock") ||
-               message.Contains("network") ||
-               message.Contains("transport-level error") ||
-               message.Contains("connection is broken");
     }
 
     public async Task<bool> TestConnectionAsync(ConnectionInfo connectionInfo)
@@ -167,7 +88,18 @@ public class DatabaseService : IDatabaseService
                     DatabaseType.Oracle => @"
                         SELECT owner, table_name
                         FROM all_tables
-                        WHERE owner NOT IN ('SYS', 'SYSTEM', 'XDB', 'APEX_030200')
+                        WHERE owner NOT IN (
+                            'SYS', 'SYSTEM', 'XDB', 'ANONYMOUS',
+                            'APEX_030200', 'APEX_040200', 'APEX_050000', 'APEX_050100',
+                            'APEX_180200', 'APEX_190100', 'APEX_200100', 'APEX_210100', 'APEX_220100',
+                            'AUDSYS', 'CTXSYS', 'DBSNMP', 'DVSYS', 'DVF',
+                            'FLOWS_FILES', 'GSMADMIN_INTERNAL', 'GSMCATUSER', 'GSMROOTUSER',
+                            'LBACSYS', 'MDDATA', 'MDSYS', 'OJVMSYS', 'OLAPSYS',
+                            'ORACLE_OCM', 'ORDDATA', 'ORDPLUGINS', 'ORDSYS', 'OUTLN',
+                            'OWBSYS', 'OWBSYS_AUDIT', 'REMOTE_SCHEDULER_AGENT',
+                            'SI_INFORMTN_SCHEMA', 'SYS$UMF', 'SYSBACKUP', 'SYSDG',
+                            'SYSKM', 'SYSRAC', 'WMSYS', 'XS$NULL'
+                        )
                         ORDER BY owner, table_name",
                     
                     _ => throw new NotSupportedException($"Database type {connectionInfo.DatabaseType} not supported")
@@ -321,7 +253,7 @@ public class DatabaseService : IDatabaseService
                 if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                 {
                     // Escape the database/user name to prevent SQL injection
-                    safeDbName = EscapeOracleIdentifier(connectionInfo.Database);
+                    safeDbName = ValidateOracleUserIdentifier(connectionInfo.Database);
                     // Per Oracle, valida e escapa correttamente la password
                     var oraclePassword = PrepareOraclePassword(connectionInfo.Password);
                     usedPassword = oraclePassword;  // Salva la password originale per la connessione
@@ -353,7 +285,7 @@ public class DatabaseService : IDatabaseService
                     // For Oracle, after creating the user, assign necessary privileges
                     if (connectionInfo.DatabaseType == DatabaseType.Oracle)
                     {
-                        // safeDbName was already validated and sanitized above using EscapeOracleIdentifier
+                        // safeDbName was already validated and sanitized above using ValidateOracleUserIdentifier
                         // Log for security audit trail
                         Log($"Oracle: Granting privileges to validated user identifier: {safeDbName}");
                         
@@ -890,18 +822,6 @@ public class DatabaseService : IDatabaseService
         }
     }
 
-    private string FormatTableName(DatabaseType dbType, string schema, string tableName)
-    {
-        return dbType switch
-        {
-            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
-            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema.ToLowerInvariant())}\".\"{EscapePostgresIdentifier(tableName.ToLowerInvariant())}\"",
-            // Oracle: include schema prefix so queries work regardless of which user is connected.
-            DatabaseType.Oracle => $"{schema.ToUpperInvariant()}.{tableName.ToUpperInvariant()}",
-            _ => throw new NotSupportedException()
-        };
-    }
-
     private string BuildInsertQuery(
         DatabaseType dbType,
         string schema,
@@ -1007,6 +927,12 @@ public class DatabaseService : IDatabaseService
             double d => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
             float f => f.ToString(System.Globalization.CultureInfo.InvariantCulture),
             decimal d => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            Guid g => dbType == DatabaseType.Oracle
+                ? $"hextoraw('{g.ToString("N").ToUpperInvariant()}')"
+                : $"'{g:D}'",
+            TimeSpan ts => dbType == DatabaseType.Oracle
+                ? $"TO_TIMESTAMP('1970-01-01 {(int)ts.TotalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}', 'YYYY-MM-DD HH24:MI:SS.FF3')"
+                : $"'{(int)ts.TotalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}'",
             _ => value.ToString() ?? "NULL"
         };
     }
@@ -1017,36 +943,12 @@ public class DatabaseService : IDatabaseService
     }
 
     /// <summary>
-    /// Escapes Oracle identifiers by validating and sanitizing them.
-    /// Oracle identifiers have specific rules about allowed characters.
+    /// Validates and sanitizes an Oracle identifier intended for unquoted use in user/schema DDL
+    /// (CREATE USER, GRANT). Throws if the identifier contains characters not allowed by Oracle.
     /// </summary>
-    private string EscapeOracleIdentifier(string identifier)
+    private string ValidateOracleUserIdentifier(string identifier)
     {
         return ValidateAndSanitizeOracleIdentifier(identifier, "database/user");
-    }
-
-    /// <summary>
-    /// Escapes a SQL Server identifier by replacing ] with ]]
-    /// </summary>
-    private string EscapeSqlServerIdentifier(string identifier)
-    {
-        if (string.IsNullOrEmpty(identifier))
-            return identifier;
-        
-        // SQL Server uses square brackets, escape ] by doubling it
-        return identifier.Replace("]", "]]");
-    }
-
-    /// <summary>
-    /// Escapes a PostgreSQL identifier by replacing " with ""
-    /// </summary>
-    private string EscapePostgresIdentifier(string identifier)
-    {
-        if (string.IsNullOrEmpty(identifier))
-            return identifier;
-        
-        // PostgreSQL uses double quotes, escape " by doubling it
-        return identifier.Replace("\"", "\"\"");
     }
 
     /// <summary>
@@ -1284,11 +1186,4 @@ public class DatabaseService : IDatabaseService
             AND TABLE_NAME = '{EscapeSqlString(tableName)}'";
     }
 
-    private DbConnection CreateConnection(ConnectionInfo connectionInfo) => connectionInfo.DatabaseType switch
-    {
-        DatabaseType.SqlServer => new SqlConnection(connectionInfo.GetConnectionString()),
-        DatabaseType.PostgreSQL => new NpgsqlConnection(connectionInfo.GetConnectionString()),
-        DatabaseType.Oracle => new OracleConnection(connectionInfo.GetConnectionString()),
-        _ => throw new NotSupportedException()
-    };
 }

@@ -44,68 +44,8 @@ public sealed class ConstraintAddedInfo
 /// Service for schema migration (DDL) between different database types.
 /// Handles cross-database data type mapping.
 /// </summary>
-public class SchemaMigrationService
+public class SchemaMigrationService : DatabaseServiceBase
 {
-    private readonly int _commandTimeoutSeconds;
-    private readonly int _retryCount;
-    private readonly int _retryInitialDelayMilliseconds;
-    private readonly bool _enableTransientRetries;
-
-    private static void Log(string message) => LoggerService.Log(message);
-
-    public SchemaMigrationService()
-    {
-        var opts = RuntimeOptionsProvider.Current.Database;
-        _commandTimeoutSeconds = opts.CommandTimeoutSeconds;
-        _retryCount = opts.RetryCount;
-        _retryInitialDelayMilliseconds = opts.RetryInitialDelayMilliseconds;
-        _enableTransientRetries = opts.EnableTransientRetries;
-    }
-
-    private async Task ExecuteWithRetryAsync(Func<Task> operation, string operationName)
-    {
-        await ExecuteWithRetryAsync(async () => { await operation(); return true; }, operationName);
-    }
-
-    private async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> operation, string operationName)
-    {
-        int attempt = 0;
-        while (true)
-        {
-            try
-            {
-                return await operation();
-            }
-            catch (Exception ex) when (_enableTransientRetries && attempt < _retryCount && IsTransient(ex))
-            {
-                attempt++;
-                int delayMs = (int)Math.Min(_retryInitialDelayMilliseconds * Math.Pow(2, attempt - 1), 10_000);
-                Log($"[{operationName}] Transient error (attempt {attempt}/{_retryCount}), retrying in {delayMs}ms: {ex.Message}");
-                await Task.Delay(delayMs);
-            }
-        }
-    }
-
-    private static bool IsTransient(Exception ex)
-    {
-        if (ex is System.IO.IOException or TimeoutException)
-            return true;
-
-        if (ex is Microsoft.Data.SqlClient.SqlException sqlEx)
-            return sqlEx.Number is -2 or 53 or 1205 or 4060 or 10928 or 10929 or 10053 or 10054 or 10060;
-
-        if (ex is Npgsql.NpgsqlException npgsqlEx && npgsqlEx.IsTransient)
-            return true;
-
-        if (ex is Oracle.ManagedDataAccess.Client.OracleException oracleEx)
-            return oracleEx.Number is 1013 or 1033 or 1034 or 1089 or 1090 or 1092 or 12514 or 12537 or 12541;
-
-        if (ex.InnerException != null)
-            return IsTransient(ex.InnerException);
-
-        string msg = ex.Message.ToLowerInvariant();
-        return msg.Contains("timeout") || msg.Contains("deadlock") || msg.Contains("network");
-    }
 
     /// <summary>
     /// Checks if a table exists in the specified database.
@@ -183,7 +123,7 @@ public class SchemaMigrationService
             {
                 await ExecuteWithRetryAsync(() => connection.OpenAsync(), "DropConstraintAsync.Open");
 
-                string tableRef = FormatTableNameForTarget(connectionInfo.DatabaseType, schema, tableName);
+                string tableRef = FormatTableName(connectionInfo.DatabaseType, schema, tableName);
 
                 string dropQuery = connectionInfo.DatabaseType switch
                 {
@@ -226,8 +166,8 @@ public class SchemaMigrationService
         using (var sourceConn = CreateConnection(source))
         using (var targetConn = CreateConnection(target))
         {
-            await sourceConn.OpenAsync();
-            await targetConn.OpenAsync();
+            await ExecuteWithRetryAsync(() => sourceConn.OpenAsync(), "MigrateSchemaAsync.SourceOpen");
+            await ExecuteWithRetryAsync(() => targetConn.OpenAsync(), "MigrateSchemaAsync.TargetOpen");
 
             foreach (var table in tablesToMigrate)
             {
@@ -264,7 +204,7 @@ public class SchemaMigrationService
                         {
                             command.CommandText = createTableDdl;
                             command.CommandTimeout = _commandTimeoutSeconds;
-                            await command.ExecuteNonQueryAsync();
+                            await ExecuteWithRetryAsync(() => command.ExecuteNonQueryAsync(), "MigrateSchemaAsync.CreateTable");
                         }
                         Log($"[SchemaMigration] Table created successfully");
                     }
@@ -319,7 +259,7 @@ public class SchemaMigrationService
 
                             try
                             {
-                                await command.ExecuteNonQueryAsync();
+                                await ExecuteWithRetryAsync(() => command.ExecuteNonQueryAsync(), "MigrateSchemaAsync.AddConstraint");
                                 Log($"[SchemaMigration] Constraint created: {generatedConstraintName} ({constraintTypeUpper}) on {table.Schema}.{table.TableName}");
                                 constraintsAdded.Add(new ConstraintAddedInfo(
                                     table.Schema,
@@ -547,7 +487,7 @@ public class SchemaMigrationService
             tableParam.Value = dbType == DatabaseType.Oracle ? tableName.ToUpperInvariant() : tableName;
             command.Parameters.Add(tableParam);
 
-            using (var reader = await command.ExecuteReaderAsync())
+            using (var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "GetTableColumnsAsync.ExecuteReader"))
             {
                 while (await reader.ReadAsync())
                 {
@@ -621,7 +561,7 @@ public class SchemaMigrationService
             tableParam.Value = tableName;
             command.Parameters.Add(tableParam);
 
-            using (var reader = await command.ExecuteReaderAsync())
+            using (var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "GetTableConstraintsWithColumnsAsync.ExecuteReader"))
             {
                 while (await reader.ReadAsync())
                 {
@@ -699,46 +639,6 @@ public class SchemaMigrationService
             WHERE c.owner = UPPER(:schema) AND c.table_name = UPPER(:tableName)
             AND c.constraint_type IN ('P', 'U')
             ORDER BY c.constraint_name, cc.position";
-    }
-
-    private async Task<List<string>> GetTableConstraintsAsync(DbConnection connection, 
-        DatabaseType dbType, string schema, string tableName)
-    {
-        var constraints = new List<string>();
-        
-        string query = dbType switch
-        {
-            DatabaseType.SqlServer => GetSqlServerConstraintsQuery(),
-            DatabaseType.PostgreSQL => GetPostgresConstraintsQuery(),
-            DatabaseType.Oracle => GetOracleConstraintsQuery(),
-            _ => throw new NotSupportedException()
-        };
-
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = query;
-            command.CommandTimeout = _commandTimeoutSeconds;
-
-            var schemaParam = command.CreateParameter();
-            schemaParam.ParameterName = dbType == DatabaseType.Oracle ? ":schema" : "@schema";
-            schemaParam.Value = dbType == DatabaseType.Oracle ? schema.ToUpperInvariant() : schema;
-            command.Parameters.Add(schemaParam);
-
-            var tableParam = command.CreateParameter();
-            tableParam.ParameterName = dbType == DatabaseType.Oracle ? ":tableName" : "@tableName";
-            tableParam.Value = dbType == DatabaseType.Oracle ? tableName.ToUpperInvariant() : tableName;
-            command.Parameters.Add(tableParam);
-
-            using (var reader = await command.ExecuteReaderAsync())
-            {
-                while (await reader.ReadAsync())
-                {
-                    constraints.Add(reader[0].ToString() ?? "");
-                }
-            }
-        }
-
-        return constraints;
     }
 
     private string BuildCreateTableStatement(DatabaseType targetDbType, string schema, 
@@ -1258,12 +1158,12 @@ public class SchemaMigrationService
         // Format column names appropriately for each database
         // Oracle uses uppercase identifiers, PostgreSQL uses lowercase
         var formattedColumns = constraint.Columns
-            .Select(col => FormatColumnNameForTarget(targetDbType, col))
+            .Select(col => FormatColumnName(targetDbType, col))
             .ToList();
         string columnList = string.Join(", ", formattedColumns);
 
         // Format table reference for target database
-        string tableRef = FormatTableNameForTarget(targetDbType, schema, tableName);
+        string tableRef = FormatTableName(targetDbType, schema, tableName);
 
         // Generate constraint name (ensuring it's valid for target DB)
         string constraintName = GenerateConstraintName(constraint.ConstraintName, targetDbType, schema, tableName, constraintType);
@@ -1281,35 +1181,6 @@ public class SchemaMigrationService
 
         Log($"[BuildConstraintDdl] Generated {constraintType} DDL for {tableName} (len={ddl.Length})");
         return ddl;
-    }
-
-    /// <summary>
-    /// Formats a column name for the target database with proper quoting and case
-    /// </summary>
-    private string FormatColumnNameForTarget(DatabaseType targetDbType, string columnName)
-    {
-        return targetDbType switch
-        {
-            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(columnName)}]",
-            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(columnName.ToLowerInvariant())}\"",  // PostgreSQL prefers lowercase
-            DatabaseType.Oracle => columnName.ToUpperInvariant(),  // Oracle uses uppercase
-            _ => columnName
-        };
-    }
-
-    /// <summary>
-    /// Formats a table reference for the target database with proper schema handling
-    /// </summary>
-    private string FormatTableNameForTarget(DatabaseType targetDbType, string schema, string tableName)
-    {
-        return targetDbType switch
-        {
-            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
-            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema.ToLowerInvariant())}\".\"{EscapePostgresIdentifier(tableName.ToLowerInvariant())}\"",
-            // Oracle: include schema prefix so queries work regardless of which user is connected.
-            DatabaseType.Oracle => $"{schema.ToUpperInvariant()}.{tableName.ToUpperInvariant()}",
-            _ => throw new NotSupportedException()
-        };
     }
 
     /// <summary>
@@ -1370,37 +1241,6 @@ public class SchemaMigrationService
         }
 
         return baseName;
-    }
-
-    private string TranslateConstraintDdl(string sourceDdl, DatabaseType targetDbType, 
-        DatabaseType sourceDbType, string schema, string tableName)
-    {
-        // This method is kept for backward compatibility but is no longer used
-        // The new BuildConstraintDdl method is used instead
-        return "";
-    }
-
-    private string FormatTableName(DatabaseType dbType, string schema, string tableName)
-    {
-        return dbType switch
-        {
-            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
-            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(schema.ToLowerInvariant())}\".\"{EscapePostgresIdentifier(tableName.ToLowerInvariant())}\"",
-            // Oracle: include schema prefix so queries work regardless of which user is connected.
-            DatabaseType.Oracle => $"{schema.ToUpperInvariant()}.{tableName.ToUpperInvariant()}",
-            _ => throw new NotSupportedException()
-        };
-    }
-
-    private string FormatColumnName(DatabaseType dbType, string columnName)
-    {
-        return dbType switch
-        {
-            DatabaseType.SqlServer => $"[{EscapeSqlServerIdentifier(columnName)}]",
-            DatabaseType.PostgreSQL => $"\"{EscapePostgresIdentifier(columnName.ToLowerInvariant())}\"",  // PostgreSQL: lowercase
-            DatabaseType.Oracle => columnName.ToUpperInvariant(),  // Oracle: uppercase
-            _ => columnName
-        };
     }
 
     private string GetSqlServerColumnsQuery()
@@ -1479,57 +1319,6 @@ public class SchemaMigrationService
             FROM all_constraints
             WHERE owner = :schema AND table_name = :tableName
             AND constraint_type IN ('P', 'U', 'R')";
-    }
-
-    private DbConnection CreateConnection(ConnectionInfo connectionInfo) => connectionInfo.DatabaseType switch
-    {
-        DatabaseType.SqlServer => new SqlConnection(connectionInfo.GetConnectionString()),
-        DatabaseType.PostgreSQL => new NpgsqlConnection(connectionInfo.GetConnectionString()),
-        DatabaseType.Oracle => new OracleConnection(connectionInfo.GetConnectionString()),
-        _ => throw new NotSupportedException()
-    };
-
-    /// <summary>
-    /// Escapes a SQL Server identifier by replacing ] with ]]
-    /// </summary>
-    private string EscapeSqlServerIdentifier(string identifier)
-    {
-        if (string.IsNullOrEmpty(identifier))
-            return identifier;
-        
-        // SQL Server uses square brackets, escape ] by doubling it
-        return identifier.Replace("]", "]]");
-    }
-
-    /// <summary>
-    /// Escapes a PostgreSQL identifier by replacing " with ""
-    /// </summary>
-    private string EscapePostgresIdentifier(string identifier)
-    {
-        // PostgreSQL uses double quotes, escape " by doubling it
-        return EscapeQuotedIdentifier(identifier);
-    }
-
-    /// <summary>
-    /// Escapes an Oracle identifier by replacing " with ""
-    /// </summary>
-    private string EscapeOracleIdentifier(string identifier)
-    {
-        // Oracle uses double quotes for quoted identifiers, escape " by doubling it
-        return EscapeQuotedIdentifier(identifier);
-    }
-
-    /// <summary>
-    /// Escapes a double-quoted identifier by replacing " with ""
-    /// This is used for PostgreSQL and Oracle identifiers
-    /// </summary>
-    private string EscapeQuotedIdentifier(string identifier)
-    {
-        if (string.IsNullOrEmpty(identifier))
-            return identifier;
-        
-        // Escape double quote by doubling it
-        return identifier.Replace("\"", "\"\"");
     }
 
     /// <summary>
