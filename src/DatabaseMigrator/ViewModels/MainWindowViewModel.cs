@@ -374,7 +374,7 @@ public class MainWindowViewModel : ViewModelBase
 
             ProgressPercentage = 100;
             ErrorMessage = "";
-            StatusMessage = $"✅ Connesso! Trovate {tables.Count} tabelle";
+            StatusMessage = $"Connesso! Trovate {tables.Count} tabelle";
 
             // Defer IsConnected to next UI frame to avoid potential crash when tab becomes visible
             await Dispatcher.UIThread.InvokeAsync(() =>
@@ -385,7 +385,7 @@ public class MainWindowViewModel : ViewModelBase
         catch (Exception ex)
         {
             LoggerService.LogError("ConnectDatabasesAsync failed", ex);
-            ErrorMessage = $"❌ Errore: {ex.Message}";
+            ErrorMessage = $"Errore: {ex.Message}";
             StatusMessage = "Errore durante la connessione";
             IsConnected = false;
             ProgressPercentage = 0;
@@ -559,10 +559,20 @@ public class MainWindowViewModel : ViewModelBase
                 {
                     Log($"[StartMigrationAsync] Migrating table {table.Schema}.{table.TableName}...");
                     StatusMessage = $"Migrazione dati: {table.Schema}.{table.TableName}...";
-                    
+
+                    int tableIdx = tablesProcessed;
+                    int basePercent = SelectedMigrationMode == MigrationMode.DataOnly ? 10 : 50;
+                    int totalRange = SelectedMigrationMode == MigrationMode.DataOnly ? 90 : 50;
+                    int tableCount = tablesToMigrate.Count;
+                    string capturedTableName = table.TableName;
+
                     var progress = new Progress<int>(percent =>
                     {
-                        // Progress is calculated based on tablesProcessed
+                        int tableBase = basePercent + tableIdx * totalRange / tableCount;
+                        int tableAlloc = totalRange / tableCount;
+                        int progressPercent = tableBase + percent * tableAlloc / 100;
+                        ProgressPercentage = progressPercent;
+                        ProgressText = $"{progressPercent}% - {capturedTableName}";
                     });
 
                     await _databaseService.MigrateTableAsync(
@@ -573,11 +583,9 @@ public class MainWindowViewModel : ViewModelBase
 
                     Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} migration completed");
                     tablesProcessed++;
-                    int progressPercent = SelectedMigrationMode == MigrationMode.DataOnly
-                        ? 10 + (tablesProcessed * 90 / tablesToMigrate.Count)
-                        : 50 + (tablesProcessed * 50 / tablesToMigrate.Count);
-                    ProgressPercentage = progressPercent;
-                    ProgressText = $"{progressPercent}% - {table.TableName}";
+                    int finalPercent = basePercent + tablesProcessed * totalRange / tablesToMigrate.Count;
+                    ProgressPercentage = finalPercent;
+                    ProgressText = $"{finalPercent}% - {capturedTableName}";
                 }
                 
                 // Set final progress to 100% with generic text for modes that include data migration
@@ -602,7 +610,7 @@ public class MainWindowViewModel : ViewModelBase
                 MigrationMode.DataOnly => "dati",
                 _ => "schema e dati"
             };
-            StatusMessage = $"✅ Migrazione completata! {tablesToMigrate.Count} tabelle ({modeDescription})";
+            StatusMessage = $"Migrazione completata! {tablesToMigrate.Count} tabelle ({modeDescription})";
             IsConnected = false;
         }
         catch (Exception ex)
@@ -660,7 +668,7 @@ public class MainWindowViewModel : ViewModelBase
                 Log($"[StartMigrationAsync] Rollback completed");
             }
             
-            ErrorMessage = $"❌ Migration error: {ex.Message}";
+            ErrorMessage = $"Errore migrazione: {ex.Message}";
             StatusMessage = "Migration failed";
             ProgressPercentage = 0;
         }
@@ -795,7 +803,7 @@ public class MainWindowViewModel : ViewModelBase
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 ReplaceTablesOnUiThread(tables, selectedTablesCopy);
-                StatusMessage = $"✅ Tabelle ricaricate! Trovate {tables.Count} tabelle";
+                StatusMessage = $"Tabelle ricaricate! Trovate {tables.Count} tabelle";
                 ErrorMessage = "";
             });
             
@@ -805,7 +813,7 @@ public class MainWindowViewModel : ViewModelBase
         {
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                ErrorMessage = $"❌ Errore nel ricaricamento: {ex.Message}";
+                ErrorMessage = $"Errore nel ricaricamento: {ex.Message}";
                 StatusMessage = "Errore durante il ricaricamento";
             });
             Log($"[RefreshTablesAsync] Error: {ex.Message}");

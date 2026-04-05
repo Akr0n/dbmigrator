@@ -355,7 +355,7 @@ namespace DatabaseMigrator.Views;
             Log($"[OnRefreshClicked] Error: {ex}");
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
-                _vm.ErrorMessage = $"❌ Errore: {ex.Message}";
+                _vm.ErrorMessage = $"Errore: {ex.Message}";
                 _vm.StatusMessage = "Errore durante il ricaricamento";
             });
         }
@@ -437,13 +437,13 @@ namespace DatabaseMigrator.Views;
             if (sourceType < 0 || sourceType > maxDatabaseType)
             {
                 Log($"[MainWindow] Invalid source database type index: {sourceType}");
-                ErrorTextBlock.Text = "❌ Seleziona un tipo di database sorgente valido";
+                ErrorTextBlock.Text = "Seleziona un tipo di database sorgente valido";
                 return;
             }
             if (targetType < 0 || targetType > maxDatabaseType)
             {
                 Log($"[MainWindow] Invalid target database type index: {targetType}");
-                ErrorTextBlock.Text = "❌ Seleziona un tipo di database destinazione valido";
+                ErrorTextBlock.Text = "Seleziona un tipo di database destinazione valido";
                 return;
             }
             
@@ -475,7 +475,7 @@ namespace DatabaseMigrator.Views;
         catch (Exception ex)
         {
             Log($"[MainWindow] Exception: {ex}");
-            ErrorTextBlock.Text = $"❌ Errore: {ex.Message}";
+            ErrorTextBlock.Text = $"Errore: {ex.Message}";
             StatusBarTextBlock.Text = "Errore durante la connessione";
         }
     }
@@ -529,7 +529,7 @@ namespace DatabaseMigrator.Views;
         catch (Exception ex)
         {
             Log($"[OnSaveConfigurationClicked] Errore: {ex.Message}");
-            ErrorTextBlock.Text = $"❌ Errore nel salvataggio: {ex.Message}";
+            ErrorTextBlock.Text = $"Errore nel salvataggio: {ex.Message}";
         }
     }
 
@@ -588,19 +588,19 @@ namespace DatabaseMigrator.Views;
                         TargetPasswordTextBox.Text = _vm.TargetConnection.ConnectionInfo.Password;
                     }
 
-                    StatusBarTextBlock.Text = "✓ Configurazione caricata";
+                    StatusBarTextBlock.Text = "Configurazione caricata";
                 }
             }
         }
         catch (Exception ex)
         {
             Log($"[OnLoadConfigurationClicked] Errore: {ex.Message}");
-            ErrorTextBlock.Text = $"❌ Errore nel caricamento: {ex.Message}";
+            ErrorTextBlock.Text = $"Errore nel caricamento: {ex.Message}";
         }
     }
 
     private void ShowAbout()
     {
-        StatusBarTextBlock.Text = "🗄️ Database Migrator v1.0 - Strumento per migrare dati tra SQL Server, PostgreSQL e Oracle";
+        StatusBarTextBlock.Text = "Database Migrator v1.0 - Strumento per migrare dati tra SQL Server, PostgreSQL e Oracle";
     }
 }

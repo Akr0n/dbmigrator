@@ -1,4 +1,5 @@
 using System;
+using Npgsql;
 
 namespace DatabaseMigrator.Core.Models;
 
@@ -39,11 +40,18 @@ public class ConnectionInfo
 
     private string BuildPostgresConnectionString()
     {
-        // Escape password se contiene caratteri speciali
-        string escapedPassword = EscapePostgresPassword(Password);
-        var cs = $"Host={Server};Port={Port};Database={Database};Username={Username};Password={escapedPassword};";
+        // Use NpgsqlConnectionStringBuilder so special characters in any field
+        // (especially the password) are correctly handled without manual escaping.
+        var builder = new NpgsqlConnectionStringBuilder
+        {
+            Host = Server,
+            Port = Port,
+            Database = Database,
+            Username = Username,
+            Password = Password
+        };
         System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] PostgreSQL target {Server}:{Port}/{Database} (user={Username})");
-        return cs;
+        return builder.ConnectionString;
     }
 
     private string BuildOracleConnectionString()
@@ -82,26 +90,14 @@ public class ConnectionInfo
         return cs;
     }
 
-    private string EscapePostgresPassword(string password)
-    {
-        if (string.IsNullOrEmpty(password))
-            return password;
-        
-        // PostgreSQL: escape single quotes and backslashes
-        return password.Replace("\\", "\\\\").Replace("'", "\\'");
-    }
-
     private string EscapeOraclePassword(string password)
     {
         if (string.IsNullOrEmpty(password))
             return password;
-        
-        // Oracle: enclose password in quotes if it contains special characters
-        if (password.Contains(";") || password.Contains("=") || password.Contains("(") || password.Contains(")"))
-        {
-            // Escape internal quotes by doubling them
-            return $"\"{password.Replace("\"", "\"\"")}\"";
-        }
-        return password;
+
+        // Always wrap in double quotes to safely handle any special characters
+        // (@, !, #, $, ;, =, spaces, etc.) that could break Oracle connection string parsing.
+        // Escape any internal double-quote characters by doubling them.
+        return $"\"{password.Replace("\"", "\"\"")}\"";
     }
 }
