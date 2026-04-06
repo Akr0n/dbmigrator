@@ -3,6 +3,9 @@ using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using System.Collections.Specialized;
+using System.Diagnostics;
+using DatabaseMigrator.Core.Services;
 using DatabaseMigrator.ViewModels;
 using DatabaseMigrator.Core.Models;
 using System.Reactive;
@@ -93,6 +96,42 @@ namespace DatabaseMigrator.Views;
             LoadConfigMenuItem.Click += OnLoadConfigurationClicked;
             ExitMenuItem.Click += (s, e) => Close();
             AboutMenuItem.Click += (s, e) => ShowAbout();
+
+            // ── Log tab ──────────────────────────────────────────────────
+            LogListBox.Bind(ItemsControl.ItemsSourceProperty,
+                new Binding("FilteredLogEntries") { Source = _vm });
+
+            LogCountTextBlock.Bind(TextBlock.TextProperty,
+                new Binding("FilteredLogEntries.Count") { Source = _vm, StringFormat = "{0} voci" });
+
+            FilterErrorsCheckBox.Bind(CheckBox.IsCheckedProperty,
+                new Binding("ShowOnlyErrors") { Source = _vm, Mode = BindingMode.TwoWay });
+
+            ClearLogButton.Click += (s, e) =>
+                _vm?.ClearLogCommand.Execute(System.Reactive.Unit.Default).Subscribe();
+
+            CopyLogButton.Click += async (s, e) =>
+            {
+                if (_vm == null) return;
+                var lines = new System.Text.StringBuilder();
+                foreach (var logEntry in _vm.FilteredLogEntries)
+                    lines.AppendLine($"{logEntry.FormattedTime} {logEntry.LevelTag} {logEntry.Message}");
+                if (Clipboard != null)
+                    await Clipboard.SetTextAsync(lines.ToString());
+            };
+
+            OpenLogFileButton.Click += (s, e) =>
+            {
+                var path = LoggerService.GetLogPath();
+                if (File.Exists(path))
+                {
+                    try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+                    catch (Exception ex) { Log($"[OpenLogFileButton] Failed to open log file: {ex.Message}"); }
+                }
+            };
+
+            // Auto-scroll: scroll to bottom when new entries arrive
+            _vm.FilteredLogEntries.CollectionChanged += OnLogEntriesChanged;
             
             // Initialize migration mode before wiring event handlers to avoid race condition
             if (ModeSchemaAndData.IsChecked is true)
@@ -129,6 +168,21 @@ namespace DatabaseMigrator.Views;
         }
     }
     
+    private void OnLogEntriesChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action != NotifyCollectionChangedAction.Add) return;
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                var count = LogListBox.ItemCount;
+                if (count > 0)
+                    LogListBox.ContainerFromIndex(count - 1)?.BringIntoView();
+            }
+            catch { /* Ignore scroll errors */ }
+        }, Avalonia.Threading.DispatcherPriority.Background);
+    }
+
     private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
         if (!_allowClose && _vm != null && _vm.IsMigrating)

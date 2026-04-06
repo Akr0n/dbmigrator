@@ -43,6 +43,12 @@ public class MainWindowViewModel : ViewModelBase
     private bool _suppressTableSelectionUpdates; // Avoids noisy re-entrancy during bulk selection updates
     private readonly Dictionary<TableInfo, IDisposable> _tableSubscriptions = new();  // Track subscriptions for cleanup
 
+    // Log tab
+    private const int MaxLogEntries = 5000;
+    private readonly List<LogEntry> _allLogEntries = new();
+    private bool _showOnlyErrors;
+    private int _logErrorCount;
+
     public ConnectionViewModel? SourceConnection
     {
         get => _sourceConnection;
@@ -156,6 +162,26 @@ public class MainWindowViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> SelectAllTablesCommand { get; }
     public ReactiveCommand<Unit, Unit> DeselectAllTablesCommand { get; }
     public ReactiveCommand<Unit, Unit> RefreshTablesCommand { get; }
+    public ReactiveCommand<Unit, Unit> ClearLogCommand { get; }
+
+    // Log tab — backed by _allLogEntries (all) and FilteredLogEntries (displayed)
+    public ObservableCollection<LogEntry> FilteredLogEntries { get; } = new();
+
+    public bool ShowOnlyErrors
+    {
+        get => _showOnlyErrors;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _showOnlyErrors, value);
+            RebuildFilteredLog();
+        }
+    }
+
+    public int LogErrorCount
+    {
+        get => _logErrorCount;
+        set => this.RaiseAndSetIfChanged(ref _logErrorCount, value);
+    }
 
     public MainWindowViewModel()
         : this(null, null)
@@ -198,14 +224,24 @@ public class MainWindowViewModel : ViewModelBase
         ConnectDatabasesCommand = ReactiveCommand.CreateFromTask(ConnectDatabasesAsync);
         ConnectDatabasesCommand.ThrownExceptions.Subscribe(ex =>
             LoggerService.LogError("ConnectDatabasesCommand unhandled exception", ex));
-        StartMigrationCommand = ReactiveCommand.CreateFromTask(StartMigrationAsync, 
-            this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating, 
+        StartMigrationCommand = ReactiveCommand.CreateFromTask(StartMigrationAsync,
+            this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating,
                 (connected, migrating) => connected && !migrating));
         SelectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => SetAllTablesSelectionAsync(true));
         DeselectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => SetAllTablesSelectionAsync(false));
         RefreshTablesCommand = ReactiveCommand.CreateFromTask(RefreshTablesAsync,
             this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating,
                 (connected, migrating) => connected && !migrating));
+
+        ClearLogCommand = ReactiveCommand.Create(() =>
+        {
+            _allLogEntries.Clear();
+            FilteredLogEntries.Clear();
+            LogErrorCount = 0;
+        });
+
+        // Subscribe to real-time log events
+        LoggerService.MessageLogged += OnLogMessageReceived;
     }
 
     /// <summary>
@@ -213,6 +249,34 @@ public class MainWindowViewModel : ViewModelBase
     /// Returns true to continue inserting, false to abort migration.
     /// </summary>
     public Func<TruncateFailureContext, Task<bool>>? TruncateFailedPromptHandlerAsync { get; set; }
+
+    private void OnLogMessageReceived(LogEntry entry)
+    {
+        // Called from any thread; dispatch to UI thread for collection updates.
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_allLogEntries.Count >= MaxLogEntries)
+                _allLogEntries.RemoveAt(0);
+
+            _allLogEntries.Add(entry);
+
+            if (entry.Level == LogLevel.Error)
+                LogErrorCount++;
+
+            if (!_showOnlyErrors || entry.Level == LogLevel.Error)
+                FilteredLogEntries.Add(entry);
+        });
+    }
+
+    private void RebuildFilteredLog()
+    {
+        FilteredLogEntries.Clear();
+        var source = _showOnlyErrors
+            ? _allLogEntries.Where(e => e.Level == LogLevel.Error)
+            : (IEnumerable<LogEntry>)_allLogEntries;
+        foreach (var entry in source)
+            FilteredLogEntries.Add(entry);
+    }
 
     private void SubscribeToTableChanges(TableInfo table)
     {

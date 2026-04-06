@@ -23,6 +23,11 @@ public static class LoggerService
     private static long MaxFileSizeBytes => LoggingOptions.MaxFileSizeMb * 1024L * 1024L;
 
     /// <summary>
+    /// Raised after each log write. Subscribers must handle cross-thread dispatch themselves.
+    /// </summary>
+    public static event Action<LogEntry>? MessageLogged;
+
+    /// <summary>
     /// Logs a debug message to the debug log file.
     /// </summary>
     /// <param name="message">The message to log.</param>
@@ -31,16 +36,20 @@ public static class LoggerService
         try
         {
             EnsureLogDirectoryExists();
-            
-            var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}\n";
-            
+
+            var now = DateTime.Now;
+            var fullMessage = $"{now:yyyy-MM-dd HH:mm:ss.fff} - {message}\n";
+
             lock (LockObject)
             {
                 RotateIfNeeded(LogPath);
                 File.AppendAllText(LogPath, fullMessage);
             }
-            
+
             System.Diagnostics.Debug.WriteLine(fullMessage.TrimEnd());
+
+            try { MessageLogged?.Invoke(new LogEntry { Timestamp = now, Level = LogLevel.Info, Message = message }); }
+            catch { /* Never let UI subscribers crash the logging pipeline */ }
         }
         catch
         {
@@ -58,8 +67,9 @@ public static class LoggerService
         try
         {
             EnsureLogDirectoryExists();
-            
-            var fullMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - ERROR: {message}";
+
+            var now = DateTime.Now;
+            var fullMessage = $"{now:yyyy-MM-dd HH:mm:ss.fff} - ERROR: {message}";
             if (exception != null)
             {
                 fullMessage += $"\nException: {exception.GetType().Name}: {exception.Message}";
@@ -70,7 +80,7 @@ public static class LoggerService
                 }
             }
             fullMessage += "\n\n";
-            
+
             lock (LockObject)
             {
                 RotateIfNeeded(ErrorLogPath);
@@ -78,8 +88,15 @@ public static class LoggerService
                 File.AppendAllText(ErrorLogPath, fullMessage);
                 File.AppendAllText(LogPath, fullMessage);
             }
-            
+
             System.Diagnostics.Debug.WriteLine(fullMessage.TrimEnd());
+
+            // Compact message for UI (no stack trace)
+            var uiMessage = exception != null
+                ? $"{message} — {exception.GetType().Name}: {exception.Message}"
+                : message;
+            try { MessageLogged?.Invoke(new LogEntry { Timestamp = now, Level = LogLevel.Error, Message = uiMessage }); }
+            catch { /* Never let UI subscribers crash the logging pipeline */ }
         }
         catch
         {
