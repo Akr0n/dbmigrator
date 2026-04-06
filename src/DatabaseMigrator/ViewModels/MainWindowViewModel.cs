@@ -12,6 +12,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Reactive.Linq;
 using Avalonia.Threading;
+using Avalonia.Media;
 
 namespace DatabaseMigrator.ViewModels;
 
@@ -42,6 +43,19 @@ public class MainWindowViewModel : ViewModelBase
     private bool _isRefreshingTables;  // Guards re-entrancy and UI recomputations during refresh
     private bool _suppressTableSelectionUpdates; // Avoids noisy re-entrancy during bulk selection updates
     private readonly Dictionary<TableInfo, IDisposable> _tableSubscriptions = new();  // Track subscriptions for cleanup
+
+    // Log tab
+    private const int MaxLogEntries = 5000;
+    private readonly List<LogEntry> _allLogEntries = new();
+    private bool _showOnlyErrors;
+    private int _logErrorCount;
+
+    // Connection status indicators
+    private string _sourceStatusText = "";
+    private string _targetStatusText = "";
+    private IBrush _sourceStatusBrush = Brushes.Transparent;
+    private IBrush _targetStatusBrush = Brushes.Transparent;
+    private string _connectionSummary = "";
 
     public ConnectionViewModel? SourceConnection
     {
@@ -156,6 +170,56 @@ public class MainWindowViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> SelectAllTablesCommand { get; }
     public ReactiveCommand<Unit, Unit> DeselectAllTablesCommand { get; }
     public ReactiveCommand<Unit, Unit> RefreshTablesCommand { get; }
+    public ReactiveCommand<Unit, Unit> ClearLogCommand { get; }
+
+    // Log tab — backed by _allLogEntries (all) and FilteredLogEntries (displayed)
+    public ObservableCollection<LogEntry> FilteredLogEntries { get; } = new();
+
+    public bool ShowOnlyErrors
+    {
+        get => _showOnlyErrors;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _showOnlyErrors, value);
+            RebuildFilteredLog();
+        }
+    }
+
+    public int LogErrorCount
+    {
+        get => _logErrorCount;
+        set => this.RaiseAndSetIfChanged(ref _logErrorCount, value);
+    }
+
+    public string SourceStatusText
+    {
+        get => _sourceStatusText;
+        set => this.RaiseAndSetIfChanged(ref _sourceStatusText, value);
+    }
+
+    public string TargetStatusText
+    {
+        get => _targetStatusText;
+        set => this.RaiseAndSetIfChanged(ref _targetStatusText, value);
+    }
+
+    public IBrush SourceStatusBrush
+    {
+        get => _sourceStatusBrush;
+        set => this.RaiseAndSetIfChanged(ref _sourceStatusBrush, value);
+    }
+
+    public IBrush TargetStatusBrush
+    {
+        get => _targetStatusBrush;
+        set => this.RaiseAndSetIfChanged(ref _targetStatusBrush, value);
+    }
+
+    public string ConnectionSummary
+    {
+        get => _connectionSummary;
+        set => this.RaiseAndSetIfChanged(ref _connectionSummary, value);
+    }
 
     public MainWindowViewModel()
         : this(null, null)
@@ -198,14 +262,24 @@ public class MainWindowViewModel : ViewModelBase
         ConnectDatabasesCommand = ReactiveCommand.CreateFromTask(ConnectDatabasesAsync);
         ConnectDatabasesCommand.ThrownExceptions.Subscribe(ex =>
             LoggerService.LogError("ConnectDatabasesCommand unhandled exception", ex));
-        StartMigrationCommand = ReactiveCommand.CreateFromTask(StartMigrationAsync, 
-            this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating, 
+        StartMigrationCommand = ReactiveCommand.CreateFromTask(StartMigrationAsync,
+            this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating,
                 (connected, migrating) => connected && !migrating));
         SelectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => SetAllTablesSelectionAsync(true));
         DeselectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => SetAllTablesSelectionAsync(false));
         RefreshTablesCommand = ReactiveCommand.CreateFromTask(RefreshTablesAsync,
             this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating,
                 (connected, migrating) => connected && !migrating));
+
+        ClearLogCommand = ReactiveCommand.Create(() =>
+        {
+            _allLogEntries.Clear();
+            FilteredLogEntries.Clear();
+            LogErrorCount = 0;
+        });
+
+        // Subscribe to real-time log events
+        LoggerService.MessageLogged += OnLogMessageReceived;
     }
 
     /// <summary>
@@ -213,6 +287,34 @@ public class MainWindowViewModel : ViewModelBase
     /// Returns true to continue inserting, false to abort migration.
     /// </summary>
     public Func<TruncateFailureContext, Task<bool>>? TruncateFailedPromptHandlerAsync { get; set; }
+
+    private void OnLogMessageReceived(LogEntry entry)
+    {
+        // Called from any thread; dispatch to UI thread for collection updates.
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_allLogEntries.Count >= MaxLogEntries)
+                _allLogEntries.RemoveAt(0);
+
+            _allLogEntries.Add(entry);
+
+            if (entry.Level == LogLevel.Error)
+                LogErrorCount++;
+
+            if (!_showOnlyErrors || entry.Level == LogLevel.Error)
+                FilteredLogEntries.Add(entry);
+        });
+    }
+
+    private void RebuildFilteredLog()
+    {
+        FilteredLogEntries.Clear();
+        var source = _showOnlyErrors
+            ? _allLogEntries.Where(e => e.Level == LogLevel.Error)
+            : (IEnumerable<LogEntry>)_allLogEntries;
+        foreach (var entry in source)
+            FilteredLogEntries.Add(entry);
+    }
 
     private void SubscribeToTableChanges(TableInfo table)
     {
@@ -330,6 +432,13 @@ public class MainWindowViewModel : ViewModelBase
             StatusMessage = "Connessione ai database...";
             ProgressPercentage = 0;
 
+            // Reset connection status indicators
+            SourceStatusText = "";
+            TargetStatusText = "";
+            SourceStatusBrush = Brushes.Transparent;
+            TargetStatusBrush = Brushes.Transparent;
+            ConnectionSummary = "";
+
             if (SourceConnection?.ConnectionInfo == null || TargetConnection?.ConnectionInfo == null)
             {
                 ErrorMessage = "Errore: Compilare Server e Database";
@@ -342,8 +451,15 @@ public class MainWindowViewModel : ViewModelBase
             StatusMessage = "Test connessione sorgente...";
             ProgressPercentage = 20;
             bool sourceOk = await _databaseService.TestConnectionAsync(SourceConnection.ConnectionInfo);
-            if (!sourceOk)
+            if (sourceOk)
             {
+                SourceStatusText = "● Connesso";
+                SourceStatusBrush = new SolidColorBrush(Color.Parse("#43a047"));
+            }
+            else
+            {
+                SourceStatusText = "● Errore";
+                SourceStatusBrush = new SolidColorBrush(Color.Parse("#ef5350"));
                 ErrorMessage = "Errore: Impossibile connettersi al database sorgente. Verifica server, porta e credenziali.";
                 StatusMessage = "Connessione sorgente fallita";
                 return;
@@ -354,8 +470,15 @@ public class MainWindowViewModel : ViewModelBase
             // Test connessione target
             StatusMessage = "Test connessione target...";
             bool targetOk = await _databaseService.TestConnectionAsync(TargetConnection.ConnectionInfo);
-            if (!targetOk)
+            if (targetOk)
             {
+                TargetStatusText = "● Connesso";
+                TargetStatusBrush = new SolidColorBrush(Color.Parse("#43a047"));
+            }
+            else
+            {
+                TargetStatusText = "● Errore";
+                TargetStatusBrush = new SolidColorBrush(Color.Parse("#ef5350"));
                 ErrorMessage = "Errore: Impossibile connettersi al database target. Verifica server, porta e credenziali.";
                 StatusMessage = "Connessione target fallita";
                 return;
@@ -375,6 +498,7 @@ public class MainWindowViewModel : ViewModelBase
             ProgressPercentage = 100;
             ErrorMessage = "";
             StatusMessage = $"Connesso! Trovate {tables.Count} tabelle";
+            ConnectionSummary = $"{SourceConnection.ConnectionInfo.DatabaseType}@{SourceConnection.ConnectionInfo.Server}  →  {TargetConnection.ConnectionInfo.DatabaseType}@{TargetConnection.ConnectionInfo.Server}";
 
             // Defer IsConnected to next UI frame to avoid potential crash when tab becomes visible
             await Dispatcher.UIThread.InvokeAsync(() =>
@@ -388,6 +512,7 @@ public class MainWindowViewModel : ViewModelBase
             ErrorMessage = $"Errore: {ex.Message}";
             StatusMessage = "Errore durante la connessione";
             IsConnected = false;
+            ConnectionSummary = "";
             ProgressPercentage = 0;
         }
         finally
@@ -454,21 +579,23 @@ public class MainWindowViewModel : ViewModelBase
 
             ProgressPercentage = 10;
 
-            // For SchemaAndData mode: track which tables need to be created (don't exist yet)
+            // For SchemaAndData mode: log which tables still need to be created on the target (informational only).
+            // Actual creates are recorded in tablesCreatedDuringMigration inside MigrateSchemaAsync for correct rollback.
             if (SelectedMigrationMode == MigrationMode.SchemaAndData)
             {
                 Log($"[StartMigrationAsync] SchemaAndData mode: checking which tables need to be created...");
+                int plannedCreates = 0;
                 foreach (var table in tablesToMigrate)
                 {
                     bool exists = await _schemaMigrationService.CheckTableExistsAsync(
                         TargetConnection.ConnectionInfo, table.Schema, table.TableName);
                     if (!exists)
                     {
-                        tablesCreatedDuringMigration.Add(table);
+                        plannedCreates++;
                         Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} will be created");
                     }
                 }
-                Log($"[StartMigrationAsync] {tablesCreatedDuringMigration.Count} tables will be created during migration");
+                Log($"[StartMigrationAsync] {plannedCreates} tables will be created during migration");
             }
 
             // Migrate schema if needed
@@ -479,7 +606,8 @@ public class MainWindowViewModel : ViewModelBase
                 var schemaResult = await _schemaMigrationService.MigrateSchemaAsync(
                     SourceConnection.ConnectionInfo,
                     TargetConnection.ConnectionInfo,
-                    tablesToMigrate);
+                    tablesToMigrate,
+                    tablesCreatedDuringMigration);
                 constraintsAddedDuringMigration = schemaResult.ConstraintsAdded.ToList();
                 Log($"[StartMigrationAsync] Schema migration completed");
             }

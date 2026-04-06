@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
@@ -46,6 +47,12 @@ public sealed class ConstraintAddedInfo
 /// </summary>
 public class SchemaMigrationService : DatabaseServiceBase
 {
+    /// <summary>SQL Server built-in functions commonly used in column defaults (T-SQL).</summary>
+    private static readonly string[] SqlServerBuiltinDefaultFunctionNames =
+    [
+        "getdate", "getutcdate", "newid", "newsequentialid", "sysdatetime", "sysutcdatetime",
+        "sysdatetimeoffset"
+    ];
 
     /// <summary>
     /// Checks if a table exists in the specified database.
@@ -82,7 +89,8 @@ public class SchemaMigrationService : DatabaseServiceBase
                 string dropQuery = connectionInfo.DatabaseType switch
                 {
                     DatabaseType.SqlServer => $"DROP TABLE [{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
-                    DatabaseType.PostgreSQL => $"DROP TABLE \"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(tableName)}\"",
+                    // Match FormatTableName: PostgreSQL DDL always uses lowercased quoted identifiers.
+                    DatabaseType.PostgreSQL => $"DROP TABLE {FormatTableName(DatabaseType.PostgreSQL, schema, tableName)}",
                     // Oracle: include schema prefix (was missing) so the correct table is dropped.
                     DatabaseType.Oracle => $"DROP TABLE {schema.ToUpperInvariant()}.{tableName.ToUpperInvariant()}",
                     _ => throw new NotSupportedException()
@@ -158,8 +166,13 @@ public class SchemaMigrationService : DatabaseServiceBase
     /// Creates the schema in the target database based on the source database.
     /// Handles automatic data type mapping.
     /// </summary>
+    /// <param name="tablesCreatedOnTarget">
+    /// When non-null, each table is appended immediately after a successful <c>CREATE TABLE</c> on the target.
+    /// Used for accurate rollback (must not include tables that were only planned or skipped as already existing).
+    /// </param>
     public async Task<SchemaMigrationResult> MigrateSchemaAsync(ConnectionInfo source, ConnectionInfo target, 
-        List<TableInfo> tablesToMigrate)
+        List<TableInfo> tablesToMigrate,
+        List<TableInfo>? tablesCreatedOnTarget = null)
     {
         var constraintsAdded = new List<ConstraintAddedInfo>();
 
@@ -207,6 +220,7 @@ public class SchemaMigrationService : DatabaseServiceBase
                             await ExecuteWithRetryAsync(() => command.ExecuteNonQueryAsync(), "MigrateSchemaAsync.CreateTable");
                         }
                         Log($"[SchemaMigration] Table created successfully");
+                        tablesCreatedOnTarget?.Add(table);
                     }
 
                     // Create primary keys and unique constraints with full column information
@@ -239,6 +253,17 @@ public class SchemaMigrationService : DatabaseServiceBase
                             table.TableName,
                             generatedConstraintName,
                             constraintTypeUpper);
+
+                        // PostgreSQL may already have a UNIQUE on the same columns under a different name (e.g. prior migration).
+                        if (!constraintExists &&
+                            target.DatabaseType == DatabaseType.PostgreSQL &&
+                            constraintTypeUpper.Equals("UNIQUE", StringComparison.Ordinal) &&
+                            await PostgreSqlUniqueConstraintWithSameColumnsExistsAsync(
+                                targetConn, table.Schema, table.TableName, constraint.Columns))
+                        {
+                            Log($"[SchemaMigration] PostgreSQL: UNIQUE with same column set already exists on {table.Schema}.{table.TableName}, skipping");
+                            constraintExists = true;
+                        }
 
                         if (constraintExists)
                         {
@@ -320,13 +345,21 @@ public class SchemaMigrationService : DatabaseServiceBase
                 {
                     var schemaParam = command.CreateParameter();
                     schemaParam.ParameterName = "@schema";
-                    schemaParam.Value = schema;
+                    // PostgreSQL: information_schema stores names lowercased for identifiers we create
+                    // via FormatTableName (Oracle/SQL Server sources often report uppercase names).
+                    schemaParam.Value = dbType == DatabaseType.PostgreSQL
+                        ? schema.ToLowerInvariant()
+                        : schema;
                     command.Parameters.Add(schemaParam);
                 }
                 
                 var tableParam = command.CreateParameter();
                 tableParam.ParameterName = dbType == DatabaseType.Oracle ? ":tableName" : "@tableName";
-                tableParam.Value = dbType == DatabaseType.Oracle ? tableName.ToUpperInvariant() : tableName;
+                tableParam.Value = dbType == DatabaseType.Oracle
+                    ? tableName.ToUpperInvariant()
+                    : dbType == DatabaseType.PostgreSQL
+                        ? tableName.ToLowerInvariant()
+                        : tableName;
                 command.Parameters.Add(tableParam);
                 
                 var result = await command.ExecuteScalarAsync();
@@ -340,6 +373,104 @@ public class SchemaMigrationService : DatabaseServiceBase
         }
     }
 
+    /// <summary>
+    /// PostgreSQL allows at most one primary key per table. Names in pg_catalog often differ from Oracle system names.
+    /// </summary>
+    private async Task<bool> PostgreSqlTableHasPrimaryKeyAsync(
+        DbConnection connection,
+        string schema,
+        string tableName)
+    {
+        const string query = @"
+            SELECT 1
+            FROM information_schema.table_constraints
+            WHERE table_schema = @schema
+              AND table_name = @tableName
+              AND constraint_type = 'PRIMARY KEY'";
+
+        using var command = connection.CreateCommand();
+        command.CommandText = query;
+        command.CommandTimeout = _commandTimeoutSeconds;
+
+        var schemaParam = command.CreateParameter();
+        schemaParam.ParameterName = "@schema";
+        schemaParam.Value = schema.ToLowerInvariant();
+        command.Parameters.Add(schemaParam);
+
+        var tableParam = command.CreateParameter();
+        tableParam.ParameterName = "@tableName";
+        tableParam.Value = tableName.ToLowerInvariant();
+        command.Parameters.Add(tableParam);
+
+        var result = await command.ExecuteScalarAsync();
+        return result != null;
+    }
+
+    /// <summary>
+    /// True if the PostgreSQL table has a UNIQUE constraint whose column list matches <paramref name="columnsInOrder"/> (case-insensitive).
+    /// </summary>
+    private async Task<bool> PostgreSqlUniqueConstraintWithSameColumnsExistsAsync(
+        DbConnection connection,
+        string schema,
+        string tableName,
+        IReadOnlyList<string> columnsInOrder)
+    {
+        if (columnsInOrder == null || columnsInOrder.Count == 0)
+            return false;
+
+        var wanted = columnsInOrder.Select(c => c.ToLowerInvariant()).ToList();
+
+        const string query = @"
+            SELECT tc.constraint_name, kcu.column_name, kcu.ordinal_position
+            FROM information_schema.table_constraints tc
+            INNER JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_schema = kcu.constraint_schema
+             AND tc.constraint_name = kcu.constraint_name
+            WHERE tc.table_schema = @schema
+              AND tc.table_name = @tableName
+              AND tc.constraint_type = 'UNIQUE'
+            ORDER BY tc.constraint_name, kcu.ordinal_position";
+
+        using var command = connection.CreateCommand();
+        command.CommandText = query;
+        command.CommandTimeout = _commandTimeoutSeconds;
+
+        var schemaParam = command.CreateParameter();
+        schemaParam.ParameterName = "@schema";
+        schemaParam.Value = schema.ToLowerInvariant();
+        command.Parameters.Add(schemaParam);
+
+        var tableParam = command.CreateParameter();
+        tableParam.ParameterName = "@tableName";
+        tableParam.Value = tableName.ToLowerInvariant();
+        command.Parameters.Add(tableParam);
+
+        var byConstraint = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                string cName = reader.GetString(0);
+                string col = reader.GetString(1).ToLowerInvariant();
+                if (!byConstraint.TryGetValue(cName, out var list))
+                {
+                    list = new List<string>();
+                    byConstraint[cName] = list;
+                }
+
+                list.Add(col);
+            }
+        }
+
+        foreach (var cols in byConstraint.Values)
+        {
+            if (cols.Count == wanted.Count && cols.SequenceEqual(wanted))
+                return true;
+        }
+
+        return false;
+    }
+
     private async Task<bool> ConstraintExistsAsync(
         DbConnection connection,
         DatabaseType dbType,
@@ -351,6 +482,16 @@ public class SchemaMigrationService : DatabaseServiceBase
         // constraintTypeUpper is expected to be "PRIMARY KEY" or "UNIQUE"
         if (string.IsNullOrWhiteSpace(constraintName) || string.IsNullOrWhiteSpace(constraintTypeUpper))
             return false;
+
+        // PostgreSQL: only one PRIMARY KEY per table. If the target table was created earlier (e.g. SQL Server → PG),
+        // the PK name often differs from Oracle's (sys_c… vs …_pkey). Match by presence of any PK, not by name.
+        if (dbType == DatabaseType.PostgreSQL &&
+            constraintTypeUpper.Equals("PRIMARY KEY", StringComparison.Ordinal) &&
+            await PostgreSqlTableHasPrimaryKeyAsync(connection, schema, tableName))
+        {
+            Log($"[ConstraintExistsAsync] PostgreSQL: primary key already present on {schema}.{tableName}; skipping add (name may differ from source)");
+            return true;
+        }
 
         string query = dbType switch
         {
@@ -671,6 +812,71 @@ public class SchemaMigrationService : DatabaseServiceBase
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Detects T-SQL function-call defaults (e.g. getutcdate()) anywhere in the expression text.
+    /// </summary>
+    private static bool IsSqlServerFunctionCallDefault(string defaultVal)
+    {
+        var lower = defaultVal.ToLowerInvariant();
+        return SqlServerBuiltinDefaultFunctionNames.Any(f =>
+            Regex.IsMatch(lower, @"(?<!\w)" + Regex.Escape(f) + @"\s*\("));
+    }
+
+    /// <summary>
+    /// Strips redundant outer parentheses from catalog default text, e.g. "(getutcdate())" → "getutcdate()".
+    /// </summary>
+    private static string NormalizeDefaultExpressionParens(string s)
+    {
+        s = s.Trim();
+        while (s.Length >= 2 && s[0] == '(' && s[^1] == ')')
+        {
+            var inner = s.Substring(1, s.Length - 2).Trim();
+            if (!AreParensBalanced(inner))
+                break;
+            s = inner;
+        }
+
+        return s;
+    }
+
+    private static bool AreParensBalanced(string s)
+    {
+        int depth = 0;
+        foreach (var c in s)
+        {
+            if (c == '(') depth++;
+            else if (c == ')')
+            {
+                depth--;
+                if (depth < 0)
+                    return false;
+            }
+        }
+
+        return depth == 0;
+    }
+
+    /// <summary>
+    /// Maps common SQL Server column default expressions to PostgreSQL when migrating SqlServer → PostgreSQL.
+    /// </summary>
+    private static string? TryMapSqlServerDefaultToPostgreSql(string defaultVal)
+    {
+        var expr = NormalizeDefaultExpressionParens(defaultVal);
+        var lower = expr.ToLowerInvariant();
+        if (Regex.IsMatch(lower, @"^getutcdate\s*\(\s*\)$") ||
+            Regex.IsMatch(lower, @"^sysutcdatetime\s*\(\s*\)$"))
+            return "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')";
+        if (Regex.IsMatch(lower, @"^getdate\s*\(\s*\)$") ||
+            Regex.IsMatch(lower, @"^sysdatetime\s*\(\s*\)$"))
+            return "CURRENT_TIMESTAMP";
+        if (Regex.IsMatch(lower, @"^sysdatetimeoffset\s*\(\s*\)$"))
+            return "CURRENT_TIMESTAMP";
+        if (Regex.IsMatch(lower, @"^newid\s*\(\s*\)$") ||
+            Regex.IsMatch(lower, @"^newsequentialid\s*\(\s*\)$"))
+            return "gen_random_uuid()";
+        return null;
+    }
+
     private string FormatColumnDefinition(DatabaseType dbType, ColumnDefinition column)
     {
         string colName = FormatColumnName(dbType, column.Name);
@@ -685,33 +891,30 @@ public class SchemaMigrationService : DatabaseServiceBase
             ? (column.IsNullable ? " NULL" : " NOT NULL")
             : (!column.IsNullable ? " NOT NULL" : "");
         
-        // For Oracle: ignore DEFAULT values that are SQL Server functions
         string defaultValue = "";
-        if (dbType != DatabaseType.Oracle && !string.IsNullOrEmpty(column.DefaultValue))
+        if (!string.IsNullOrEmpty(column.DefaultValue))
         {
-            // For SQL Server and PostgreSQL, keep the default
-            defaultValue = $" DEFAULT {column.DefaultValue}";
-        }
-        else if (dbType == DatabaseType.Oracle && !string.IsNullOrEmpty(column.DefaultValue))
-        {
-            // For Oracle: accept only literal values, not functions like (getutcdate())
             var defaultVal = column.DefaultValue.Trim();
-            
-            // More robust function detection:
-            // - Look for known SQL Server function names used as function calls
-            //   (function name followed by optional whitespace and an opening parenthesis)
-            var sqlServerFunctions = new[] { "getdate", "getutcdate", "newid", "sysdatetime", "sysutcdatetime" };
-            var lowerDefaultVal = defaultVal.ToLowerInvariant();
-            bool isFunction = sqlServerFunctions.Any(f =>
-                System.Text.RegularExpressions.Regex.IsMatch(
-                    lowerDefaultVal,
-                    @"(?<!\w)" + System.Text.RegularExpressions.Regex.Escape(f) + @"\s*\("));
-            
-            if (!isFunction)
+
+            if (dbType == DatabaseType.PostgreSQL && column.SourceDbType == DatabaseType.SqlServer)
             {
-                defaultValue = $" DEFAULT {defaultVal}";
+                var mapped = TryMapSqlServerDefaultToPostgreSql(defaultVal);
+                if (mapped != null)
+                    defaultValue = $" DEFAULT {mapped}";
+                else if (IsSqlServerFunctionCallDefault(defaultVal))
+                    defaultValue = "";
+                else
+                    defaultValue = $" DEFAULT {defaultVal}";
             }
-            // If it's a function, skip it - Oracle doesn't support SQL Server functions
+            else if (dbType == DatabaseType.Oracle)
+            {
+                if (!IsSqlServerFunctionCallDefault(defaultVal))
+                    defaultValue = $" DEFAULT {defaultVal}";
+            }
+            else
+            {
+                defaultValue = $" DEFAULT {column.DefaultValue}";
+            }
         }
 
         return $"{colName} {dataType}{nullable}{defaultValue}";

@@ -164,9 +164,14 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 Username = connectionInfo.Username,
                 Password = connectionInfo.Password,
                 TrustServerCertificate = connectionInfo.TrustServerCertificate,
-                Database = connectionInfo.DatabaseType == DatabaseType.Oracle 
-                    ? (string.IsNullOrWhiteSpace(connectionInfo.Database) ? "FREEPDB1" : connectionInfo.Database) 
-                    : "master"
+                Database = connectionInfo.DatabaseType switch
+                {
+                    DatabaseType.Oracle => string.IsNullOrWhiteSpace(connectionInfo.Database)
+                        ? "FREEPDB1"
+                        : connectionInfo.Database,
+                    DatabaseType.PostgreSQL => "postgres",
+                    _ => "master"
+                }
             };
 
             using (var connection = CreateConnection(connInfo))
@@ -484,6 +489,43 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
             try
             {
+                string sourceQuery = $"SELECT * FROM {FormatTableName(source.DatabaseType, table.Schema, table.TableName)}";
+
+                List<string> columnNames;
+                using (var schemaCmd = sourceConn.CreateCommand())
+                {
+                    schemaCmd.CommandText = sourceQuery;
+                    schemaCmd.CommandTimeout = _commandTimeoutSeconds;
+                    using (var schemaReader = await ExecuteWithRetryAsync(
+                               () => schemaCmd.ExecuteReaderAsync(CommandBehavior.SchemaOnly),
+                               "MigrateTableAsync.SourceSchemaOnly"))
+                    {
+                        columnNames = Enumerable.Range(0, schemaReader.FieldCount)
+                            .Select(schemaReader.GetName)
+                            .ToList();
+                    }
+                }
+
+                if (columnNames.Count == 0)
+                {
+                    progress?.Report(100);
+                    await FinalizeTransactionAsync(targetConn, transaction, target.DatabaseType, true);
+                    return;
+                }
+
+                var missingColumns = await FindColumnsMissingOnTargetAsync(
+                    targetConn, target.DatabaseType, table.Schema, table.TableName, columnNames);
+                if (missingColumns.Count > 0)
+                {
+                    string sample = string.Join(", ", missingColumns.Take(20));
+                    if (missingColumns.Count > 20)
+                        sample += $" e altre {missingColumns.Count - 20} colonne";
+                    throw new InvalidOperationException(
+                        $"La tabella '{table.Schema}.{table.TableName}' nel database di destinazione non contiene le colonne presenti nella sorgente: {sample}. " +
+                        "Di solito la tabella nel target è stata creata da un altro DB o da uno script con definizione diversa (ad es. type_coverage nativo PostgreSQL vs Oracle). " +
+                        "Elimina la tabella nel target o usa un database vuoto, poi esegui la migrazione con modalità 'Schema + dati'.");
+                }
+
                 // Tronca la tabella nel target per evitare duplicati
                 Log($"[MigrateTableAsync] Truncating table {table.Schema}.{table.TableName} in target...");
                 try
@@ -533,8 +575,6 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 long totalRows = await GetTableRowCountAsync(source, table.Schema, table.TableName);
                 long migratedRows = 0;
 
-                string sourceQuery = $"SELECT * FROM {FormatTableName(source.DatabaseType, table.Schema, table.TableName)}";
-
                 using (var sourceCommand = sourceConn.CreateCommand())
                 {
                     sourceCommand.CommandText = sourceQuery;
@@ -542,17 +582,6 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
                     using (var reader = await ExecuteWithRetryAsync(() => sourceCommand.ExecuteReaderAsync(), "MigrateTableAsync.SourceReader"))
                     {
-                        var columnNames = Enumerable.Range(0, reader.FieldCount)
-                            .Select(reader.GetName)
-                            .ToList();
-
-                        if (columnNames.Count == 0)
-                        {
-                            progress?.Report(100);
-                            await FinalizeTransactionAsync(targetConn, transaction, target.DatabaseType, true);
-                            return;
-                        }
-
                         // For SQL Server: check if table has IDENTITY column and enable IDENTITY_INSERT
                         bool hasIdentity = false;
                         string formattedTableName = FormatTableName(target.DatabaseType, table.Schema, table.TableName);
@@ -820,6 +849,106 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             Log($"GetTableRowCountAsync error for {schema}.{tableName}: {ex.Message}");
             return 0;
         }
+    }
+
+    /// <summary>
+    /// Reads physical column names from the target table (catalog / data dictionary).
+    /// </summary>
+    private async Task<HashSet<string>> GetTargetTableColumnNamesAsync(
+        DbConnection targetConn,
+        DatabaseType targetDbType,
+        string schema,
+        string tableName)
+    {
+        string query = targetDbType switch
+        {
+            DatabaseType.SqlServer =>
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @schema AND TABLE_NAME = @tableName ORDER BY ORDINAL_POSITION",
+            DatabaseType.PostgreSQL =>
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = @schema AND table_name = @tableName ORDER BY ordinal_position",
+            DatabaseType.Oracle =>
+                "SELECT column_name FROM all_tab_columns WHERE owner = :owner AND table_name = :tname ORDER BY column_id",
+            _ => throw new NotSupportedException()
+        };
+
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var command = targetConn.CreateCommand();
+        command.CommandText = query;
+        command.CommandTimeout = _commandTimeoutSeconds;
+
+        if (targetDbType == DatabaseType.Oracle)
+        {
+            var p1 = command.CreateParameter();
+            p1.ParameterName = ":owner";
+            p1.Value = schema.ToUpperInvariant();
+            command.Parameters.Add(p1);
+            var p2 = command.CreateParameter();
+            p2.ParameterName = ":tname";
+            p2.Value = tableName.ToUpperInvariant();
+            command.Parameters.Add(p2);
+        }
+        else if (targetDbType == DatabaseType.PostgreSQL)
+        {
+            var p1 = command.CreateParameter();
+            p1.ParameterName = "@schema";
+            p1.Value = schema.ToLowerInvariant();
+            command.Parameters.Add(p1);
+            var p2 = command.CreateParameter();
+            p2.ParameterName = "@tableName";
+            p2.Value = tableName.ToLowerInvariant();
+            command.Parameters.Add(p2);
+        }
+        else
+        {
+            var p1 = command.CreateParameter();
+            p1.ParameterName = "@schema";
+            p1.Value = schema;
+            command.Parameters.Add(p1);
+            var p2 = command.CreateParameter();
+            p2.ParameterName = "@tableName";
+            p2.Value = tableName;
+            command.Parameters.Add(p2);
+        }
+
+        using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (!reader.IsDBNull(0))
+                set.Add(reader.GetString(0));
+        }
+
+        return set;
+    }
+
+    /// <summary>
+    /// Source columns that are absent on the target (case-insensitive name match).
+    /// </summary>
+    private static List<string> ComputeColumnsMissingOnTarget(
+        HashSet<string> targetColumnNames,
+        IReadOnlyList<string> sourceColumnNames)
+    {
+        if (targetColumnNames.Count == 0)
+            return sourceColumnNames.ToList();
+
+        var missing = new List<string>();
+        foreach (var src in sourceColumnNames)
+        {
+            if (!targetColumnNames.Contains(src))
+                missing.Add(src);
+        }
+
+        return missing;
+    }
+
+    private async Task<List<string>> FindColumnsMissingOnTargetAsync(
+        DbConnection targetConn,
+        DatabaseType targetDbType,
+        string schema,
+        string tableName,
+        IReadOnlyList<string> sourceColumnNames)
+    {
+        var targetCols = await GetTargetTableColumnNamesAsync(targetConn, targetDbType, schema, tableName);
+        return ComputeColumnsMissingOnTarget(targetCols, sourceColumnNames);
     }
 
     private string BuildInsertQuery(

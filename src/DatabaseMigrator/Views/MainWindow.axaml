@@ -1,14 +1,53 @@
-<Window xmlns="https://github.com/avaloniaui" 
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:models="clr-namespace:DatabaseMigrator.Core.Models;assembly=DatabaseMigrator.Core"
+        xmlns:converters="clr-namespace:DatabaseMigrator.Converters"
         x:Class="DatabaseMigrator.Views.MainWindow"
-        Title="Database Migrator" 
-        Width="1400" 
+        Title="Database Migrator"
+        Width="1400"
         Height="900"
         WindowStartupLocation="CenterScreen"
         Background="#1a1a1a"
         Icon="avares://DatabaseMigrator/Assets/logo.ico">
-    
+
+    <Window.Resources>
+        <converters:LogLevelToForegroundConverter x:Key="LogLevelToForeground"/>
+    </Window.Resources>
+
+    <Window.Styles>
+        <!-- Primary button: blue, bold -->
+        <Style Selector="Button.primary">
+            <Setter Property="Background" Value="#1976d2"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#1565c0"/>
+        </Style>
+        <Style Selector="Button.primary:disabled /template/ ContentPresenter">
+            <Setter Property="Background" Value="#37474f"/>
+            <Setter Property="Opacity" Value="0.6"/>
+        </Style>
+        <!-- Secondary button: gray -->
+        <Style Selector="Button.secondary">
+            <Setter Property="Background" Value="#455a64"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style Selector="Button.secondary:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#37474f"/>
+        </Style>
+        <Style Selector="Button.secondary:disabled /template/ ContentPresenter">
+            <Setter Property="Background" Value="#37474f"/>
+            <Setter Property="Opacity" Value="0.6"/>
+        </Style>
+    </Window.Styles>
+
     <DockPanel Background="#1a1a1a">
         <!-- Menu Bar -->
         <Menu DockPanel.Dock="Top" Background="#0d47a1" Foreground="White">
@@ -23,12 +62,9 @@
             </MenuItem>
         </Menu>
 
-        <Border DockPanel.Dock="Top" Background="#0d47a1" Padding="20">
-            <TextBlock Text="Database Migrator" FontSize="32" FontWeight="Bold" Foreground="White"/>
-        </Border>
-
         <Grid RowDefinitions="*,Auto" Margin="20" Background="#1a1a1a">
             <TabControl Grid.Row="0" x:Name="MainTabControl" Background="#2a2a2a" Foreground="White">
+
                 <!-- Tab 1: Connections -->
                 <TabItem Background="#2a2a2a" Foreground="White" Padding="15,10">
                     <TabItem.Header>
@@ -39,8 +75,11 @@
                             <!-- Source -->
                             <Border Grid.Row="0" Grid.Column="0" Background="#2a2a2a" CornerRadius="8" Padding="20" BorderBrush="#0d47a1" BorderThickness="2" Margin="0,0,15,0">
                                 <StackPanel Spacing="15">
-                                    <TextBlock Text="Database Sorgente" FontSize="16" FontWeight="Bold" Foreground="#64b5f6"/>
-                                    
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="Database Sorgente" FontSize="16" FontWeight="Bold" Foreground="#64b5f6"/>
+                                        <TextBlock x:Name="SourceStatusTextBlock" FontSize="12" FontWeight="Bold"/>
+                                    </StackPanel>
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Tipo Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
                                         <ComboBox x:Name="SourceTypeCombo" SelectedIndex="0" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1">
@@ -49,39 +88,50 @@
                                             <ComboBoxItem>PostgreSQL</ComboBoxItem>
                                         </ComboBox>
                                     </StackPanel>
-                                    
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Server:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
                                         <TextBox x:Name="SourceServerTextBox" Watermark="localhost" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
-                                    
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Porta:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="SourcePortTextBox" Watermark="8080" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                        <TextBox x:Name="SourcePortTextBox" Watermark="1433" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
-                                    
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
                                         <TextBox x:Name="SourceDatabaseTextBox" Watermark="database" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
-                                    
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Username (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
                                         <TextBox x:Name="SourceUsernameTextBox" Watermark="username" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
-                                    
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Password (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="SourcePasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <TextBox Grid.Column="0" x:Name="SourcePasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                            <Button Grid.Column="1" x:Name="SourcePasswordToggle"
+                                                    Content="👁" Background="Transparent" Foreground="#9e9e9e"
+                                                    Padding="8,0" FontSize="14" BorderThickness="0"
+                                                    VerticalAlignment="Stretch"
+                                                    ToolTip.Tip="Mostra/nascondi password"/>
+                                        </Grid>
                                     </StackPanel>
+                                    <CheckBox x:Name="SourceTrustServerCertificateCheckBox" Content="Accetta certificato server (SSL) — consigliato per SQL Server in Docker" IsChecked="True" Foreground="#e0e0e0" FontSize="11"/>
                                 </StackPanel>
                             </Border>
 
                             <!-- Target -->
                             <Border Grid.Row="0" Grid.Column="1" Background="#2a2a2a" CornerRadius="8" Padding="20" BorderBrush="#0d47a1" BorderThickness="2" Margin="15,0,0,0">
                                 <StackPanel Spacing="15">
-                                    <TextBlock Text="Database Target" FontSize="16" FontWeight="Bold" Foreground="#64b5f6"/>
-                                    
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="Database Target" FontSize="16" FontWeight="Bold" Foreground="#64b5f6"/>
+                                        <TextBlock x:Name="TargetStatusTextBlock" FontSize="12" FontWeight="Bold"/>
+                                    </StackPanel>
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Tipo Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
                                         <ComboBox x:Name="TargetTypeCombo" SelectedIndex="2" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1">
@@ -90,36 +140,45 @@
                                             <ComboBoxItem>PostgreSQL</ComboBoxItem>
                                         </ComboBox>
                                     </StackPanel>
-                                    
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Server:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
                                         <TextBox x:Name="TargetServerTextBox" Watermark="localhost" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
-                                    
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Porta:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="TargetPortTextBox" Watermark="8080" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                        <TextBox x:Name="TargetPortTextBox" Watermark="5432" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
-                                    
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
                                         <TextBox x:Name="TargetDatabaseTextBox" Watermark="database" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
-                                    
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Username (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
                                         <TextBox x:Name="TargetUsernameTextBox" Watermark="username" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
-                                    
+
                                     <StackPanel Spacing="5">
                                         <TextBlock Text="Password (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="TargetPasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <TextBox Grid.Column="0" x:Name="TargetPasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                            <Button Grid.Column="1" x:Name="TargetPasswordToggle"
+                                                    Content="👁" Background="Transparent" Foreground="#9e9e9e"
+                                                    Padding="8,0" FontSize="14" BorderThickness="0"
+                                                    VerticalAlignment="Stretch"
+                                                    ToolTip.Tip="Mostra/nascondi password"/>
+                                        </Grid>
                                     </StackPanel>
+                                    <CheckBox x:Name="TargetTrustServerCertificateCheckBox" Content="Accetta certificato server (SSL) — per SQL Server in Docker" IsChecked="True" Foreground="#e0e0e0" FontSize="11"/>
                                 </StackPanel>
                             </Border>
 
                             <!-- Connect Button -->
-                            <Button Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" x:Name="ConnectButton" Background="#1976d2" Foreground="White" Padding="12" Height="50" FontSize="14" FontWeight="Bold" Margin="0,20,0,0" CornerRadius="4">
+                            <Button Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" x:Name="ConnectButton"
+                                    Classes="primary" Height="50" FontSize="14" Margin="0,20,0,0">
                                 Connetti ai Database
                             </Button>
                         </Grid>
@@ -129,26 +188,29 @@
                 <!-- Tab 2: Tables -->
                 <TabItem x:Name="TablesTab" Background="#2a2a2a" Foreground="White" Padding="15,10" IsEnabled="False">
                     <TabItem.Header>
-                        <TextBlock Text="Selezione Tabelle" FontSize="13" Foreground="White"/>
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <TextBlock Text="Selezione Tabelle" FontSize="13" Foreground="White"/>
+                            <TextBlock x:Name="TablesSelectedBadge" FontSize="11" Foreground="#64b5f6" IsVisible="False" VerticalAlignment="Center"/>
+                        </StackPanel>
                     </TabItem.Header>
                     <Grid RowDefinitions="Auto,Auto,*,Auto" ColumnDefinitions="*,*" Margin="20,20,20,40" Background="#1a1a1a">
                         <!-- Search Bar Row -->
                         <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="1" Margin="0,0,0,15">
                             <DockPanel LastChildFill="True">
-                                <Button DockPanel.Dock="Right" x:Name="ClearSearchButton" Content="×" Background="#455a64" Foreground="White" Padding="10,8" FontSize="12" Margin="10,0,0,0" CornerRadius="4" ToolTip.Tip="Cancella ricerca"/>
+                                <Button DockPanel.Dock="Right" x:Name="ClearSearchButton" Classes="secondary" Content="×" Margin="10,0,0,0" ToolTip.Tip="Cancella ricerca"/>
                                 <TextBox x:Name="TableSearchTextBox" Watermark="Cerca tabelle per nome o schema..." Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                             </DockPanel>
                         </Border>
 
                         <!-- Sorgente: Buttons row -->
                         <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="10" Margin="15,10,15,15">
-                            <Button x:Name="SelectAllButton" Click="SelectAllButton_Click" Background="#1976d2" Foreground="White" Padding="12" Height="40" FontSize="12" FontWeight="Bold" CornerRadius="4">
+                            <Button x:Name="SelectAllButton" Click="SelectAllButton_Click" Classes="primary" Height="40">
                                 Seleziona Tutto
                             </Button>
-                            <Button x:Name="DeselectAllButton" Click="DeselectAllButton_Click" Background="#455a64" Foreground="White" Padding="12" Height="40" FontSize="12" FontWeight="Bold" CornerRadius="4">
+                            <Button x:Name="DeselectAllButton" Click="DeselectAllButton_Click" Classes="secondary" Height="40">
                                 Deseleziona Tutto
                             </Button>
-                            <Button x:Name="RefreshSourceButton" Background="#ff9800" Foreground="White" Padding="12" Height="40" FontSize="12" FontWeight="Bold" CornerRadius="4" ToolTip.Tip="Ricarica tabelle dal database sorgente">
+                            <Button x:Name="RefreshSourceButton" Classes="secondary" Height="40" ToolTip.Tip="Ricarica tabelle dal database sorgente">
                                 Aggiorna
                             </Button>
                         </StackPanel>
@@ -216,11 +278,11 @@
                     <TabItem.Header>
                         <TextBlock Text="Migrazione" FontSize="13" Foreground="White"/>
                     </TabItem.Header>
-                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto" Margin="20" Background="#1a1a1a">
+                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="20" Background="#1a1a1a">
                         <!-- Migration Mode Selection -->
-                        <Border Grid.Row="0" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#ff9800" BorderThickness="2" Margin="0,0,0,15">
+                        <Border Grid.Row="0" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="2" Margin="0,0,0,15">
                             <StackPanel Spacing="10">
-                                <TextBlock Text="Modalità Migrazione:" FontWeight="Bold" FontSize="14" Foreground="#ffb74d"/>
+                                <TextBlock Text="Modalità Migrazione:" FontWeight="Bold" FontSize="14" Foreground="#64b5f6"/>
                                 <StackPanel Orientation="Horizontal" Spacing="20">
                                     <RadioButton x:Name="ModeSchemaAndData" GroupName="MigrationMode" IsChecked="True" Foreground="#e0e0e0" FontSize="12">
                                         <TextBlock Text="Schema + Dati" VerticalAlignment="Center"/>
@@ -232,7 +294,7 @@
                                         <TextBlock Text="Solo Dati" VerticalAlignment="Center"/>
                                     </RadioButton>
                                 </StackPanel>
-                                <TextBlock x:Name="MigrationModeDescription" Foreground="#9e9e9e" FontSize="11" TextWrapping="Wrap" 
+                                <TextBlock x:Name="MigrationModeDescription" Foreground="#9e9e9e" FontSize="11" TextWrapping="Wrap"
                                            Text="Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati."/>
                             </StackPanel>
                         </Border>
@@ -242,7 +304,7 @@
                             <TextBlock Text="Tabelle da migrare:" FontWeight="Bold" FontSize="13" Foreground="#64b5f6"/>
                             <TextBlock Text="{Binding SelectedTablesCount, StringFormat='Tabelle selezionate: {0}'}" Foreground="#e0e0e0" FontSize="12"/>
                             <TextBlock Text="{Binding TotalRowsToMigrate, StringFormat='Righe totali: {0}'}" Foreground="#e0e0e0" FontSize="12"/>
-                            <ListBox Background="#2a2a2a" Foreground="#e0e0e0" MaxHeight="120" ItemsSource="{Binding SelectedTablesForMigration}">
+                            <ListBox Background="#2a2a2a" Foreground="#e0e0e0" MaxHeight="200" MinHeight="60" ItemsSource="{Binding SelectedTablesForMigration}">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate DataType="{x:Type models:TableInfo}">
                                         <StackPanel Orientation="Horizontal" Spacing="10">
@@ -256,7 +318,7 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </StackPanel>
-                        
+
                         <Border Grid.Row="2" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="1" Margin="0,15,0,0">
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
                                 <StackPanel Spacing="10">
@@ -265,28 +327,121 @@
                                 </StackPanel>
                             </ScrollViewer>
                         </Border>
-                        
-                        <StackPanel Grid.Row="3" Spacing="8" Margin="0,15,0,0">
+
+                        <!-- Progress bar with overlaid text -->
+                        <Grid Grid.Row="3" Margin="0,15,0,0">
                             <ProgressBar x:Name="ProgressBar" Value="0" Maximum="100" Height="30" Foreground="#43a047" Background="#3a3a3a"/>
-                            <TextBlock x:Name="ProgressTextBlock" TextAlignment="Center" FontWeight="Bold" Foreground="#43a047" FontSize="12" Text="0%"/>
-                        </StackPanel>
-                        
-                        <Button x:Name="StartMigrationButton" Grid.Row="4" Background="#1976d2" Foreground="White" Padding="12" Height="50" FontSize="16" FontWeight="Bold" Margin="15,15,0,0" CornerRadius="4" IsEnabled="False">
+                            <TextBlock x:Name="ProgressTextBlock" TextAlignment="Center" FontWeight="Bold" Foreground="White" FontSize="12" VerticalAlignment="Center" Text="0%"/>
+                        </Grid>
+
+                        <Button x:Name="StartMigrationButton" Grid.Row="4" Classes="primary" Height="50" FontSize="16" Margin="0,15,0,0" IsEnabled="False">
                             Avvia Migrazione
                         </Button>
-                        
-                        <TextBlock Grid.Row="5" Foreground="#9e9e9e" TextWrapping="Wrap" FontSize="11" Margin="0,15,0,0" Text="Seleziona prima le tabelle nel tab 'Selezione Tabelle', poi scegli la modalità di migrazione."/>
-                        
-                        <Border Grid.Row="6" Background="#1b5e20" CornerRadius="5" Padding="12" BorderBrush="#43a047" BorderThickness="1" Margin="0,15,0,0">
-                            <TextBlock x:Name="ErrorTextBlock" Foreground="#a5d6a7" TextWrapping="Wrap" FontSize="11" Text=""/>
+
+                        <!-- Error box (red, hidden when empty) -->
+                        <Border x:Name="ErrorBorder" Grid.Row="5" Background="#3e0000" CornerRadius="5" Padding="12" BorderBrush="#ef5350" BorderThickness="1" Margin="0,15,0,0" IsVisible="False">
+                            <TextBlock x:Name="ErrorTextBlock" Foreground="#ef9a9a" TextWrapping="Wrap" FontSize="11" Text=""/>
+                        </Border>
+                    </Grid>
+                </TabItem>
+
+                <!-- Tab 4: Log -->
+                <TabItem x:Name="LogTab" Background="#2a2a2a" Foreground="White" Padding="15,10">
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <TextBlock Text="Log" FontSize="13" Foreground="White"/>
+                            <Border x:Name="LogErrorBadge" Background="#c62828" CornerRadius="9" Padding="5,1" IsVisible="False">
+                                <TextBlock x:Name="LogErrorBadgeText" Foreground="White" FontSize="10" FontWeight="Bold" Text="0"/>
+                            </Border>
+                        </StackPanel>
+                    </TabItem.Header>
+                    <Grid RowDefinitions="Auto,*" Margin="20" Background="#1a1a1a">
+
+                        <!-- Toolbar -->
+                        <Border Grid.Row="0" Background="#2a2a2a" CornerRadius="8" Padding="10,8"
+                                BorderBrush="#0d47a1" BorderThickness="1" Margin="0,0,0,10">
+                            <DockPanel LastChildFill="False">
+                                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="ClearLogButton" Classes="secondary"
+                                            Content="Pulisci"
+                                            ToolTip.Tip="Svuota il log in-app (il file su disco rimane invariato)"/>
+                                    <Button x:Name="CopyLogButton" Classes="secondary"
+                                            Content="Copia"
+                                            ToolTip.Tip="Copia il log visibile negli appunti"/>
+                                    <CheckBox x:Name="FilterErrorsCheckBox"
+                                              Content="Solo Errori"
+                                              Foreground="#e0e0e0" FontSize="12"
+                                              VerticalContentAlignment="Center"
+                                              ToolTip.Tip="Mostra solo le righe di errore"/>
+                                    <Button x:Name="OpenLogFileButton" Classes="secondary"
+                                            Content="Apri file log"
+                                            ToolTip.Tip="Apre il file debug.log con l'applicazione predefinita"/>
+                                </StackPanel>
+                                <TextBlock x:Name="LogCountTextBlock"
+                                           DockPanel.Dock="Right"
+                                           Foreground="#9e9e9e" FontSize="11"
+                                           VerticalAlignment="Center" Margin="0,0,4,0"
+                                           Text="0 voci"/>
+                            </DockPanel>
+                        </Border>
+
+                        <!-- Log list -->
+                        <Border Grid.Row="1" Background="#0d0d0d" CornerRadius="8"
+                                BorderBrush="#0d47a1" BorderThickness="1">
+                            <ListBox x:Name="LogListBox"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:LogEntry}">
+                                        <Grid ColumnDefinitions="85,52,*" Margin="6,2">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding FormattedTime}"
+                                                       Foreground="#616161"
+                                                       FontFamily="Consolas,Courier New,Monospace"
+                                                       FontSize="11"
+                                                       VerticalAlignment="Top"/>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding LevelTag}"
+                                                       Foreground="{Binding Level, Converter={StaticResource LogLevelToForeground}}"
+                                                       FontFamily="Consolas,Courier New,Monospace"
+                                                       FontSize="11"
+                                                       FontWeight="Bold"
+                                                       VerticalAlignment="Top"
+                                                       Margin="4,0"/>
+                                            <TextBlock Grid.Column="2"
+                                                       Text="{Binding Message}"
+                                                       Foreground="{Binding Level, Converter={StaticResource LogLevelToForeground}}"
+                                                       FontFamily="Consolas,Courier New,Monospace"
+                                                       FontSize="11"
+                                                       TextWrapping="Wrap"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                                <ListBox.Styles>
+                                    <Style Selector="ListBoxItem">
+                                        <Setter Property="Padding" Value="0"/>
+                                        <Setter Property="Background" Value="Transparent"/>
+                                    </Style>
+                                    <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+                                        <Setter Property="Background" Value="#1a2a3a"/>
+                                    </Style>
+                                </ListBox.Styles>
+                            </ListBox>
                         </Border>
                     </Grid>
                 </TabItem>
             </TabControl>
 
             <!-- Status Bar -->
-            <Border Grid.Row="1" Background="#0d47a1" Padding="15" Margin="0,20,0,0">
-                <TextBlock x:Name="StatusBarTextBlock" Foreground="White" FontSize="12" Text="Pronto"/>
+            <Border Grid.Row="1" Background="#0d47a1" Padding="12,8" Margin="0,10,0,0">
+                <DockPanel>
+                    <TextBlock x:Name="StatusBarConnectionInfo"
+                               DockPanel.Dock="Right" Foreground="#b3e5fc" FontSize="11"
+                               VerticalAlignment="Center" Margin="10,0,0,0"/>
+                    <TextBlock x:Name="StatusBarTextBlock" Foreground="White" FontSize="12" VerticalAlignment="Center"/>
+                </DockPanel>
             </Border>
         </Grid>
     </DockPanel>

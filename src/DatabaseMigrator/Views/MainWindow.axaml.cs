@@ -3,6 +3,9 @@ using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using System.Collections.Specialized;
+using System.Diagnostics;
+using DatabaseMigrator.Core.Services;
 using DatabaseMigrator.ViewModels;
 using DatabaseMigrator.Core.Models;
 using System.Reactive;
@@ -22,10 +25,21 @@ namespace DatabaseMigrator.Views;
 
     private static void Log(string message) => DatabaseMigrator.Core.Services.LoggerService.Log(message);
 
-    public MainWindow() 
-    { 
+    public MainWindow()
+    {
         InitializeComponent();
-        
+        Loaded += OnWindowLoaded;
+    }
+
+    private async void OnWindowLoaded(object? sender, RoutedEventArgs e)
+    {
+        Loaded -= OnWindowLoaded;
+        await Task.Yield(); // cede il controllo → la finestra viene renderizzata prima dell'init
+        InitializeViewModel();
+    }
+
+    private void InitializeViewModel()
+    {
         try
         {
             _vm = new MainWindowViewModel();
@@ -93,6 +107,105 @@ namespace DatabaseMigrator.Views;
             LoadConfigMenuItem.Click += OnLoadConfigurationClicked;
             ExitMenuItem.Click += (s, e) => Close();
             AboutMenuItem.Click += (s, e) => ShowAbout();
+
+            // ── Connection status indicators ─────────────────────────────
+            SourceStatusTextBlock.Bind(TextBlock.TextProperty,
+                new Binding("SourceStatusText") { Source = _vm });
+            SourceStatusTextBlock.Bind(TextBlock.ForegroundProperty,
+                new Binding("SourceStatusBrush") { Source = _vm });
+            TargetStatusTextBlock.Bind(TextBlock.TextProperty,
+                new Binding("TargetStatusText") { Source = _vm });
+            TargetStatusTextBlock.Bind(TextBlock.ForegroundProperty,
+                new Binding("TargetStatusBrush") { Source = _vm });
+
+            // ── Status bar connection info ────────────────────────────────
+            StatusBarConnectionInfo.Bind(TextBlock.TextProperty,
+                new Binding("ConnectionSummary") { Source = _vm });
+
+            // ── Error box visibility ──────────────────────────────────────
+            ErrorBorder.Bind(IsVisibleProperty,
+                new Binding("ErrorMessage") { Source = _vm, Converter = Avalonia.Data.Converters.StringConverters.IsNotNullOrEmpty });
+
+            // ── Window title update on connect ────────────────────────────
+            _vm.WhenAnyValue(vm => vm.IsConnected).Subscribe(connected =>
+            {
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    if (connected
+                        && _vm.SourceConnection?.ConnectionInfo != null
+                        && _vm.TargetConnection?.ConnectionInfo != null)
+                    {
+                        var src = _vm.SourceConnection.ConnectionInfo;
+                        var tgt = _vm.TargetConnection.ConnectionInfo;
+                        Title = $"Database Migrator — {src.DatabaseType}@{src.Server}  →  {tgt.DatabaseType}@{tgt.Server}";
+                    }
+                    else
+                    {
+                        Title = "Database Migrator";
+                    }
+                });
+            });
+
+            // ── Password visibility toggles ───────────────────────────────
+            SourcePasswordToggle.Click += (s, e) =>
+                SourcePasswordTextBox.PasswordChar = SourcePasswordTextBox.PasswordChar == default ? '•' : default;
+            TargetPasswordToggle.Click += (s, e) =>
+                TargetPasswordTextBox.PasswordChar = TargetPasswordTextBox.PasswordChar == default ? '•' : default;
+
+            // ── Tab badges ────────────────────────────────────────────────
+            _vm.WhenAnyValue(vm => vm.LogErrorCount).Subscribe(count =>
+            {
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    LogErrorBadge.IsVisible = count > 0;
+                    LogErrorBadgeText.Text = count > 9 ? "9+" : count.ToString();
+                });
+            });
+
+            _vm.WhenAnyValue(vm => vm.SelectedTablesCount).Subscribe(n =>
+            {
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    TablesSelectedBadge.IsVisible = n > 0;
+                    TablesSelectedBadge.Text = $"({n})";
+                });
+            });
+
+            // ── Log tab ──────────────────────────────────────────────────
+            LogListBox.Bind(ItemsControl.ItemsSourceProperty,
+                new Binding("FilteredLogEntries") { Source = _vm });
+
+            LogCountTextBlock.Bind(TextBlock.TextProperty,
+                new Binding("FilteredLogEntries.Count") { Source = _vm, StringFormat = "{0} voci" });
+
+            FilterErrorsCheckBox.Bind(CheckBox.IsCheckedProperty,
+                new Binding("ShowOnlyErrors") { Source = _vm, Mode = BindingMode.TwoWay });
+
+            ClearLogButton.Click += (s, e) =>
+                _vm?.ClearLogCommand.Execute(System.Reactive.Unit.Default).Subscribe();
+
+            CopyLogButton.Click += async (s, e) =>
+            {
+                if (_vm == null) return;
+                var lines = new System.Text.StringBuilder();
+                foreach (var logEntry in _vm.FilteredLogEntries)
+                    lines.AppendLine($"{logEntry.FormattedTime} {logEntry.LevelTag} {logEntry.Message}");
+                if (Clipboard != null)
+                    await Clipboard.SetTextAsync(lines.ToString());
+            };
+
+            OpenLogFileButton.Click += (s, e) =>
+            {
+                var path = LoggerService.GetLogPath();
+                if (File.Exists(path))
+                {
+                    try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+                    catch (Exception ex) { Log($"[OpenLogFileButton] Failed to open log file: {ex.Message}"); }
+                }
+            };
+
+            // Auto-scroll: scroll to bottom when new entries arrive
+            _vm.FilteredLogEntries.CollectionChanged += OnLogEntriesChanged;
             
             // Initialize migration mode before wiring event handlers to avoid race condition
             if (ModeSchemaAndData.IsChecked is true)
@@ -129,6 +242,21 @@ namespace DatabaseMigrator.Views;
         }
     }
     
+    private void OnLogEntriesChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action != NotifyCollectionChangedAction.Add) return;
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                var count = LogListBox.ItemCount;
+                if (count > 0)
+                    LogListBox.ContainerFromIndex(count - 1)?.BringIntoView();
+            }
+            catch { /* Ignore scroll errors */ }
+        }, Avalonia.Threading.DispatcherPriority.Background);
+    }
+
     private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
         if (!_allowClose && _vm != null && _vm.IsMigrating)
@@ -461,6 +589,7 @@ namespace DatabaseMigrator.Views;
             _vm.SourceConnection.Database = SourceDatabaseTextBox.Text ?? "";
             _vm.SourceConnection.Username = SourceUsernameTextBox.Text ?? "";
             _vm.SourceConnection.Password = SourcePasswordTextBox.Text ?? "";
+            _vm.SourceConnection.TrustServerCertificate = SourceTrustServerCertificateCheckBox.IsChecked == true;
             
             _vm.TargetConnection!.SelectedDatabaseType = (DatabaseType)targetType;
             _vm.TargetConnection.Server = TargetServerTextBox.Text ?? "";
@@ -468,6 +597,7 @@ namespace DatabaseMigrator.Views;
             _vm.TargetConnection.Database = TargetDatabaseTextBox.Text ?? "";
             _vm.TargetConnection.Username = TargetUsernameTextBox.Text ?? "";
             _vm.TargetConnection.Password = TargetPasswordTextBox.Text ?? "";
+            _vm.TargetConnection.TrustServerCertificate = TargetTrustServerCertificateCheckBox.IsChecked == true;
             
             Log($"[MainWindow] Executing ConnectDatabasesCommand...");
             _vm.ConnectDatabasesCommand.Execute(Unit.Default);
@@ -576,6 +706,7 @@ namespace DatabaseMigrator.Views;
                         SourceDatabaseTextBox.Text = _vm.SourceConnection.ConnectionInfo.Database;
                         SourceUsernameTextBox.Text = _vm.SourceConnection.ConnectionInfo.Username;
                         SourcePasswordTextBox.Text = _vm.SourceConnection.ConnectionInfo.Password;
+                        SourceTrustServerCertificateCheckBox.IsChecked = _vm.SourceConnection.ConnectionInfo.TrustServerCertificate;
                     }
 
                     if (_vm.TargetConnection?.ConnectionInfo != null)
@@ -586,6 +717,7 @@ namespace DatabaseMigrator.Views;
                         TargetDatabaseTextBox.Text = _vm.TargetConnection.ConnectionInfo.Database;
                         TargetUsernameTextBox.Text = _vm.TargetConnection.ConnectionInfo.Username;
                         TargetPasswordTextBox.Text = _vm.TargetConnection.ConnectionInfo.Password;
+                        TargetTrustServerCertificateCheckBox.IsChecked = _vm.TargetConnection.ConnectionInfo.TrustServerCertificate;
                     }
 
                     StatusBarTextBlock.Text = "Configurazione caricata";
