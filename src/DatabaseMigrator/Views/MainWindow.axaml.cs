@@ -461,6 +461,7 @@ namespace DatabaseMigrator.Views;
             _vm.SourceConnection.Database = SourceDatabaseTextBox.Text ?? "";
             _vm.SourceConnection.Username = SourceUsernameTextBox.Text ?? "";
             _vm.SourceConnection.Password = SourcePasswordTextBox.Text ?? "";
+            _vm.SourceConnection.TrustServerCertificate = SourceTrustServerCertificateCheckBox.IsChecked == true;
             
             _vm.TargetConnection!.SelectedDatabaseType = (DatabaseType)targetType;
             _vm.TargetConnection.Server = TargetServerTextBox.Text ?? "";
@@ -468,6 +469,7 @@ namespace DatabaseMigrator.Views;
             _vm.TargetConnection.Database = TargetDatabaseTextBox.Text ?? "";
             _vm.TargetConnection.Username = TargetUsernameTextBox.Text ?? "";
             _vm.TargetConnection.Password = TargetPasswordTextBox.Text ?? "";
+            _vm.TargetConnection.TrustServerCertificate = TargetTrustServerCertificateCheckBox.IsChecked == true;
             
             Log($"[MainWindow] Executing ConnectDatabasesCommand...");
             _vm.ConnectDatabasesCommand.Execute(Unit.Default);
@@ -576,6 +578,7 @@ namespace DatabaseMigrator.Views;
                         SourceDatabaseTextBox.Text = _vm.SourceConnection.ConnectionInfo.Database;
                         SourceUsernameTextBox.Text = _vm.SourceConnection.ConnectionInfo.Username;
                         SourcePasswordTextBox.Text = _vm.SourceConnection.ConnectionInfo.Password;
+                        SourceTrustServerCertificateCheckBox.IsChecked = _vm.SourceConnection.ConnectionInfo.TrustServerCertificate;
                     }
 
                     if (_vm.TargetConnection?.ConnectionInfo != null)
@@ -586,6 +589,7 @@ namespace DatabaseMigrator.Views;
                         TargetDatabaseTextBox.Text = _vm.TargetConnection.ConnectionInfo.Database;
                         TargetUsernameTextBox.Text = _vm.TargetConnection.ConnectionInfo.Username;
                         TargetPasswordTextBox.Text = _vm.TargetConnection.ConnectionInfo.Password;
+                        TargetTrustServerCertificateCheckBox.IsChecked = _vm.TargetConnection.ConnectionInfo.TrustServerCertificate;
                     }
 
                     StatusBarTextBlock.Text = "Configurazione caricata";

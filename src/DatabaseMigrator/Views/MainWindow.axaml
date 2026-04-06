@@ -74,6 +74,7 @@
                                         <TextBlock Text="Password (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
                                         <TextBox x:Name="SourcePasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
+                                    <CheckBox x:Name="SourceTrustServerCertificateCheckBox" Content="Accetta certificato server (SSL) — consigliato per SQL Server in Docker" IsChecked="True" Foreground="#e0e0e0" FontSize="11"/>
                                 </StackPanel>
                             </Border>
 
@@ -115,6 +116,7 @@
                                         <TextBlock Text="Password (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
                                         <TextBox x:Name="TargetPasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
                                     </StackPanel>
+                                    <CheckBox x:Name="TargetTrustServerCertificateCheckBox" Content="Accetta certificato server (SSL) — per SQL Server in Docker" IsChecked="True" Foreground="#e0e0e0" FontSize="11"/>
                                 </StackPanel>
                             </Border>
 
