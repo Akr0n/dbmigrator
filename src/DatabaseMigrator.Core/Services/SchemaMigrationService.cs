@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
@@ -46,6 +47,12 @@ public sealed class ConstraintAddedInfo
 /// </summary>
 public class SchemaMigrationService : DatabaseServiceBase
 {
+    /// <summary>SQL Server built-in functions commonly used in column defaults (T-SQL).</summary>
+    private static readonly string[] SqlServerBuiltinDefaultFunctionNames =
+    [
+        "getdate", "getutcdate", "newid", "newsequentialid", "sysdatetime", "sysutcdatetime",
+        "sysdatetimeoffset"
+    ];
 
     /// <summary>
     /// Checks if a table exists in the specified database.
@@ -671,6 +678,71 @@ public class SchemaMigrationService : DatabaseServiceBase
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Detects T-SQL function-call defaults (e.g. getutcdate()) anywhere in the expression text.
+    /// </summary>
+    private static bool IsSqlServerFunctionCallDefault(string defaultVal)
+    {
+        var lower = defaultVal.ToLowerInvariant();
+        return SqlServerBuiltinDefaultFunctionNames.Any(f =>
+            Regex.IsMatch(lower, @"(?<!\w)" + Regex.Escape(f) + @"\s*\("));
+    }
+
+    /// <summary>
+    /// Strips redundant outer parentheses from catalog default text, e.g. "(getutcdate())" → "getutcdate()".
+    /// </summary>
+    private static string NormalizeDefaultExpressionParens(string s)
+    {
+        s = s.Trim();
+        while (s.Length >= 2 && s[0] == '(' && s[^1] == ')')
+        {
+            var inner = s.Substring(1, s.Length - 2).Trim();
+            if (!AreParensBalanced(inner))
+                break;
+            s = inner;
+        }
+
+        return s;
+    }
+
+    private static bool AreParensBalanced(string s)
+    {
+        int depth = 0;
+        foreach (var c in s)
+        {
+            if (c == '(') depth++;
+            else if (c == ')')
+            {
+                depth--;
+                if (depth < 0)
+                    return false;
+            }
+        }
+
+        return depth == 0;
+    }
+
+    /// <summary>
+    /// Maps common SQL Server column default expressions to PostgreSQL when migrating SqlServer → PostgreSQL.
+    /// </summary>
+    private static string? TryMapSqlServerDefaultToPostgreSql(string defaultVal)
+    {
+        var expr = NormalizeDefaultExpressionParens(defaultVal);
+        var lower = expr.ToLowerInvariant();
+        if (Regex.IsMatch(lower, @"^getutcdate\s*\(\s*\)$") ||
+            Regex.IsMatch(lower, @"^sysutcdatetime\s*\(\s*\)$"))
+            return "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')";
+        if (Regex.IsMatch(lower, @"^getdate\s*\(\s*\)$") ||
+            Regex.IsMatch(lower, @"^sysdatetime\s*\(\s*\)$"))
+            return "CURRENT_TIMESTAMP";
+        if (Regex.IsMatch(lower, @"^sysdatetimeoffset\s*\(\s*\)$"))
+            return "CURRENT_TIMESTAMP";
+        if (Regex.IsMatch(lower, @"^newid\s*\(\s*\)$") ||
+            Regex.IsMatch(lower, @"^newsequentialid\s*\(\s*\)$"))
+            return "gen_random_uuid()";
+        return null;
+    }
+
     private string FormatColumnDefinition(DatabaseType dbType, ColumnDefinition column)
     {
         string colName = FormatColumnName(dbType, column.Name);
@@ -685,33 +757,30 @@ public class SchemaMigrationService : DatabaseServiceBase
             ? (column.IsNullable ? " NULL" : " NOT NULL")
             : (!column.IsNullable ? " NOT NULL" : "");
         
-        // For Oracle: ignore DEFAULT values that are SQL Server functions
         string defaultValue = "";
-        if (dbType != DatabaseType.Oracle && !string.IsNullOrEmpty(column.DefaultValue))
+        if (!string.IsNullOrEmpty(column.DefaultValue))
         {
-            // For SQL Server and PostgreSQL, keep the default
-            defaultValue = $" DEFAULT {column.DefaultValue}";
-        }
-        else if (dbType == DatabaseType.Oracle && !string.IsNullOrEmpty(column.DefaultValue))
-        {
-            // For Oracle: accept only literal values, not functions like (getutcdate())
             var defaultVal = column.DefaultValue.Trim();
-            
-            // More robust function detection:
-            // - Look for known SQL Server function names used as function calls
-            //   (function name followed by optional whitespace and an opening parenthesis)
-            var sqlServerFunctions = new[] { "getdate", "getutcdate", "newid", "sysdatetime", "sysutcdatetime" };
-            var lowerDefaultVal = defaultVal.ToLowerInvariant();
-            bool isFunction = sqlServerFunctions.Any(f =>
-                System.Text.RegularExpressions.Regex.IsMatch(
-                    lowerDefaultVal,
-                    @"(?<!\w)" + System.Text.RegularExpressions.Regex.Escape(f) + @"\s*\("));
-            
-            if (!isFunction)
+
+            if (dbType == DatabaseType.PostgreSQL && column.SourceDbType == DatabaseType.SqlServer)
             {
-                defaultValue = $" DEFAULT {defaultVal}";
+                var mapped = TryMapSqlServerDefaultToPostgreSql(defaultVal);
+                if (mapped != null)
+                    defaultValue = $" DEFAULT {mapped}";
+                else if (IsSqlServerFunctionCallDefault(defaultVal))
+                    defaultValue = "";
+                else
+                    defaultValue = $" DEFAULT {defaultVal}";
             }
-            // If it's a function, skip it - Oracle doesn't support SQL Server functions
+            else if (dbType == DatabaseType.Oracle)
+            {
+                if (!IsSqlServerFunctionCallDefault(defaultVal))
+                    defaultValue = $" DEFAULT {defaultVal}";
+            }
+            else
+            {
+                defaultValue = $" DEFAULT {column.DefaultValue}";
+            }
         }
 
         return $"{colName} {dataType}{nullable}{defaultValue}";

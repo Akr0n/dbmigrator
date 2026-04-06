@@ -164,9 +164,14 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 Username = connectionInfo.Username,
                 Password = connectionInfo.Password,
                 TrustServerCertificate = connectionInfo.TrustServerCertificate,
-                Database = connectionInfo.DatabaseType == DatabaseType.Oracle 
-                    ? (string.IsNullOrWhiteSpace(connectionInfo.Database) ? "FREEPDB1" : connectionInfo.Database) 
-                    : "master"
+                Database = connectionInfo.DatabaseType switch
+                {
+                    DatabaseType.Oracle => string.IsNullOrWhiteSpace(connectionInfo.Database)
+                        ? "FREEPDB1"
+                        : connectionInfo.Database,
+                    DatabaseType.PostgreSQL => "postgres",
+                    _ => "master"
+                }
             };
 
             using (var connection = CreateConnection(connInfo))
