@@ -577,26 +577,22 @@ CREATE TABLE fk_child (
 );
 CREATE SEQUENCE fk_child_seq START WITH 1 INCREMENT BY 1;
 
-INSERT ALL
-    INTO fk_grandparent VALUES (fk_grandparent_seq.NEXTVAL,'Region A','REG-A')
-    INTO fk_grandparent VALUES (fk_grandparent_seq.NEXTVAL,'Region B','REG-B')
-    INTO fk_grandparent VALUES (fk_grandparent_seq.NEXTVAL,'Region C','REG-C')
-SELECT 1 FROM DUAL;
+-- NOTE: INSERT ALL with sequences is broken in Oracle (NEXTVAL evaluated once per statement,
+-- not per row, causing duplicate PK values). Individual INSERTs are required.
+INSERT INTO fk_grandparent VALUES (fk_grandparent_seq.NEXTVAL,'Region A','REG-A');
+INSERT INTO fk_grandparent VALUES (fk_grandparent_seq.NEXTVAL,'Region B','REG-B');
+INSERT INTO fk_grandparent VALUES (fk_grandparent_seq.NEXTVAL,'Region C','REG-C');
 
-INSERT ALL
-    INTO fk_parent VALUES (fk_parent_seq.NEXTVAL,1,'City A1','City in Region A')
-    INTO fk_parent VALUES (fk_parent_seq.NEXTVAL,1,'City A2','Another city in Region A')
-    INTO fk_parent VALUES (fk_parent_seq.NEXTVAL,2,'City B1','City in Region B')
-    INTO fk_parent VALUES (fk_parent_seq.NEXTVAL,3,'City C1','City in Region C')
-SELECT 1 FROM DUAL;
+INSERT INTO fk_parent VALUES (fk_parent_seq.NEXTVAL,1,'City A1','City in Region A');
+INSERT INTO fk_parent VALUES (fk_parent_seq.NEXTVAL,1,'City A2','Another city in Region A');
+INSERT INTO fk_parent VALUES (fk_parent_seq.NEXTVAL,2,'City B1','City in Region B');
+INSERT INTO fk_parent VALUES (fk_parent_seq.NEXTVAL,3,'City C1','City in Region C');
 
-INSERT ALL
-    INTO fk_child VALUES (fk_child_seq.NEXTVAL,1,'District A1-1',100.00,SYSDATE)
-    INTO fk_child VALUES (fk_child_seq.NEXTVAL,1,'District A1-2',200.00,SYSDATE)
-    INTO fk_child VALUES (fk_child_seq.NEXTVAL,2,'District A2-1',150.00,SYSDATE)
-    INTO fk_child VALUES (fk_child_seq.NEXTVAL,3,'District B1-1',300.00,SYSDATE)
-    INTO fk_child VALUES (fk_child_seq.NEXTVAL,4,'District C1-1',250.00,SYSDATE)
-SELECT 1 FROM DUAL;
+INSERT INTO fk_child VALUES (fk_child_seq.NEXTVAL,1,'District A1-1',100.00,SYSDATE);
+INSERT INTO fk_child VALUES (fk_child_seq.NEXTVAL,1,'District A1-2',200.00,SYSDATE);
+INSERT INTO fk_child VALUES (fk_child_seq.NEXTVAL,2,'District A2-1',150.00,SYSDATE);
+INSERT INTO fk_child VALUES (fk_child_seq.NEXTVAL,3,'District B1-1',300.00,SYSDATE);
+INSERT INTO fk_child VALUES (fk_child_seq.NEXTVAL,4,'District C1-1',250.00,SYSDATE);
 COMMIT;
 
 -- ============================================================
@@ -606,33 +602,27 @@ CREATE TABLE self_ref (
     id        NUMBER PRIMARY KEY,
     parent_id NUMBER       NULL REFERENCES self_ref(id),
     name      VARCHAR2(100) NOT NULL,
-    depth     NUMBER        NOT NULL DEFAULT 0,
+    depth     NUMBER        DEFAULT 0 NOT NULL,
     path      VARCHAR2(500) NULL
 );
 CREATE SEQUENCE self_ref_seq START WITH 1 INCREMENT BY 1;
 
--- Root nodes
-INSERT ALL
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,NULL,'Electronics',0,'/Electronics')
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,NULL,'Clothing',0,'/Clothing')
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,NULL,'Books',0,'/Books')
-SELECT 1 FROM DUAL;
--- Level 1
-INSERT ALL
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,1,'Computers',1,'/Electronics/Computers')
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,1,'Phones',1,'/Electronics/Phones')
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,1,'Audio',1,'/Electronics/Audio')
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,2,'Men',1,'/Clothing/Men')
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,2,'Women',1,'/Clothing/Women')
-SELECT 1 FROM DUAL;
--- Level 2
-INSERT ALL
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,4,'Laptops',2,'/Electronics/Computers/Laptops')
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,4,'Desktops',2,'/Electronics/Computers/Desktops')
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,5,'Smartphones',2,'/Electronics/Phones/Smartphones')
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,7,'Shirts',2,'/Clothing/Men/Shirts')
-    INTO self_ref VALUES (self_ref_seq.NEXTVAL,8,'Dresses',2,'/Clothing/Women/Dresses')
-SELECT 1 FROM DUAL;
+-- Root nodes (depth=0, id 1-3)
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,NULL,'Electronics',0,'/Electronics');
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,NULL,'Clothing',0,'/Clothing');
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,NULL,'Books',0,'/Books');
+-- Level 1 (id 4-8, parent_id references roots above)
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,1,'Computers',1,'/Electronics/Computers');
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,1,'Phones',1,'/Electronics/Phones');
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,1,'Audio',1,'/Electronics/Audio');
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,2,'Men',1,'/Clothing/Men');
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,2,'Women',1,'/Clothing/Women');
+-- Level 2 (id 9-13, parent_id references level-1 nodes)
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,4,'Laptops',2,'/Electronics/Computers/Laptops');
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,4,'Desktops',2,'/Electronics/Computers/Desktops');
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,5,'Smartphones',2,'/Electronics/Phones/Smartphones');
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,7,'Shirts',2,'/Clothing/Men/Shirts');
+INSERT INTO self_ref VALUES (self_ref_seq.NEXTVAL,8,'Dresses',2,'/Clothing/Women/Dresses');
 COMMIT;
 
 -- ============================================================
@@ -643,7 +633,7 @@ CREATE TABLE empty_table (
     name        VARCHAR2(100)  NOT NULL,
     description NCLOB          NULL,
     value       NUMBER(18,6)   NULL,
-    active      NUMBER(1)      NOT NULL DEFAULT 1,
+    active      NUMBER(1)      DEFAULT 1 NOT NULL,
     created_at  TIMESTAMP      DEFAULT SYSDATE,
     CONSTRAINT uq_empty_name UNIQUE (name)
 );
