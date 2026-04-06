@@ -74,3 +74,8 @@ mssql_data/
 
 #IA
 .claude/
+
+#Test Coverage
+*.docx
+generate_test_cases.py
+run_tests.py
