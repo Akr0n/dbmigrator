@@ -166,8 +166,13 @@ public class SchemaMigrationService : DatabaseServiceBase
     /// Creates the schema in the target database based on the source database.
     /// Handles automatic data type mapping.
     /// </summary>
+    /// <param name="tablesCreatedOnTarget">
+    /// When non-null, each table is appended immediately after a successful <c>CREATE TABLE</c> on the target.
+    /// Used for accurate rollback (must not include tables that were only planned or skipped as already existing).
+    /// </param>
     public async Task<SchemaMigrationResult> MigrateSchemaAsync(ConnectionInfo source, ConnectionInfo target, 
-        List<TableInfo> tablesToMigrate)
+        List<TableInfo> tablesToMigrate,
+        List<TableInfo>? tablesCreatedOnTarget = null)
     {
         var constraintsAdded = new List<ConstraintAddedInfo>();
 
@@ -215,6 +220,7 @@ public class SchemaMigrationService : DatabaseServiceBase
                             await ExecuteWithRetryAsync(() => command.ExecuteNonQueryAsync(), "MigrateSchemaAsync.CreateTable");
                         }
                         Log($"[SchemaMigration] Table created successfully");
+                        tablesCreatedOnTarget?.Add(table);
                     }
 
                     // Create primary keys and unique constraints with full column information
@@ -247,6 +253,17 @@ public class SchemaMigrationService : DatabaseServiceBase
                             table.TableName,
                             generatedConstraintName,
                             constraintTypeUpper);
+
+                        // PostgreSQL may already have a UNIQUE on the same columns under a different name (e.g. prior migration).
+                        if (!constraintExists &&
+                            target.DatabaseType == DatabaseType.PostgreSQL &&
+                            constraintTypeUpper.Equals("UNIQUE", StringComparison.Ordinal) &&
+                            await PostgreSqlUniqueConstraintWithSameColumnsExistsAsync(
+                                targetConn, table.Schema, table.TableName, constraint.Columns))
+                        {
+                            Log($"[SchemaMigration] PostgreSQL: UNIQUE with same column set already exists on {table.Schema}.{table.TableName}, skipping");
+                            constraintExists = true;
+                        }
 
                         if (constraintExists)
                         {
@@ -356,6 +373,104 @@ public class SchemaMigrationService : DatabaseServiceBase
         }
     }
 
+    /// <summary>
+    /// PostgreSQL allows at most one primary key per table. Names in pg_catalog often differ from Oracle system names.
+    /// </summary>
+    private async Task<bool> PostgreSqlTableHasPrimaryKeyAsync(
+        DbConnection connection,
+        string schema,
+        string tableName)
+    {
+        const string query = @"
+            SELECT 1
+            FROM information_schema.table_constraints
+            WHERE table_schema = @schema
+              AND table_name = @tableName
+              AND constraint_type = 'PRIMARY KEY'";
+
+        using var command = connection.CreateCommand();
+        command.CommandText = query;
+        command.CommandTimeout = _commandTimeoutSeconds;
+
+        var schemaParam = command.CreateParameter();
+        schemaParam.ParameterName = "@schema";
+        schemaParam.Value = schema.ToLowerInvariant();
+        command.Parameters.Add(schemaParam);
+
+        var tableParam = command.CreateParameter();
+        tableParam.ParameterName = "@tableName";
+        tableParam.Value = tableName.ToLowerInvariant();
+        command.Parameters.Add(tableParam);
+
+        var result = await command.ExecuteScalarAsync();
+        return result != null;
+    }
+
+    /// <summary>
+    /// True if the PostgreSQL table has a UNIQUE constraint whose column list matches <paramref name="columnsInOrder"/> (case-insensitive).
+    /// </summary>
+    private async Task<bool> PostgreSqlUniqueConstraintWithSameColumnsExistsAsync(
+        DbConnection connection,
+        string schema,
+        string tableName,
+        IReadOnlyList<string> columnsInOrder)
+    {
+        if (columnsInOrder == null || columnsInOrder.Count == 0)
+            return false;
+
+        var wanted = columnsInOrder.Select(c => c.ToLowerInvariant()).ToList();
+
+        const string query = @"
+            SELECT tc.constraint_name, kcu.column_name, kcu.ordinal_position
+            FROM information_schema.table_constraints tc
+            INNER JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_schema = kcu.constraint_schema
+             AND tc.constraint_name = kcu.constraint_name
+            WHERE tc.table_schema = @schema
+              AND tc.table_name = @tableName
+              AND tc.constraint_type = 'UNIQUE'
+            ORDER BY tc.constraint_name, kcu.ordinal_position";
+
+        using var command = connection.CreateCommand();
+        command.CommandText = query;
+        command.CommandTimeout = _commandTimeoutSeconds;
+
+        var schemaParam = command.CreateParameter();
+        schemaParam.ParameterName = "@schema";
+        schemaParam.Value = schema.ToLowerInvariant();
+        command.Parameters.Add(schemaParam);
+
+        var tableParam = command.CreateParameter();
+        tableParam.ParameterName = "@tableName";
+        tableParam.Value = tableName.ToLowerInvariant();
+        command.Parameters.Add(tableParam);
+
+        var byConstraint = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                string cName = reader.GetString(0);
+                string col = reader.GetString(1).ToLowerInvariant();
+                if (!byConstraint.TryGetValue(cName, out var list))
+                {
+                    list = new List<string>();
+                    byConstraint[cName] = list;
+                }
+
+                list.Add(col);
+            }
+        }
+
+        foreach (var cols in byConstraint.Values)
+        {
+            if (cols.Count == wanted.Count && cols.SequenceEqual(wanted))
+                return true;
+        }
+
+        return false;
+    }
+
     private async Task<bool> ConstraintExistsAsync(
         DbConnection connection,
         DatabaseType dbType,
@@ -367,6 +482,16 @@ public class SchemaMigrationService : DatabaseServiceBase
         // constraintTypeUpper is expected to be "PRIMARY KEY" or "UNIQUE"
         if (string.IsNullOrWhiteSpace(constraintName) || string.IsNullOrWhiteSpace(constraintTypeUpper))
             return false;
+
+        // PostgreSQL: only one PRIMARY KEY per table. If the target table was created earlier (e.g. SQL Server → PG),
+        // the PK name often differs from Oracle's (sys_c… vs …_pkey). Match by presence of any PK, not by name.
+        if (dbType == DatabaseType.PostgreSQL &&
+            constraintTypeUpper.Equals("PRIMARY KEY", StringComparison.Ordinal) &&
+            await PostgreSqlTableHasPrimaryKeyAsync(connection, schema, tableName))
+        {
+            Log($"[ConstraintExistsAsync] PostgreSQL: primary key already present on {schema}.{tableName}; skipping add (name may differ from source)");
+            return true;
+        }
 
         string query = dbType switch
         {

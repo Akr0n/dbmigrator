@@ -25,10 +25,21 @@ namespace DatabaseMigrator.Views;
 
     private static void Log(string message) => DatabaseMigrator.Core.Services.LoggerService.Log(message);
 
-    public MainWindow() 
-    { 
+    public MainWindow()
+    {
         InitializeComponent();
-        
+        Loaded += OnWindowLoaded;
+    }
+
+    private async void OnWindowLoaded(object? sender, RoutedEventArgs e)
+    {
+        Loaded -= OnWindowLoaded;
+        await Task.Yield(); // cede il controllo → la finestra viene renderizzata prima dell'init
+        InitializeViewModel();
+    }
+
+    private void InitializeViewModel()
+    {
         try
         {
             _vm = new MainWindowViewModel();
@@ -96,6 +107,69 @@ namespace DatabaseMigrator.Views;
             LoadConfigMenuItem.Click += OnLoadConfigurationClicked;
             ExitMenuItem.Click += (s, e) => Close();
             AboutMenuItem.Click += (s, e) => ShowAbout();
+
+            // ── Connection status indicators ─────────────────────────────
+            SourceStatusTextBlock.Bind(TextBlock.TextProperty,
+                new Binding("SourceStatusText") { Source = _vm });
+            SourceStatusTextBlock.Bind(TextBlock.ForegroundProperty,
+                new Binding("SourceStatusBrush") { Source = _vm });
+            TargetStatusTextBlock.Bind(TextBlock.TextProperty,
+                new Binding("TargetStatusText") { Source = _vm });
+            TargetStatusTextBlock.Bind(TextBlock.ForegroundProperty,
+                new Binding("TargetStatusBrush") { Source = _vm });
+
+            // ── Status bar connection info ────────────────────────────────
+            StatusBarConnectionInfo.Bind(TextBlock.TextProperty,
+                new Binding("ConnectionSummary") { Source = _vm });
+
+            // ── Error box visibility ──────────────────────────────────────
+            ErrorBorder.Bind(IsVisibleProperty,
+                new Binding("ErrorMessage") { Source = _vm, Converter = Avalonia.Data.Converters.StringConverters.IsNotNullOrEmpty });
+
+            // ── Window title update on connect ────────────────────────────
+            _vm.WhenAnyValue(vm => vm.IsConnected).Subscribe(connected =>
+            {
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    if (connected
+                        && _vm.SourceConnection?.ConnectionInfo != null
+                        && _vm.TargetConnection?.ConnectionInfo != null)
+                    {
+                        var src = _vm.SourceConnection.ConnectionInfo;
+                        var tgt = _vm.TargetConnection.ConnectionInfo;
+                        Title = $"Database Migrator — {src.DatabaseType}@{src.Server}  →  {tgt.DatabaseType}@{tgt.Server}";
+                    }
+                    else
+                    {
+                        Title = "Database Migrator";
+                    }
+                });
+            });
+
+            // ── Password visibility toggles ───────────────────────────────
+            SourcePasswordToggle.Click += (s, e) =>
+                SourcePasswordTextBox.PasswordChar = SourcePasswordTextBox.PasswordChar == default ? '•' : default;
+            TargetPasswordToggle.Click += (s, e) =>
+                TargetPasswordTextBox.PasswordChar = TargetPasswordTextBox.PasswordChar == default ? '•' : default;
+
+            // ── Tab badges ────────────────────────────────────────────────
+            _vm.WhenAnyValue(vm => vm.LogErrorCount).Subscribe(count =>
+            {
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    LogErrorBadge.IsVisible = count > 0;
+                    LogErrorBadgeText.Text = count > 9 ? "9+" : count.ToString();
+                });
+            });
+
+            _vm.WhenAnyValue(vm => vm.SelectedTablesCount).Subscribe(n =>
+            {
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    TablesSelectedBadge.IsVisible = n > 0;
+                    TablesSelectedBadge.Text = $"({n})";
+                });
+            });
 
             // ── Log tab ──────────────────────────────────────────────────
             LogListBox.Bind(ItemsControl.ItemsSourceProperty,

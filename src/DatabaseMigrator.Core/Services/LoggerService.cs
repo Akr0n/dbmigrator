@@ -16,7 +16,7 @@ public static class LoggerService
         "DatabaseMigrator");
 
     private static readonly object LockObject = new object();
-    private static readonly LoggingRuntimeOptions LoggingOptions = RuntimeOptionsProvider.Current.Logging;
+    private static LoggingRuntimeOptions LoggingOptions => RuntimeOptionsProvider.Current.Logging;
 
     private static string LogPath => Path.Combine(LogDirectory, "debug.log");
     private static string ErrorLogPath => Path.Combine(LogDirectory, "error.log");
