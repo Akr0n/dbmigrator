@@ -89,7 +89,8 @@ public class SchemaMigrationService : DatabaseServiceBase
                 string dropQuery = connectionInfo.DatabaseType switch
                 {
                     DatabaseType.SqlServer => $"DROP TABLE [{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
-                    DatabaseType.PostgreSQL => $"DROP TABLE \"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(tableName)}\"",
+                    // Match FormatTableName: PostgreSQL DDL always uses lowercased quoted identifiers.
+                    DatabaseType.PostgreSQL => $"DROP TABLE {FormatTableName(DatabaseType.PostgreSQL, schema, tableName)}",
                     // Oracle: include schema prefix (was missing) so the correct table is dropped.
                     DatabaseType.Oracle => $"DROP TABLE {schema.ToUpperInvariant()}.{tableName.ToUpperInvariant()}",
                     _ => throw new NotSupportedException()
@@ -327,13 +328,21 @@ public class SchemaMigrationService : DatabaseServiceBase
                 {
                     var schemaParam = command.CreateParameter();
                     schemaParam.ParameterName = "@schema";
-                    schemaParam.Value = schema;
+                    // PostgreSQL: information_schema stores names lowercased for identifiers we create
+                    // via FormatTableName (Oracle/SQL Server sources often report uppercase names).
+                    schemaParam.Value = dbType == DatabaseType.PostgreSQL
+                        ? schema.ToLowerInvariant()
+                        : schema;
                     command.Parameters.Add(schemaParam);
                 }
                 
                 var tableParam = command.CreateParameter();
                 tableParam.ParameterName = dbType == DatabaseType.Oracle ? ":tableName" : "@tableName";
-                tableParam.Value = dbType == DatabaseType.Oracle ? tableName.ToUpperInvariant() : tableName;
+                tableParam.Value = dbType == DatabaseType.Oracle
+                    ? tableName.ToUpperInvariant()
+                    : dbType == DatabaseType.PostgreSQL
+                        ? tableName.ToLowerInvariant()
+                        : tableName;
                 command.Parameters.Add(tableParam);
                 
                 var result = await command.ExecuteScalarAsync();
