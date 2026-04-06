@@ -42,7 +42,7 @@ services:
     image: mcr.microsoft.com/mssql/server:2022-latest
     container_name: dbmigrator-sqlserver
     environment:
-      SA_PASSWORD: SqlServer@123
+      MSSQL_SA_PASSWORD: SqlServer@123
       ACCEPT_EULA: "Y"
       MSSQL_PID: Express
     ports:
@@ -50,11 +50,18 @@ services:
     volumes:
       - sqlserver_data:/var/opt/mssql
       - ./init-scripts/sqlserver-init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./init-scripts/sqlserver-docker-entrypoint.sh:/sqlserver-docker-entrypoint.sh:ro
+    entrypoint: ["/bin/bash", "/sqlserver-docker-entrypoint.sh"]
     healthcheck:
-      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "SqlServer@123", "-C", "-Q", "SELECT 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" -b -o /dev/null || exit 1",
+        ]
       interval: 10s
-      timeout: 5s
+      timeout: 10s
       retries: 5
+      start_period: 45s
 
 volumes:
   postgres_data:
