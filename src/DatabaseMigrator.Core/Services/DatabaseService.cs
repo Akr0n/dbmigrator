@@ -651,7 +651,26 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                 while (await reader.ReadAsync())
                                 {
                                     var rowValues = new object[reader.FieldCount];
-                                    reader.GetValues(rowValues);
+                                    if (reader is Microsoft.Data.SqlClient.SqlDataReader sqlReader)
+                                    {
+                                        // GetValues / GetValue both throw OverflowException for
+                                        // DECIMAL(p,s) where p > 28 (beyond .NET decimal range).
+                                        // Use GetSqlDecimal for decimal columns to preserve full precision.
+                                        for (int col = 0; col < reader.FieldCount; col++)
+                                        {
+                                            if (sqlReader.IsDBNull(col))
+                                                rowValues[col] = DBNull.Value;
+                                            else if (reader.GetFieldType(col) == typeof(decimal) &&
+                                                 reader.GetDataTypeName(col).ToLowerInvariant() is "decimal" or "numeric")
+                                                rowValues[col] = sqlReader.GetSqlDecimal(col);
+                                            else
+                                                rowValues[col] = reader.GetValue(col);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        reader.GetValues(rowValues);
+                                    }
                                     batchRows.Add(rowValues);
 
                                     if (batchRows.Count >= _batchSize)
@@ -1058,6 +1077,21 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 DatabaseType.Oracle => $"TO_TIMESTAMP_TZ('{dto:yyyy-MM-dd HH:mm:ss.fff zzz}','YYYY-MM-DD HH24:MI:SS.FF3 TZH:TZM')",
                 _ => $"'{dto:yyyy-MM-dd HH:mm:ss zzz}'"
             },
+            System.Data.SqlTypes.SqlDecimal sd => sd.ToString(),
+            // Oracle BINARY_DOUBLE / BINARY_FLOAT columns: use the native 'd'/'f' literal suffix
+            // (e.g. 3.14d, -1E+308d). These are NLS-independent numeric literals, so the decimal
+            // point is always '.', regardless of the server's NLS_NUMERIC_CHARACTERS setting.
+            // A bare NUMBER literal like -1E+308 would raise ORA-01426 (Oracle NUMBER max ~1E+126).
+            double d when dbType == DatabaseType.Oracle =>
+                double.IsNaN(d) ? "BINARY_DOUBLE_NAN" :
+                double.IsPositiveInfinity(d) ? "BINARY_DOUBLE_INFINITY" :
+                double.IsNegativeInfinity(d) ? "-BINARY_DOUBLE_INFINITY" :
+                $"{d.ToString(System.Globalization.CultureInfo.InvariantCulture)}d",
+            float f when dbType == DatabaseType.Oracle =>
+                float.IsNaN(f) ? "BINARY_FLOAT_NAN" :
+                float.IsPositiveInfinity(f) ? "BINARY_FLOAT_INFINITY" :
+                float.IsNegativeInfinity(f) ? "-BINARY_FLOAT_INFINITY" :
+                $"{f.ToString(System.Globalization.CultureInfo.InvariantCulture)}f",
             double d => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
             float f => f.ToString(System.Globalization.CultureInfo.InvariantCulture),
             decimal d => d.ToString(System.Globalization.CultureInfo.InvariantCulture),

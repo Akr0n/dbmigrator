@@ -265,6 +265,17 @@ public class SchemaMigrationService : DatabaseServiceBase
                             constraintExists = true;
                         }
 
+                        // Oracle may already have a UNIQUE on the same columns under a different auto-generated name.
+                        if (!constraintExists &&
+                            target.DatabaseType == DatabaseType.Oracle &&
+                            constraintTypeUpper.Equals("UNIQUE", StringComparison.Ordinal) &&
+                            await OracleUniqueConstraintWithSameColumnsExistsAsync(
+                                targetConn, table.TableName, constraint.Columns))
+                        {
+                            Log($"[SchemaMigration] Oracle: UNIQUE with same column set already exists on {table.TableName}, skipping");
+                            constraintExists = true;
+                        }
+
                         if (constraintExists)
                         {
                             Log($"[SchemaMigration] Constraint already exists, skipping: {generatedConstraintName} ({constraintTypeUpper}) on {table.Schema}.{table.TableName}");
@@ -471,6 +482,58 @@ public class SchemaMigrationService : DatabaseServiceBase
         return false;
     }
 
+    private async Task<bool> OracleUniqueConstraintWithSameColumnsExistsAsync(
+        DbConnection connection,
+        string tableName,
+        IReadOnlyList<string> columnsInOrder)
+    {
+        if (columnsInOrder == null || columnsInOrder.Count == 0)
+            return false;
+
+        var wanted = columnsInOrder.Select(c => c.ToUpperInvariant()).ToList();
+
+        const string query = @"
+            SELECT uc.constraint_name, ucc.column_name, ucc.position
+            FROM user_constraints uc
+            INNER JOIN user_cons_columns ucc ON uc.constraint_name = ucc.constraint_name
+            WHERE uc.table_name = UPPER(:tableName)
+              AND uc.constraint_type = 'U'
+            ORDER BY uc.constraint_name, ucc.position";
+
+        using var command = connection.CreateCommand();
+        command.CommandText = query;
+        command.CommandTimeout = _commandTimeoutSeconds;
+
+        var tableParam = command.CreateParameter();
+        tableParam.ParameterName = ":tableName";
+        tableParam.Value = tableName.ToUpperInvariant();
+        command.Parameters.Add(tableParam);
+
+        var byConstraint = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                string cName = reader.GetString(0);
+                string col = reader.GetString(1).ToUpperInvariant();
+                if (!byConstraint.TryGetValue(cName, out var list))
+                {
+                    list = new List<string>();
+                    byConstraint[cName] = list;
+                }
+                list.Add(col);
+            }
+        }
+
+        foreach (var cols in byConstraint.Values)
+        {
+            if (cols.Count == wanted.Count && cols.SequenceEqual(wanted))
+                return true;
+        }
+
+        return false;
+    }
+
     private async Task<bool> ConstraintExistsAsync(
         DbConnection connection,
         DatabaseType dbType,
@@ -491,6 +554,54 @@ public class SchemaMigrationService : DatabaseServiceBase
         {
             Log($"[ConstraintExistsAsync] PostgreSQL: primary key already present on {schema}.{tableName}; skipping add (name may differ from source)");
             return true;
+        }
+
+        // Oracle: auto-generated PK names (SYS_Cxxxxx) differ from source; check by type, not name.
+        if (dbType == DatabaseType.Oracle &&
+            constraintTypeUpper.Equals("PRIMARY KEY", StringComparison.Ordinal))
+        {
+            const string oraclePkQuery = @"
+                SELECT 1 FROM user_constraints
+                WHERE table_name = UPPER(:tableName) AND constraint_type = 'P'";
+            using var oraCmd = connection.CreateCommand();
+            oraCmd.CommandText = oraclePkQuery;
+            oraCmd.CommandTimeout = _commandTimeoutSeconds;
+            var oraTn = oraCmd.CreateParameter();
+            oraTn.ParameterName = ":tableName";
+            oraTn.Value = tableName.ToUpperInvariant();
+            oraCmd.Parameters.Add(oraTn);
+            var oraResult = await oraCmd.ExecuteScalarAsync();
+            if (oraResult != null)
+            {
+                Log($"[ConstraintExistsAsync] Oracle: primary key already present on {tableName}; skipping add (name may differ from source)");
+                return true;
+            }
+        }
+
+        // SQL Server: PK name from source may differ from existing target PK; check by type, not name.
+        if (dbType == DatabaseType.SqlServer &&
+            constraintTypeUpper.Equals("PRIMARY KEY", StringComparison.Ordinal))
+        {
+            const string ssPkQuery = @"
+                SELECT 1 FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+                WHERE TABLE_SCHEMA = @schema AND TABLE_NAME = @tableName AND CONSTRAINT_TYPE = 'PRIMARY KEY'";
+            using var ssCmd = connection.CreateCommand();
+            ssCmd.CommandText = ssPkQuery;
+            ssCmd.CommandTimeout = _commandTimeoutSeconds;
+            var ssSchema = ssCmd.CreateParameter();
+            ssSchema.ParameterName = "@schema";
+            ssSchema.Value = schema;
+            ssCmd.Parameters.Add(ssSchema);
+            var ssTn = ssCmd.CreateParameter();
+            ssTn.ParameterName = "@tableName";
+            ssTn.Value = tableName;
+            ssCmd.Parameters.Add(ssTn);
+            var ssResult = await ssCmd.ExecuteScalarAsync();
+            if (ssResult != null)
+            {
+                Log($"[ConstraintExistsAsync] SQL Server: primary key already present on {schema}.{tableName}; skipping add (name may differ from source)");
+                return true;
+            }
         }
 
         string query = dbType switch
@@ -904,7 +1015,14 @@ public class SchemaMigrationService : DatabaseServiceBase
                 else if (IsSqlServerFunctionCallDefault(defaultVal))
                     defaultValue = "";
                 else
-                    defaultValue = $" DEFAULT {defaultVal}";
+                {
+                    var normalizedDefault = NormalizeDefaultExpressionParens(defaultVal);
+                    if (dataType.Equals("BOOLEAN", StringComparison.OrdinalIgnoreCase) &&
+                        (normalizedDefault == "1" || normalizedDefault == "0"))
+                        defaultValue = $" DEFAULT {(normalizedDefault == "1" ? "TRUE" : "FALSE")}";
+                    else
+                        defaultValue = $" DEFAULT {defaultVal}";
+                }
             }
             else if (dbType == DatabaseType.Oracle)
             {
