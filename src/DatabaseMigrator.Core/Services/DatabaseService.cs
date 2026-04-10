@@ -514,7 +514,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 }
 
                 var missingColumns = await FindColumnsMissingOnTargetAsync(
-                    targetConn, target.DatabaseType, table.Schema, table.TableName, columnNames);
+                    targetConn, target.DatabaseType, table.Schema, table.TableName, columnNames, transaction);
                 if (missingColumns.Count > 0)
                 {
                     string sample = string.Join(", ", missingColumns.Take(20));
@@ -858,7 +858,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         DbConnection targetConn,
         DatabaseType targetDbType,
         string schema,
-        string tableName)
+        string tableName,
+        DbTransaction? transaction = null)
     {
         string query = targetDbType switch
         {
@@ -875,6 +876,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         using var command = targetConn.CreateCommand();
         command.CommandText = query;
         command.CommandTimeout = _commandTimeoutSeconds;
+        if (transaction != null)
+            command.Transaction = transaction;
 
         if (targetDbType == DatabaseType.Oracle)
         {
@@ -945,9 +948,11 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         DatabaseType targetDbType,
         string schema,
         string tableName,
-        IReadOnlyList<string> sourceColumnNames)
+        IReadOnlyList<string> sourceColumnNames,
+        DbTransaction? transaction = null)
     {
-        var targetCols = await GetTargetTableColumnNamesAsync(targetConn, targetDbType, schema, tableName);
+        var targetCols = await GetTargetTableColumnNamesAsync(
+            targetConn, targetDbType, schema, tableName, transaction);
         return ComputeColumnsMissingOnTarget(targetCols, sourceColumnNames);
     }
 
