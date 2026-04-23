@@ -739,7 +739,6 @@ public class MainWindowViewModel : ViewModelBase
                 _ => "schema e dati"
             };
             StatusMessage = $"Migrazione completata! {tablesToMigrate.Count} tabelle ({modeDescription})";
-            IsConnected = false;
         }
         catch (Exception ex)
         {
