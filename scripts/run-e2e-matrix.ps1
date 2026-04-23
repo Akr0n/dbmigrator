@@ -19,7 +19,17 @@ function Wait-ContainerHealthy {
             return
         }
 
+        # Fail fast if the container died (init script crash, etc.) — no point in waiting.
+        $runState = docker inspect --format "{{.State.Status}}" $ContainerName 2>$null
+        if ($LASTEXITCODE -eq 0 -and ($runState -eq "exited" -or $runState -eq "dead")) {
+            Write-Host "[$ContainerName] container is $runState — dumping logs:" -ForegroundColor Red
+            docker logs --tail 100 $ContainerName
+            throw "Container '$ContainerName' exited before becoming healthy (status=$runState, health=$state)."
+        }
+
         if ((Get-Date) - $start -gt (New-TimeSpan -Seconds $TimeoutSeconds)) {
+            Write-Host "[$ContainerName] timeout reached — dumping logs:" -ForegroundColor Red
+            docker logs --tail 100 $ContainerName
             throw "Timeout waiting for container '$ContainerName' to become healthy."
         }
 

@@ -241,7 +241,7 @@ INSERT INTO migration_test.string_edge_cases (label, col_varchar, col_text, col_
                             'CR' || chr(13) || 'LF' || chr(10) || 'end',
                             NULL),
     ('tab_char',            'col1' || chr(9) || 'col2', 'a' || chr(9) || 'b',      NULL),
-    ('null_byte',           E'before\x00after',         E'nul\x00byte',             NULL),  -- PostgreSQL allows null bytes in text
+    -- NOTE: null byte (\x00) is NOT valid in PostgreSQL TEXT/VARCHAR (UTF-8) — covered only in binary_edge_cases (BYTEA)
     ('unicode_cjk',         '你好世界',                 '中文: 你好世界 — 日本語: こんにちは', NULL),
     ('unicode_arabic',      'مرحبا بالعالم',            'العربية: مرحبا',           NULL),
     ('unicode_emoji',       '😀🎉🚀💡🔥',              'Hello 😀 World 🌍',         NULL),
