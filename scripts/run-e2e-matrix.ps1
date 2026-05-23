@@ -83,7 +83,7 @@ try {
     Wait-ContainerHealthy -ContainerName "dbmigrator-oracle" -TimeoutSeconds 420
     Initialize-SqlServerFixtures
 
-    Write-Host "Running cross-database E2E migration matrix tests..." -ForegroundColor Cyan
+    Write-Host "Running E2E tests (cross-database migration matrix + script generation)..." -ForegroundColor Cyan
     $env:DBMIGRATOR_RUN_E2E = "true"
 
     dotnet test "tests/DatabaseMigrator.Tests/DatabaseMigrator.Tests.csproj" `
@@ -92,7 +92,7 @@ try {
         --verbosity normal
 
     if ($LASTEXITCODE -ne 0) {
-        throw "Cross-database E2E migration matrix tests failed."
+        throw "E2E tests failed."
     }
 }
 finally {

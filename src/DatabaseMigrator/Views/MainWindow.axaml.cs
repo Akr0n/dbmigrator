@@ -55,6 +55,7 @@ namespace DatabaseMigrator.Views;
             
             TablesTab.Bind(IsEnabledProperty, new Binding("IsConnected") { Source = _vm });
             MigrationTab.Bind(IsEnabledProperty, new Binding("IsConnected") { Source = _vm });
+            ScriptTab.Bind(IsEnabledProperty, new Binding("IsConnected") { Source = _vm });
             
             // Bind StartMigrationButton IsEnabled based on connection and migration state
             StartMigrationButton.Bind(IsEnabledProperty, 
@@ -108,6 +109,14 @@ namespace DatabaseMigrator.Views;
             ExitMenuItem.Click += (s, e) => Close();
             AboutMenuItem.Click += (s, e) => ShowAbout();
 
+            // ── Tab "Genera Script" ───────────────────────────────────────
+            ScriptLoadObjectsButton.Click += OnScriptLoadObjectsClicked;
+            ScriptGenerateButton.Click += OnScriptGenerateClicked;
+            ScriptSelectAllButton.Click += (s, e) => _vm?.ScriptGeneration.SelectAll();
+            ScriptDeselectAllButton.Click += (s, e) => _vm?.ScriptGeneration.DeselectAll();
+            ScriptDialectCombo.SelectionChanged += OnScriptDialectChanged;
+            ScriptTypeFilterCombo.SelectionChanged += OnScriptTypeFilterChanged;
+
             // ── Connection status indicators ─────────────────────────────
             SourceStatusTextBlock.Bind(TextBlock.TextProperty,
                 new Binding("SourceStatusText") { Source = _vm });
@@ -138,6 +147,9 @@ namespace DatabaseMigrator.Views;
                         var src = _vm.SourceConnection.ConnectionInfo;
                         var tgt = _vm.TargetConnection.ConnectionInfo;
                         Title = $"Database Migrator — {src.DatabaseType}@{src.Server}  →  {tgt.DatabaseType}@{tgt.Server}";
+
+                        // Allinea il dialetto di default del tab "Genera Script" al database sorgente.
+                        ScriptDialectCombo.SelectedIndex = DialectToComboIndex(src.DatabaseType);
                     }
                     else
                     {
@@ -730,6 +742,95 @@ namespace DatabaseMigrator.Views;
             ErrorTextBlock.Text = $"Errore nel caricamento: {ex.Message}";
         }
     }
+
+    // ── Tab "Genera Script" ──────────────────────────────────────────────
+
+    private async void OnScriptLoadObjectsClicked(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null) return;
+        try
+        {
+            await _vm.ScriptGeneration.LoadObjectsAsync();
+        }
+        catch (Exception ex)
+        {
+            Log($"[OnScriptLoadObjectsClicked] Errore: {ex.Message}");
+        }
+    }
+
+    private async void OnScriptGenerateClicked(object? sender, RoutedEventArgs e)
+    {
+        if (_vm == null) return;
+        try
+        {
+            var storageProvider = StorageProvider;
+            if (storageProvider == null)
+            {
+                Log("[OnScriptGenerateClicked] StorageProvider non disponibile");
+                return;
+            }
+
+            string dbName = _vm.SourceConnection?.ConnectionInfo?.Database ?? "database";
+            var file = await storageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Genera Script su File",
+                SuggestedFileName = $"script_{dbName}_{DateTime.Now:yyyyMMdd_HHmmss}.sql",
+                DefaultExtension = "sql",
+                FileTypeChoices = new[]
+                {
+                    new FilePickerFileType("Script SQL") { Patterns = new[] { "*.sql" } },
+                    new FilePickerFileType("Tutti i file") { Patterns = new[] { "*.*" } }
+                }
+            });
+
+            if (file == null) return;
+            string path = file.Path.LocalPath;
+            Log($"[OnScriptGenerateClicked] Generazione script in {path}");
+            await _vm.ScriptGeneration.GenerateScriptAsync(path);
+        }
+        catch (Exception ex)
+        {
+            Log($"[OnScriptGenerateClicked] Errore: {ex.Message}");
+        }
+    }
+
+    private void OnScriptDialectChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_vm == null) return;
+        _vm.ScriptGeneration.SelectedDialect = ComboIndexToDialect(ScriptDialectCombo.SelectedIndex);
+    }
+
+    private void OnScriptTypeFilterChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_vm == null) return;
+        DatabaseObjectType? filter = ScriptTypeFilterCombo.SelectedIndex switch
+        {
+            1 => DatabaseObjectType.Table,
+            2 => DatabaseObjectType.View,
+            3 => DatabaseObjectType.StoredProcedure,
+            4 => DatabaseObjectType.Function,
+            5 => DatabaseObjectType.Trigger,
+            6 => DatabaseObjectType.Sequence,
+            7 => DatabaseObjectType.Index,
+            _ => null
+        };
+        _vm.ScriptGeneration.SetTypeFilter(filter);
+    }
+
+    private static int DialectToComboIndex(DatabaseType type) => type switch
+    {
+        DatabaseType.SqlServer => 0,
+        DatabaseType.PostgreSQL => 1,
+        DatabaseType.Oracle => 2,
+        _ => 0
+    };
+
+    private static DatabaseType ComboIndexToDialect(int index) => index switch
+    {
+        1 => DatabaseType.PostgreSQL,
+        2 => DatabaseType.Oracle,
+        _ => DatabaseType.SqlServer
+    };
 
     private void ShowAbout()
     {

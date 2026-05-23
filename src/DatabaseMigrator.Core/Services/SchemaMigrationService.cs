@@ -711,7 +711,7 @@ public class SchemaMigrationService : DatabaseServiceBase
         }
     }
 
-    private async Task<List<ColumnDefinition>> GetTableColumnsAsync(DbConnection connection, 
+    internal async Task<List<ColumnDefinition>> GetTableColumnsAsync(DbConnection connection,
         DatabaseType dbType, string schema, string tableName)
     {
         var columns = new List<ColumnDefinition>();
@@ -893,7 +893,7 @@ public class SchemaMigrationService : DatabaseServiceBase
             ORDER BY c.constraint_name, cc.position";
     }
 
-    private string BuildCreateTableStatement(DatabaseType targetDbType, string schema, 
+    internal string BuildCreateTableStatement(DatabaseType targetDbType, string schema,
         string tableName, List<ColumnDefinition> columns)
     {
         var sb = new System.Text.StringBuilder();
