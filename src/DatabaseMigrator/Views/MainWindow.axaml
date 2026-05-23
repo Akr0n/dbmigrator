@@ -346,7 +346,106 @@
                     </Grid>
                 </TabItem>
 
-                <!-- Tab 4: Log -->
+                <!-- Tab 4: Generazione Script -->
+                <TabItem x:Name="ScriptTab" Background="#2a2a2a" Foreground="White" Padding="15,10" IsEnabled="False">
+                    <TabItem.Header>
+                        <TextBlock Text="Genera Script" FontSize="13" Foreground="White"/>
+                    </TabItem.Header>
+                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="20" Background="#1a1a1a">
+
+                        <!-- Options -->
+                        <Border Grid.Row="0" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="2" Margin="0,0,0,12">
+                            <StackPanel Spacing="12">
+                                <TextBlock Text="Opzioni di esportazione" FontSize="14" FontWeight="Bold" Foreground="#64b5f6"/>
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <TextBlock Text="Dialetto SQL di destinazione:" Foreground="#e0e0e0" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="ScriptDialectCombo" SelectedIndex="0" Width="200" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Padding="10,6">
+                                        <ComboBoxItem>SQL Server 2019</ComboBoxItem>
+                                        <ComboBoxItem>PostgreSQL</ComboBoxItem>
+                                        <ComboBoxItem>Oracle</ComboBoxItem>
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="24">
+                                    <CheckBox x:Name="ScriptIncludeSchemaCheck" Content="Includi schema (DDL)" IsChecked="{Binding ScriptGeneration.IncludeSchema, Mode=TwoWay}" Foreground="#e0e0e0" FontSize="12"/>
+                                    <CheckBox x:Name="ScriptIncludeDataCheck" Content="Includi dati (INSERT)" IsChecked="{Binding ScriptGeneration.IncludeData, Mode=TwoWay}" Foreground="#e0e0e0" FontSize="12"/>
+                                    <CheckBox x:Name="ScriptIncludeDropCheck" Content="Aggiungi statement DROP" IsChecked="{Binding ScriptGeneration.IncludeDropStatements, Mode=TwoWay}" Foreground="#e0e0e0" FontSize="12"/>
+                                </StackPanel>
+                                <Button x:Name="ScriptLoadObjectsButton" Classes="secondary" Height="36" HorizontalAlignment="Left"
+                                        IsEnabled="{Binding !ScriptGeneration.IsBusy}" Content="Carica oggetti dalla sorgente"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Search + filters -->
+                        <Border Grid.Row="1" Background="#2a2a2a" CornerRadius="8" Padding="12" BorderBrush="#0d47a1" BorderThickness="1" Margin="0,0,0,12">
+                            <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                                <TextBox Grid.Column="0" x:Name="ScriptSearchTextBox" Watermark="Cerca oggetti per nome o schema..."
+                                         Text="{Binding ScriptGeneration.SearchFilter, Mode=TwoWay}" Padding="10" FontSize="12"
+                                         Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                <ComboBox Grid.Column="1" x:Name="ScriptTypeFilterCombo" SelectedIndex="0" Width="170" Margin="10,0,0,0"
+                                          Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Padding="10,6">
+                                    <ComboBoxItem>Tutti i tipi</ComboBoxItem>
+                                    <ComboBoxItem>Tabelle</ComboBoxItem>
+                                    <ComboBoxItem>Viste</ComboBoxItem>
+                                    <ComboBoxItem>Stored Procedure</ComboBoxItem>
+                                    <ComboBoxItem>Funzioni</ComboBoxItem>
+                                    <ComboBoxItem>Trigger</ComboBoxItem>
+                                    <ComboBoxItem>Sequenze</ComboBoxItem>
+                                    <ComboBoxItem>Indici</ComboBoxItem>
+                                </ComboBox>
+                                <Button Grid.Column="2" x:Name="ScriptSelectAllButton" Classes="primary" Height="36" Margin="10,0,0,0" Content="Seleziona tutto"/>
+                                <Button Grid.Column="3" x:Name="ScriptDeselectAllButton" Classes="secondary" Height="36" Margin="10,0,0,0" Content="Deseleziona tutto"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- Objects list -->
+                        <Border Grid.Row="2" Background="#2a2a2a" CornerRadius="8" BorderBrush="#0d47a1" BorderThickness="2" Padding="15">
+                            <Grid RowDefinitions="Auto,*">
+                                <TextBlock Grid.Row="0" Text="Oggetti del database sorgente" FontWeight="Bold" Foreground="#64b5f6" FontSize="13" Margin="0,0,0,10"/>
+                                <ListBox Grid.Row="1" x:Name="ScriptObjectsListBox" ItemsSource="{Binding ScriptGeneration.Objects}"
+                                         Background="#1a1a1a" BorderBrush="#0d47a1" BorderThickness="1" Foreground="White">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:DatabaseObject}">
+                                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="5,6">
+                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                                <Border Background="#0d47a1" CornerRadius="3" Padding="6,2" VerticalAlignment="Center" MinWidth="110">
+                                                    <TextBlock Text="{Binding DisplayType}" Foreground="#b3e5fc" FontSize="10" FontWeight="Bold"/>
+                                                </Border>
+                                                <TextBlock Text="{Binding Schema}" Foreground="#64b5f6" FontSize="12" VerticalAlignment="Center"/>
+                                                <TextBlock Text="." Foreground="#e0e0e0" FontSize="12" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding Name}" Foreground="#e0e0e0" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#9e9e9e" FontSize="11"
+                                                           VerticalAlignment="Center" IsVisible="{Binding ShowRowCount}"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </Border>
+
+                        <!-- Counters + generate -->
+                        <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="0,12,0,0">
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="20" VerticalAlignment="Center">
+                                <TextBlock Foreground="#9e9e9e" FontWeight="Bold" FontSize="12" Text="{Binding ScriptGeneration.TotalObjectsCount, StringFormat='Oggetti totali: {0}'}"/>
+                                <TextBlock Foreground="#64b5f6" FontWeight="Bold" FontSize="12" Text="{Binding ScriptGeneration.SelectedCount, StringFormat='Selezionati: {0}'}"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" x:Name="ScriptGenerateButton" Classes="primary" Height="44" FontSize="14"
+                                    IsEnabled="{Binding !ScriptGeneration.IsBusy}" Content="Genera Script su File..."/>
+                        </Grid>
+
+                        <!-- Progress + status -->
+                        <StackPanel Grid.Row="4" Spacing="6" Margin="0,12,0,0">
+                            <Grid>
+                                <ProgressBar x:Name="ScriptProgressBar" Value="{Binding ScriptGeneration.ProgressPercentage}" Maximum="100" Height="22" Foreground="#43a047" Background="#3a3a3a"/>
+                                <TextBlock TextAlignment="Center" FontWeight="Bold" Foreground="White" FontSize="11" VerticalAlignment="Center"
+                                           Text="{Binding ScriptGeneration.ProgressPercentage, StringFormat='{}{0}%'}"/>
+                            </Grid>
+                            <TextBlock x:Name="ScriptStatusTextBlock" Foreground="#9e9e9e" FontSize="11" TextWrapping="Wrap"
+                                       Text="{Binding ScriptGeneration.StatusMessage}"/>
+                        </StackPanel>
+                    </Grid>
+                </TabItem>
+
+                <!-- Tab 5: Log -->
                 <TabItem x:Name="LogTab" Background="#2a2a2a" Foreground="White" Padding="15,10">
                     <TabItem.Header>
                         <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">

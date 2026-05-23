@@ -1042,14 +1042,21 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         }
     }
 
-    private string FormatSqlValue(DatabaseType dbType, object? value)
+    /// <summary>
+    /// Formatta un valore .NET come letterale SQL per il dialetto indicato.
+    /// Quando <paramref name="unicodeStringLiterals"/> è true e il dialetto è SQL Server,
+    /// i letterali stringa vengono prefissati con N per preservare l'Unicode negli script su file.
+    /// </summary>
+    internal string FormatSqlValue(DatabaseType dbType, object? value, bool unicodeStringLiterals = false)
     {
         if (value == null || value is DBNull)
             return "NULL";
 
         return value switch
         {
-            string s => $"'{EscapeSqlString(s)}'",
+            string s => unicodeStringLiterals && dbType == DatabaseType.SqlServer
+                ? $"N'{EscapeSqlString(s)}'"
+                : $"'{EscapeSqlString(s)}'",
             bool b => dbType switch
             {
                 DatabaseType.PostgreSQL => b ? "TRUE" : "FALSE",
@@ -1069,6 +1076,19 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 // Use TO_TIMESTAMP to preserve sub-second precision; TO_DATE truncates to seconds.
                 DatabaseType.Oracle => $"TO_TIMESTAMP('{dt:yyyy-MM-dd HH:mm:ss.fff}','YYYY-MM-DD HH24:MI:SS.FF3')",
                 _ => $"'{dt:yyyy-MM-dd HH:mm:ss}'"
+            },
+            // Npgsql maps PostgreSQL 'date'/'time' columns to DateOnly/TimeOnly: without these
+            // arms they would fall through to ToString() and emit unquoted, culture-dependent text.
+            DateOnly dOnly => dbType switch
+            {
+                DatabaseType.Oracle => $"TO_DATE('{dOnly:yyyy-MM-dd}','YYYY-MM-DD')",
+                _ => $"'{dOnly:yyyy-MM-dd}'"
+            },
+            TimeOnly tOnly => dbType switch
+            {
+                DatabaseType.Oracle =>
+                    $"TO_TIMESTAMP('1970-01-01 {tOnly:HH:mm:ss.fff}','YYYY-MM-DD HH24:MI:SS.FF3')",
+                _ => $"'{tOnly:HH:mm:ss.ffffff}'"
             },
             DateTimeOffset dto => dbType switch
             {

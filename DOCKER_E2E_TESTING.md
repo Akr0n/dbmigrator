@@ -35,6 +35,35 @@ Run the automated E2E matrix (SQL Server <-> PostgreSQL <-> Oracle):
 
 The script executes xUnit tests marked with `Category=E2E` and sets `DBMIGRATOR_RUN_E2E=true`.
 
+## E2E Test Suite
+
+All E2E tests carry the `Category=E2E` trait and run only when `DBMIGRATOR_RUN_E2E=true`.
+
+### `CrossDatabaseDataMigrationMatrixTests`
+Migrates a sample table across every source/target database pair and verifies the row
+count round-trips.
+
+### `ScriptGenerationE2ETests`
+End-to-end tests for the **"Generate Script"** feature (`ScriptGenerationService` — the
+tab that exports DDL + data of selected objects to a `.sql` file).
+
+- **`GenerateScript_SameDialect_RoundTripsSchemaAndData`** (per dialect) — generates a
+  script for a subset of objects (the `users`/`products`/`orders` tables plus fixture
+  view/index/sequence), **executes the generated `.sql` against the database via the
+  native client** (`psql` / `sqlcmd` / `sqlplus`, invoked through `docker exec` on the
+  E2E containers) and verifies that schema and data are recreated faithfully. This proves
+  the generated script is valid and re-runnable.
+- **`GenerateScript_CrossDialect_ProducesTargetDialectScript`** — generates a script in a
+  *different* target dialect than the source and checks the DDL was translated. Not
+  executed: cross-dialect translation of some constructs has documented limits.
+- **`GenerateScript_HonoursIncludeFlags`** — verifies the `IncludeSchema` / `IncludeData`
+  options.
+
+The test class creates its own fixture objects idempotently (a view `vw_user_orders`, an
+index `idx_e2e_orders_user`, a sequence `seq_e2e_demo`) inside the `migration_test`
+schema; it does not modify the shared init scripts. Running the generated scripts requires
+the Docker containers to be up (the native SQL clients live inside them).
+
 ## Connection Credentials
 
 ### PostgreSQL

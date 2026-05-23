@@ -57,6 +57,9 @@ public class MainWindowViewModel : ViewModelBase
     private IBrush _targetStatusBrush = Brushes.Transparent;
     private string _connectionSummary = "";
 
+    /// <summary>ViewModel del tab "Genera Script" (export DDL + dati su file .sql).</summary>
+    public ScriptGenerationViewModel ScriptGeneration { get; } = new();
+
     public ConnectionViewModel? SourceConnection
     {
         get => _sourceConnection;
@@ -499,6 +502,9 @@ public class MainWindowViewModel : ViewModelBase
             ErrorMessage = "";
             StatusMessage = $"Connesso! Trovate {tables.Count} tabelle";
             ConnectionSummary = $"{SourceConnection.ConnectionInfo.DatabaseType}@{SourceConnection.ConnectionInfo.Server}  →  {TargetConnection.ConnectionInfo.DatabaseType}@{TargetConnection.ConnectionInfo.Server}";
+
+            // Rende disponibile la connessione sorgente al tab "Genera Script".
+            ScriptGeneration.SetSourceConnection(SourceConnection.ConnectionInfo);
 
             // Defer IsConnected to next UI frame to avoid potential crash when tab becomes visible
             await Dispatcher.UIThread.InvokeAsync(() =>
