@@ -327,10 +327,21 @@ public class MainWindowViewModel : ViewModelBase
             existingSubscription.Dispose();
             _tableSubscriptions.Remove(table);
         }
-        
+
+        // Skip(1) drops the synchronous emission that WhenAnyValue fires on subscribe —
+        // without it, each of N subscribed tables queues one RecomputeTableViews on load.
         var subscription = table.WhenAnyValue(t => t.IsSelected)
+            .Skip(1)
             .Subscribe(_ =>
             {
+                // Synchronous suppression check: bulk operations (load, Select/Deselect All)
+                // reset _suppressTableSelectionUpdates before the posted continuation runs,
+                // so checking only inside the Post lets every change leak through.
+                if (_isRefreshingTables || _suppressTableSelectionUpdates)
+                {
+                    return;
+                }
+
                 // Must run on Avalonia UI thread - RxApp.MainThreadScheduler may not be configured for Avalonia
                 Dispatcher.UIThread.Post(() =>
                 {

@@ -7,7 +7,7 @@
         Width="1400"
         Height="900"
         WindowStartupLocation="CenterScreen"
-        Background="#1a1a1a"
+        Background="#0d1117"
         Icon="avares://DatabaseMigrator/Assets/logo.ico">
 
     <Window.Resources>
@@ -15,42 +15,146 @@
     </Window.Resources>
 
     <Window.Styles>
-        <!-- Primary button: blue, bold -->
-        <Style Selector="Button.primary">
-            <Setter Property="Background" Value="#1976d2"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="Padding" Value="12,8"/>
-            <Setter Property="CornerRadius" Value="4"/>
-            <Setter Property="FontWeight" Value="Bold"/>
+        <!-- ═══════════════════════════════════════════════════════ -->
+        <!--  DESIGN SYSTEM — GitHub-inspired dark palette           -->
+        <!--  Page #0d1117 · Surface #161b22 · Border #30363d        -->
+        <!--  Accent #58a6ff · Primary #1f6feb                       -->
+        <!-- ═══════════════════════════════════════════════════════ -->
+
+        <!-- Card: contenitore standard per ogni gruppo logico -->
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="#161b22"/>
+            <Setter Property="BorderBrush" Value="#30363d"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="16"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+
+        <!-- Typography -->
+        <Style Selector="TextBlock.cardTitle">
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#58a6ff"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+        <Style Selector="TextBlock.fieldLabel">
             <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#c9d1d9"/>
+        </Style>
+        <Style Selector="TextBlock.muted">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Foreground" Value="#8b949e"/>
+        </Style>
+        <Style Selector="TextBlock.body">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="#c9d1d9"/>
+        </Style>
+
+        <!-- Inputs -->
+        <Style Selector="TextBox">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Background" Value="#0d1117"/>
+            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="BorderBrush" Value="#30363d"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="CaretBrush" Value="#58a6ff"/>
+        </Style>
+        <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+            <Setter Property="BorderBrush" Value="#1f6feb"/>
+        </Style>
+        <Style Selector="ComboBox">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Background" Value="#0d1117"/>
+            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="BorderBrush" Value="#30363d"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style Selector="ComboBoxItem">
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Foreground" Value="#c9d1d9"/>
+        </Style>
+        <Style Selector="CheckBox">
+            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style Selector="RadioButton">
+            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+
+        <!-- Buttons -->
+        <Style Selector="Button.primary">
+            <Setter Property="Background" Value="#1f6feb"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="16,0"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
         <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="#1565c0"/>
+            <Setter Property="Background" Value="#388bfd"/>
+        </Style>
+        <Style Selector="Button.primary:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="#1158c7"/>
         </Style>
         <Style Selector="Button.primary:disabled /template/ ContentPresenter">
-            <Setter Property="Background" Value="#37474f"/>
-            <Setter Property="Opacity" Value="0.6"/>
+            <Setter Property="Background" Value="#1c2128"/>
+            <Setter Property="Opacity" Value="0.5"/>
         </Style>
-        <!-- Secondary button: gray -->
         <Style Selector="Button.secondary">
-            <Setter Property="Background" Value="#455a64"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="Padding" Value="10,6"/>
-            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Background" Value="#21262d"/>
+            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="Padding" Value="16,0"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="BorderBrush" Value="#30363d"/>
+            <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="FontSize" Value="12"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
         <Style Selector="Button.secondary:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="#37474f"/>
+            <Setter Property="Background" Value="#30363d"/>
         </Style>
         <Style Selector="Button.secondary:disabled /template/ ContentPresenter">
-            <Setter Property="Background" Value="#37474f"/>
-            <Setter Property="Opacity" Value="0.6"/>
+            <Setter Property="Background" Value="#161b22"/>
+            <Setter Property="Opacity" Value="0.5"/>
+        </Style>
+
+        <!-- TabControl / TabItem -->
+        <Style Selector="TabControl">
+            <Setter Property="Background" Value="#0d1117"/>
+        </Style>
+        <Style Selector="TabItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#8b949e"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Padding" Value="16,10"/>
+        </Style>
+        <Style Selector="TabItem:selected">
+            <Setter Property="Foreground" Value="#c9d1d9"/>
+        </Style>
+        <Style Selector="TabItem:pointerover /template/ Border#PART_LayoutRoot">
+            <Setter Property="Background" Value="#1c2128"/>
         </Style>
     </Window.Styles>
 
-    <DockPanel Background="#1a1a1a">
+    <DockPanel Background="#0d1117">
         <!-- Menu Bar -->
-        <Menu DockPanel.Dock="Top" Background="#0d47a1" Foreground="White">
+        <Menu DockPanel.Dock="Top" Background="#161b22" Foreground="#c9d1d9">
             <MenuItem Header="File">
                 <MenuItem Header="Salva Configurazione..." x:Name="SaveConfigMenuItem"/>
                 <MenuItem Header="Carica Configurazione..." x:Name="LoadConfigMenuItem"/>
@@ -62,178 +166,165 @@
             </MenuItem>
         </Menu>
 
-        <Grid RowDefinitions="*,Auto" Margin="20" Background="#1a1a1a">
-            <TabControl Grid.Row="0" x:Name="MainTabControl" Background="#2a2a2a" Foreground="White">
+        <Grid RowDefinitions="*,Auto" Background="#0d1117">
+            <TabControl Grid.Row="0" x:Name="MainTabControl" Background="#0d1117" Foreground="#c9d1d9">
 
                 <!-- Tab 1: Connections -->
-                <TabItem Background="#2a2a2a" Foreground="White" Padding="15,10">
+                <TabItem>
                     <TabItem.Header>
-                        <TextBlock Text="Connessioni Database" FontSize="13" Foreground="White"/>
+                        <TextBlock Text="Connessioni Database"/>
                     </TabItem.Header>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" Background="#1a1a1a">
-                        <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,*" Margin="20" Background="#1a1a1a">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" Background="Transparent">
+                        <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,*" Margin="24" Background="#0d1117">
                             <!-- Source -->
-                            <Border Grid.Row="0" Grid.Column="0" Background="#2a2a2a" CornerRadius="8" Padding="20" BorderBrush="#0d47a1" BorderThickness="2" Margin="0,0,15,0">
-                                <StackPanel Spacing="15">
+                            <Border Grid.Row="0" Grid.Column="0" Classes="card" Margin="0,0,8,0">
+                                <StackPanel Spacing="14">
                                     <StackPanel Spacing="4">
-                                        <TextBlock Text="Database Sorgente" FontSize="16" FontWeight="Bold" Foreground="#64b5f6"/>
-                                        <TextBlock x:Name="SourceStatusTextBlock" FontSize="12" FontWeight="Bold"/>
+                                        <TextBlock Classes="cardTitle" Text="Database Sorgente" Margin="0"/>
+                                        <TextBlock x:Name="SourceStatusTextBlock" FontSize="12" FontWeight="SemiBold"/>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Tipo Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <ComboBox x:Name="SourceTypeCombo" SelectedIndex="0" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Tipo Database"/>
+                                        <ComboBox x:Name="SourceTypeCombo" SelectedIndex="0">
                                             <ComboBoxItem>SqlServer</ComboBoxItem>
                                             <ComboBoxItem>Oracle</ComboBoxItem>
                                             <ComboBoxItem>PostgreSQL</ComboBoxItem>
                                         </ComboBox>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Server:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="SourceServerTextBox" Watermark="localhost" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Server"/>
+                                        <TextBox x:Name="SourceServerTextBox" Watermark="localhost"/>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Porta:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="SourcePortTextBox" Watermark="1433" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Porta"/>
+                                        <TextBox x:Name="SourcePortTextBox" Watermark="1433"/>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="SourceDatabaseTextBox" Watermark="database" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Database"/>
+                                        <TextBox x:Name="SourceDatabaseTextBox" Watermark="database"/>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Username (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="SourceUsernameTextBox" Watermark="username" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Username (opzionale)"/>
+                                        <TextBox x:Name="SourceUsernameTextBox" Watermark="username"/>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Password (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Password (opzionale)"/>
                                         <Grid ColumnDefinitions="*,Auto">
-                                            <TextBox Grid.Column="0" x:Name="SourcePasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                            <TextBox Grid.Column="0" x:Name="SourcePasswordTextBox" PasswordChar="•" Watermark="password"/>
                                             <Button Grid.Column="1" x:Name="SourcePasswordToggle"
-                                                    Content="👁" Background="Transparent" Foreground="#9e9e9e"
-                                                    Padding="8,0" FontSize="14" BorderThickness="0"
-                                                    VerticalAlignment="Stretch"
+                                                    Content="👁" Background="Transparent" Foreground="#8b949e"
+                                                    Padding="10,0" FontSize="14" BorderThickness="0" Height="36"
+                                                    Margin="4,0,0,0"
                                                     ToolTip.Tip="Mostra/nascondi password"/>
                                         </Grid>
                                     </StackPanel>
-                                    <CheckBox x:Name="SourceTrustServerCertificateCheckBox" Content="Accetta certificato server (SSL) — consigliato per SQL Server in Docker" IsChecked="True" Foreground="#e0e0e0" FontSize="11"/>
+                                    <CheckBox x:Name="SourceTrustServerCertificateCheckBox" IsChecked="True">
+                                        <TextBlock Text="Accetta certificato server (SSL) — consigliato per SQL Server in Docker" FontSize="11" TextWrapping="Wrap"/>
+                                    </CheckBox>
                                 </StackPanel>
                             </Border>
 
                             <!-- Target -->
-                            <Border Grid.Row="0" Grid.Column="1" Background="#2a2a2a" CornerRadius="8" Padding="20" BorderBrush="#0d47a1" BorderThickness="2" Margin="15,0,0,0">
-                                <StackPanel Spacing="15">
+                            <Border Grid.Row="0" Grid.Column="1" Classes="card" Margin="8,0,0,0">
+                                <StackPanel Spacing="14">
                                     <StackPanel Spacing="4">
-                                        <TextBlock Text="Database Target" FontSize="16" FontWeight="Bold" Foreground="#64b5f6"/>
-                                        <TextBlock x:Name="TargetStatusTextBlock" FontSize="12" FontWeight="Bold"/>
+                                        <TextBlock Classes="cardTitle" Text="Database Target" Margin="0"/>
+                                        <TextBlock x:Name="TargetStatusTextBlock" FontSize="12" FontWeight="SemiBold"/>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Tipo Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <ComboBox x:Name="TargetTypeCombo" SelectedIndex="2" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Tipo Database"/>
+                                        <ComboBox x:Name="TargetTypeCombo" SelectedIndex="2">
                                             <ComboBoxItem>SqlServer</ComboBoxItem>
                                             <ComboBoxItem>Oracle</ComboBoxItem>
                                             <ComboBoxItem>PostgreSQL</ComboBoxItem>
                                         </ComboBox>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Server:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="TargetServerTextBox" Watermark="localhost" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Server"/>
+                                        <TextBox x:Name="TargetServerTextBox" Watermark="localhost"/>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Porta:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="TargetPortTextBox" Watermark="5432" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Porta"/>
+                                        <TextBox x:Name="TargetPortTextBox" Watermark="5432"/>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Database:" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="TargetDatabaseTextBox" Watermark="database" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Database"/>
+                                        <TextBox x:Name="TargetDatabaseTextBox" Watermark="database"/>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Username (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
-                                        <TextBox x:Name="TargetUsernameTextBox" Watermark="username" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Username (opzionale)"/>
+                                        <TextBox x:Name="TargetUsernameTextBox" Watermark="username"/>
                                     </StackPanel>
 
-                                    <StackPanel Spacing="5">
-                                        <TextBlock Text="Password (opzionale):" FontWeight="Bold" Foreground="#e0e0e0" FontSize="12"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Classes="fieldLabel" Text="Password (opzionale)"/>
                                         <Grid ColumnDefinitions="*,Auto">
-                                            <TextBox Grid.Column="0" x:Name="TargetPasswordTextBox" PasswordChar="•" Watermark="password" Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
+                                            <TextBox Grid.Column="0" x:Name="TargetPasswordTextBox" PasswordChar="•" Watermark="password"/>
                                             <Button Grid.Column="1" x:Name="TargetPasswordToggle"
-                                                    Content="👁" Background="Transparent" Foreground="#9e9e9e"
-                                                    Padding="8,0" FontSize="14" BorderThickness="0"
-                                                    VerticalAlignment="Stretch"
+                                                    Content="👁" Background="Transparent" Foreground="#8b949e"
+                                                    Padding="10,0" FontSize="14" BorderThickness="0" Height="36"
+                                                    Margin="4,0,0,0"
                                                     ToolTip.Tip="Mostra/nascondi password"/>
                                         </Grid>
                                     </StackPanel>
-                                    <CheckBox x:Name="TargetTrustServerCertificateCheckBox" Content="Accetta certificato server (SSL) — per SQL Server in Docker" IsChecked="True" Foreground="#e0e0e0" FontSize="11"/>
+                                    <CheckBox x:Name="TargetTrustServerCertificateCheckBox" IsChecked="True">
+                                        <TextBlock Text="Accetta certificato server (SSL) — per SQL Server in Docker" FontSize="11" TextWrapping="Wrap"/>
+                                    </CheckBox>
                                 </StackPanel>
                             </Border>
 
                             <!-- Connect Button -->
                             <Button Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" x:Name="ConnectButton"
-                                    Classes="primary" Height="50" FontSize="14" Margin="0,20,0,0"
-                                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
-                                Connetti ai Database
-                            </Button>
+                                    Classes="primary" Height="44" FontSize="13" Margin="0,16,0,0"
+                                    Content="Connetti ai Database"/>
                         </Grid>
                     </ScrollViewer>
                 </TabItem>
 
                 <!-- Tab 2: Tables -->
-                <TabItem x:Name="TablesTab" Background="#2a2a2a" Foreground="White" Padding="15,10" IsEnabled="False">
+                <TabItem x:Name="TablesTab" IsEnabled="False">
                     <TabItem.Header>
                         <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                            <TextBlock Text="Selezione Tabelle" FontSize="13" Foreground="White"/>
-                            <TextBlock x:Name="TablesSelectedBadge" FontSize="11" Foreground="#64b5f6" IsVisible="False" VerticalAlignment="Center"/>
+                            <TextBlock Text="Selezione Tabelle"/>
+                            <TextBlock x:Name="TablesSelectedBadge" FontSize="11" Foreground="#58a6ff" IsVisible="False" VerticalAlignment="Center"/>
                         </StackPanel>
                     </TabItem.Header>
-                    <Grid RowDefinitions="Auto,Auto,*,Auto" ColumnDefinitions="*,*" Margin="20,20,20,40" Background="#1a1a1a">
-                        <!-- Search Bar Row -->
-                        <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="1" Margin="0,0,0,15">
-                            <DockPanel LastChildFill="True">
-                                <Button DockPanel.Dock="Right" x:Name="ClearSearchButton" Classes="secondary" Content="×" Margin="10,0,0,0" ToolTip.Tip="Cancella ricerca"/>
-                                <TextBox x:Name="TableSearchTextBox" Watermark="Cerca tabelle per nome o schema..." Padding="10" FontSize="12" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
-                            </DockPanel>
+                    <Grid RowDefinitions="Auto,*,Auto" ColumnDefinitions="*,*" Margin="24" Background="#0d1117">
+                        <!-- Search + actions Row -->
+                        <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Classes="card">
+                            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
+                                <TextBox Grid.Column="0" x:Name="TableSearchTextBox" Watermark="Cerca tabelle per nome o schema..."/>
+                                <Button Grid.Column="1" x:Name="ClearSearchButton" Classes="secondary" Content="×" Margin="8,0,0,0" Width="36" ToolTip.Tip="Cancella ricerca"/>
+                                <Button Grid.Column="2" x:Name="SelectAllButton" Click="SelectAllButton_Click" Classes="primary" Content="Seleziona Tutto" Margin="8,0,0,0"/>
+                                <Button Grid.Column="3" x:Name="DeselectAllButton" Click="DeselectAllButton_Click" Classes="secondary" Content="Deseleziona Tutto" Margin="8,0,0,0"/>
+                                <Button Grid.Column="4" x:Name="RefreshSourceButton" Classes="secondary" Content="Aggiorna" Margin="8,0,0,0" ToolTip.Tip="Ricarica tabelle dal database sorgente"/>
+                            </Grid>
                         </Border>
 
-                        <!-- Sorgente: Buttons row -->
-                        <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="10" Margin="15,10,15,15">
-                            <Button x:Name="SelectAllButton" Click="SelectAllButton_Click" Classes="primary" Height="40">
-                                Seleziona Tutto
-                            </Button>
-                            <Button x:Name="DeselectAllButton" Click="DeselectAllButton_Click" Classes="secondary" Height="40">
-                                Deseleziona Tutto
-                            </Button>
-                            <Button x:Name="RefreshSourceButton" Classes="secondary" Height="40" ToolTip.Tip="Ricarica tabelle dal database sorgente">
-                                Aggiorna
-                            </Button>
-                        </StackPanel>
-
-                        <!-- Target: Placeholder row -->
-                        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="10" Margin="35,0,0,15">
-                            <TextBlock Text="Tabelle Destinazione (Create Automaticamente)" FontWeight="Bold" Foreground="#64b5f6" FontSize="12" VerticalAlignment="Center"/>
-                        </StackPanel>
-
                         <!-- Sorgente: Tables List -->
-                        <Border Grid.Row="2" Grid.Column="0" Background="#2a2a2a" CornerRadius="8" BorderBrush="#0d47a1" BorderThickness="2" Padding="15" Margin="0,0,15,0">
+                        <Border Grid.Row="1" Grid.Column="0" Classes="card" Margin="0,0,8,12">
                             <Grid RowDefinitions="Auto,*">
-                                <TextBlock Grid.Row="0" x:Name="SourceTablesHeader" Text="Sorgente: Seleziona Tabelle" FontWeight="Bold" Foreground="#64b5f6" FontSize="13" Margin="0,0,0,10"/>
-                                <ListBox Grid.Row="1" x:Name="SourceTablesListBox" Background="#1a1a1a" BorderBrush="#0d47a1" BorderThickness="1" Foreground="White">
+                                <TextBlock Grid.Row="0" Classes="cardTitle" x:Name="SourceTablesHeader" Text="Sorgente: seleziona tabelle"/>
+                                <ListBox Grid.Row="1" x:Name="SourceTablesListBox" Background="#0d1117" BorderBrush="#30363d" BorderThickness="1" Foreground="#c9d1d9" CornerRadius="6">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:TableInfo}">
                                             <StackPanel Orientation="Horizontal" Spacing="10" Margin="5,8">
                                                 <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding Schema}" Foreground="#64b5f6" FontSize="12"/>
-                                                <TextBlock Text="." Foreground="#e0e0e0" FontSize="12"/>
-                                                <TextBlock Text="{Binding TableName}" Foreground="#e0e0e0" FontSize="12" FontWeight="Bold"/>
-                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#9e9e9e" FontSize="11"/>
+                                                <TextBlock Text="{Binding Schema}" Foreground="#58a6ff" FontSize="12" VerticalAlignment="Center"/>
+                                                <TextBlock Text="." Foreground="#8b949e" FontSize="12" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding TableName}" Foreground="#c9d1d9" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#8b949e" FontSize="11" VerticalAlignment="Center"/>
                                             </StackPanel>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
@@ -242,17 +333,17 @@
                         </Border>
 
                         <!-- Target: Tables List (Display Only) -->
-                        <Border Grid.Row="2" Grid.Column="1" Background="#2a2a2a" CornerRadius="8" BorderBrush="#0d47a1" BorderThickness="2" Padding="15" Margin="15,0,0,0">
+                        <Border Grid.Row="1" Grid.Column="1" Classes="card" Margin="8,0,0,12">
                             <Grid RowDefinitions="Auto,*">
-                                <TextBlock Grid.Row="0" Text="Destinazione: Schema da Creare" FontWeight="Bold" Foreground="#64b5f6" FontSize="13" Margin="0,0,0,10"/>
-                                <ListBox Grid.Row="1" x:Name="TargetTablesListBox" Background="#1a1a1a" BorderBrush="#0d47a1" BorderThickness="1" Foreground="White">
+                                <TextBlock Grid.Row="0" Classes="cardTitle" Text="Destinazione: schema da creare"/>
+                                <ListBox Grid.Row="1" x:Name="TargetTablesListBox" Background="#0d1117" BorderBrush="#30363d" BorderThickness="1" Foreground="#c9d1d9" CornerRadius="6">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:TableInfo}">
                                             <StackPanel Orientation="Horizontal" Spacing="10" Margin="5,8">
-                                                <TextBlock Text="{Binding Schema}" Foreground="#64b5f6" FontSize="12"/>
-                                                <TextBlock Text="." Foreground="#a5d6a7" FontSize="12"/>
-                                                <TextBlock Text="{Binding TableName}" Foreground="#a5d6a7" FontSize="12" FontWeight="Bold"/>
-                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#81c784" FontSize="11"/>
+                                                <TextBlock Text="{Binding Schema}" Foreground="#58a6ff" FontSize="12" VerticalAlignment="Center"/>
+                                                <TextBlock Text="." Foreground="#8b949e" FontSize="12" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding TableName}" Foreground="#3fb950" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#8b949e" FontSize="11" VerticalAlignment="Center"/>
                                             </StackPanel>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
@@ -261,128 +352,129 @@
                         </Border>
 
                         <!-- Statistics -->
-                        <Grid Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" ColumnDefinitions="*,*" Margin="15,5,0,0">
-                            <StackPanel Grid.Column="0" Spacing="5">
-                                <TextBlock x:Name="SourceCountTextBlock" Foreground="#9e9e9e" FontWeight="Bold" FontSize="12" Text="Tabelle sorgente: 0"/>
-                                <TextBlock x:Name="SelectedCountTextBlock" Foreground="#64b5f6" FontWeight="Bold" FontSize="12" Text="Tabelle selezionate: 0"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Spacing="5" Margin="20,0,0,0">
-                                <TextBlock x:Name="TargetCountTextBlock" Foreground="#9e9e9e" FontWeight="Bold" FontSize="12" Text="Tabelle destinazione: 0"/>
-                                <TextBlock x:Name="TotalRowsTextBlock" Foreground="#a5d6a7" FontWeight="Bold" FontSize="12" Text="Righe totali da migrare: 0"/>
-                            </StackPanel>
-                        </Grid>
+                        <Border Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Classes="card" Margin="0">
+                            <Grid ColumnDefinitions="*,*">
+                                <StackPanel Grid.Column="0" Spacing="4">
+                                    <TextBlock x:Name="SourceCountTextBlock" Classes="muted" Text="Tabelle sorgente: 0"/>
+                                    <TextBlock x:Name="SelectedCountTextBlock" FontSize="12" FontWeight="SemiBold" Foreground="#58a6ff" Text="Tabelle selezionate: 0"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="4">
+                                    <TextBlock x:Name="TargetCountTextBlock" Classes="muted" Text="Tabelle destinazione: 0"/>
+                                    <TextBlock x:Name="TotalRowsTextBlock" FontSize="12" FontWeight="SemiBold" Foreground="#3fb950" Text="Righe totali da migrare: 0"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
                     </Grid>
                 </TabItem>
 
                 <!-- Tab 3: Migration -->
-                <TabItem x:Name="MigrationTab" Background="#2a2a2a" Foreground="White" Padding="15,10" IsEnabled="False">
+                <TabItem x:Name="MigrationTab" IsEnabled="False">
                     <TabItem.Header>
-                        <TextBlock Text="Migrazione" FontSize="13" Foreground="White"/>
+                        <TextBlock Text="Migrazione"/>
                     </TabItem.Header>
-                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="20" Background="#1a1a1a">
+                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="24" Background="#0d1117">
                         <!-- Migration Mode Selection -->
-                        <Border Grid.Row="0" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="2" Margin="0,0,0,15">
+                        <Border Grid.Row="0" Classes="card">
                             <StackPanel Spacing="10">
-                                <TextBlock Text="Modalità Migrazione:" FontWeight="Bold" FontSize="14" Foreground="#64b5f6"/>
+                                <TextBlock Classes="cardTitle" Text="Modalità migrazione"/>
                                 <StackPanel Orientation="Horizontal" Spacing="20">
-                                    <RadioButton x:Name="ModeSchemaAndData" GroupName="MigrationMode" IsChecked="True" Foreground="#e0e0e0" FontSize="12">
-                                        <TextBlock Text="Schema + Dati" VerticalAlignment="Center"/>
-                                    </RadioButton>
-                                    <RadioButton x:Name="ModeSchemaOnly" GroupName="MigrationMode" Foreground="#e0e0e0" FontSize="12">
-                                        <TextBlock Text="Solo Schema" VerticalAlignment="Center"/>
-                                    </RadioButton>
-                                    <RadioButton x:Name="ModeDataOnly" GroupName="MigrationMode" Foreground="#e0e0e0" FontSize="12">
-                                        <TextBlock Text="Solo Dati" VerticalAlignment="Center"/>
-                                    </RadioButton>
+                                    <RadioButton x:Name="ModeSchemaAndData" GroupName="MigrationMode" IsChecked="True" Content="Schema + Dati"/>
+                                    <RadioButton x:Name="ModeSchemaOnly" GroupName="MigrationMode" Content="Solo Schema"/>
+                                    <RadioButton x:Name="ModeDataOnly" GroupName="MigrationMode" Content="Solo Dati"/>
                                 </StackPanel>
-                                <TextBlock x:Name="MigrationModeDescription" Foreground="#9e9e9e" FontSize="11" TextWrapping="Wrap"
+                                <TextBlock x:Name="MigrationModeDescription" Classes="muted" TextWrapping="Wrap"
                                            Text="Crea le tabelle nel database di destinazione e copia tutti i dati. Se la tabella esiste già, verranno copiati solo i dati."/>
                             </StackPanel>
                         </Border>
 
                         <!-- Selected Tables Summary -->
-                        <StackPanel Grid.Row="1" Spacing="8" Margin="0,0,0,15">
-                            <TextBlock Text="Tabelle da migrare:" FontWeight="Bold" FontSize="13" Foreground="#64b5f6"/>
-                            <TextBlock Text="{Binding SelectedTablesCount, StringFormat='Tabelle selezionate: {0}'}" Foreground="#e0e0e0" FontSize="12"/>
-                            <TextBlock Text="{Binding TotalRowsToMigrate, StringFormat='Righe totali: {0}'}" Foreground="#e0e0e0" FontSize="12"/>
-                            <ListBox Background="#2a2a2a" Foreground="#e0e0e0" MaxHeight="200" MinHeight="60" ItemsSource="{Binding SelectedTablesForMigration}">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate DataType="{x:Type models:TableInfo}">
-                                        <StackPanel Orientation="Horizontal" Spacing="10">
-                                            <TextBlock IsVisible="{Binding IsSelected}" Text="✓" Foreground="#43a047" FontSize="11"/>
-                                            <TextBlock Text="{Binding Schema}" Foreground="#64b5f6" FontSize="11"/>
-                                            <TextBlock Text="." Foreground="#e0e0e0" FontSize="11"/>
-                                            <TextBlock FontSize="11" Foreground="#e0e0e0" FontWeight="Bold" Text="{Binding TableName}"/>
-                                            <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#9e9e9e" FontSize="10"/>
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </StackPanel>
-
-                        <Border Grid.Row="2" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="1" Margin="0,15,0,0">
-                            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                <StackPanel Spacing="10">
-                                    <TextBlock Text="Status:" FontWeight="Bold" FontSize="13" Foreground="#64b5f6"/>
-                                    <TextBlock x:Name="StatusTextBlock" Foreground="#e0e0e0" TextWrapping="Wrap" FontSize="12" MinHeight="100" Text="Pronto"/>
+                        <Border Grid.Row="1" Classes="card">
+                            <StackPanel Spacing="10">
+                                <TextBlock Classes="cardTitle" Text="Tabelle da migrare"/>
+                                <StackPanel Orientation="Horizontal" Spacing="20">
+                                    <TextBlock Text="{Binding SelectedTablesCount, StringFormat='Selezionate: {0}'}" Classes="body" FontWeight="SemiBold" Foreground="#58a6ff"/>
+                                    <TextBlock Text="{Binding TotalRowsToMigrate, StringFormat='Righe totali: {0}'}" Classes="body" FontWeight="SemiBold" Foreground="#3fb950"/>
                                 </StackPanel>
-                            </ScrollViewer>
+                                <ListBox Background="#0d1117" Foreground="#c9d1d9" MaxHeight="200" MinHeight="60" BorderBrush="#30363d" BorderThickness="1" CornerRadius="6"
+                                         ItemsSource="{Binding SelectedTablesForMigration}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:TableInfo}">
+                                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="2,4">
+                                                <TextBlock IsVisible="{Binding IsSelected}" Text="✓" Foreground="#3fb950" FontSize="11" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding Schema}" Foreground="#58a6ff" FontSize="11" VerticalAlignment="Center"/>
+                                                <TextBlock Text="." Foreground="#8b949e" FontSize="11" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding TableName}" FontSize="11" Foreground="#c9d1d9" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#8b949e" FontSize="10" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </StackPanel>
                         </Border>
 
-                        <!-- Progress bar with overlaid text -->
-                        <Grid Grid.Row="3" Margin="0,15,0,0">
-                            <ProgressBar x:Name="ProgressBar" Value="0" Maximum="100" Height="30" Foreground="#43a047" Background="#3a3a3a"/>
-                            <TextBlock x:Name="ProgressTextBlock" TextAlignment="Center" FontWeight="Bold" Foreground="White" FontSize="12" VerticalAlignment="Center" Text="0%"/>
-                        </Grid>
+                        <!-- Status -->
+                        <Border Grid.Row="2" Classes="card">
+                            <Grid RowDefinitions="Auto,*">
+                                <TextBlock Grid.Row="0" Classes="cardTitle" Text="Stato"/>
+                                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                                    <TextBlock x:Name="StatusTextBlock" Classes="body" TextWrapping="Wrap" MinHeight="100" Text="Pronto"/>
+                                </ScrollViewer>
+                            </Grid>
+                        </Border>
 
-                        <Button x:Name="StartMigrationButton" Grid.Row="4" Classes="primary" Height="50" FontSize="16" Margin="0,15,0,0" IsEnabled="False">
-                            Avvia Migrazione
-                        </Button>
+                        <!-- Progress bar -->
+                        <Border Grid.Row="3" Classes="card">
+                            <Grid>
+                                <ProgressBar x:Name="ProgressBar" Value="0" Maximum="100" Height="24" Foreground="#3fb950" Background="#0d1117" CornerRadius="4"/>
+                                <TextBlock x:Name="ProgressTextBlock" TextAlignment="Center" FontWeight="SemiBold" Foreground="White" FontSize="12" VerticalAlignment="Center" Text="0%"/>
+                            </Grid>
+                        </Border>
 
-                        <!-- Error box (red, hidden when empty) -->
-                        <Border x:Name="ErrorBorder" Grid.Row="5" Background="#3e0000" CornerRadius="5" Padding="12" BorderBrush="#ef5350" BorderThickness="1" Margin="0,15,0,0" IsVisible="False">
-                            <TextBlock x:Name="ErrorTextBlock" Foreground="#ef9a9a" TextWrapping="Wrap" FontSize="11" Text=""/>
+                        <Button x:Name="StartMigrationButton" Grid.Row="4" Classes="primary" Height="44" FontSize="13" Margin="0,4,0,0" IsEnabled="False"
+                                Content="Avvia Migrazione"/>
+
+                        <!-- Error box -->
+                        <Border x:Name="ErrorBorder" Grid.Row="5" Background="#3a1015" CornerRadius="6" Padding="14" BorderBrush="#f85149" BorderThickness="1" Margin="0,12,0,0" IsVisible="False">
+                            <TextBlock x:Name="ErrorTextBlock" Foreground="#ffa198" TextWrapping="Wrap" FontSize="11" Text=""/>
                         </Border>
                     </Grid>
                 </TabItem>
 
                 <!-- Tab 4: Generazione Script -->
-                <TabItem x:Name="ScriptTab" Background="#2a2a2a" Foreground="White" Padding="15,10" IsEnabled="False">
+                <TabItem x:Name="ScriptTab" IsEnabled="False">
                     <TabItem.Header>
-                        <TextBlock Text="Genera Script" FontSize="13" Foreground="White"/>
+                        <TextBlock Text="Genera Script"/>
                     </TabItem.Header>
-                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="20" Background="#1a1a1a">
+                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="24" Background="#0d1117">
 
                         <!-- Options -->
-                        <Border Grid.Row="0" Background="#2a2a2a" CornerRadius="8" Padding="15" BorderBrush="#0d47a1" BorderThickness="2" Margin="0,0,0,12">
-                            <StackPanel Spacing="12">
-                                <TextBlock Text="Opzioni di esportazione" FontSize="14" FontWeight="Bold" Foreground="#64b5f6"/>
+                        <Border Grid.Row="0" Classes="card">
+                            <StackPanel Spacing="14">
+                                <TextBlock Classes="cardTitle" Text="Opzioni di esportazione"/>
                                 <StackPanel Orientation="Horizontal" Spacing="12">
-                                    <TextBlock Text="Dialetto SQL di destinazione:" Foreground="#e0e0e0" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
-                                    <ComboBox x:Name="ScriptDialectCombo" SelectedIndex="0" Width="200" Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Padding="10,6">
-                                        <ComboBoxItem>SQL Server 2019</ComboBoxItem>
+                                    <TextBlock Classes="fieldLabel" Text="Esporta per:" VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="ScriptDialectCombo" SelectedIndex="0" Width="220">
+                                        <ComboBoxItem>SQL Server</ComboBoxItem>
                                         <ComboBoxItem>PostgreSQL</ComboBoxItem>
                                         <ComboBoxItem>Oracle</ComboBoxItem>
                                     </ComboBox>
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="24">
-                                    <CheckBox x:Name="ScriptIncludeSchemaCheck" Content="Includi schema (DDL)" IsChecked="{Binding ScriptGeneration.IncludeSchema, Mode=TwoWay}" Foreground="#e0e0e0" FontSize="12"/>
-                                    <CheckBox x:Name="ScriptIncludeDataCheck" Content="Includi dati (INSERT)" IsChecked="{Binding ScriptGeneration.IncludeData, Mode=TwoWay}" Foreground="#e0e0e0" FontSize="12"/>
-                                    <CheckBox x:Name="ScriptIncludeDropCheck" Content="Aggiungi statement DROP" IsChecked="{Binding ScriptGeneration.IncludeDropStatements, Mode=TwoWay}" Foreground="#e0e0e0" FontSize="12"/>
+                                    <CheckBox x:Name="ScriptIncludeSchemaCheck" Content="Includi schema (DDL)" IsChecked="{Binding ScriptGeneration.IncludeSchema, Mode=TwoWay}"/>
+                                    <CheckBox x:Name="ScriptIncludeDataCheck" Content="Includi dati (INSERT)" IsChecked="{Binding ScriptGeneration.IncludeData, Mode=TwoWay}"/>
+                                    <CheckBox x:Name="ScriptIncludeDropCheck" Content="Aggiungi statement DROP" IsChecked="{Binding ScriptGeneration.IncludeDropStatements, Mode=TwoWay}"/>
                                 </StackPanel>
-                                <Button x:Name="ScriptLoadObjectsButton" Classes="secondary" Height="36" HorizontalAlignment="Left"
+                                <Button x:Name="ScriptLoadObjectsButton" Classes="secondary" HorizontalAlignment="Left"
                                         IsEnabled="{Binding !ScriptGeneration.IsBusy}" Content="Carica oggetti dalla sorgente"/>
                             </StackPanel>
                         </Border>
 
                         <!-- Search + filters -->
-                        <Border Grid.Row="1" Background="#2a2a2a" CornerRadius="8" Padding="12" BorderBrush="#0d47a1" BorderThickness="1" Margin="0,0,0,12">
+                        <Border Grid.Row="1" Classes="card">
                             <Grid ColumnDefinitions="*,Auto,Auto,Auto">
                                 <TextBox Grid.Column="0" x:Name="ScriptSearchTextBox" Watermark="Cerca oggetti per nome o schema..."
-                                         Text="{Binding ScriptGeneration.SearchFilter, Mode=TwoWay}" Padding="10" FontSize="12"
-                                         Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1"/>
-                                <ComboBox Grid.Column="1" x:Name="ScriptTypeFilterCombo" SelectedIndex="0" Width="170" Margin="10,0,0,0"
-                                          Background="#3a3a3a" Foreground="#ffffff" BorderBrush="#0d47a1" BorderThickness="1" Padding="10,6">
+                                         Text="{Binding ScriptGeneration.SearchFilter, Mode=TwoWay}"/>
+                                <ComboBox Grid.Column="1" x:Name="ScriptTypeFilterCombo" SelectedIndex="0" Width="180" Margin="8,0,0,0">
                                     <ComboBoxItem>Tutti i tipi</ComboBoxItem>
                                     <ComboBoxItem>Tabelle</ComboBoxItem>
                                     <ComboBoxItem>Viste</ComboBoxItem>
@@ -392,74 +484,74 @@
                                     <ComboBoxItem>Sequenze</ComboBoxItem>
                                     <ComboBoxItem>Indici</ComboBoxItem>
                                 </ComboBox>
-                                <Button Grid.Column="2" x:Name="ScriptSelectAllButton" Classes="primary" Height="36" Margin="10,0,0,0" Content="Seleziona tutto"/>
-                                <Button Grid.Column="3" x:Name="ScriptDeselectAllButton" Classes="secondary" Height="36" Margin="10,0,0,0" Content="Deseleziona tutto"/>
+                                <Button Grid.Column="2" x:Name="ScriptSelectAllButton" Classes="primary" Margin="8,0,0,0" Content="Seleziona tutto"/>
+                                <Button Grid.Column="3" x:Name="ScriptDeselectAllButton" Classes="secondary" Margin="8,0,0,0" Content="Deseleziona tutto"/>
                             </Grid>
                         </Border>
 
                         <!-- Objects list -->
-                        <Border Grid.Row="2" Background="#2a2a2a" CornerRadius="8" BorderBrush="#0d47a1" BorderThickness="2" Padding="15">
-                            <Grid RowDefinitions="Auto,*">
-                                <TextBlock Grid.Row="0" Text="Oggetti del database sorgente" FontWeight="Bold" Foreground="#64b5f6" FontSize="13" Margin="0,0,0,10"/>
-                                <ListBox Grid.Row="1" x:Name="ScriptObjectsListBox" ItemsSource="{Binding ScriptGeneration.Objects}"
-                                         Background="#1a1a1a" BorderBrush="#0d47a1" BorderThickness="1" Foreground="White">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate DataType="{x:Type models:DatabaseObject}">
-                                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="5,6">
-                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center"/>
-                                                <Border Background="#0d47a1" CornerRadius="3" Padding="6,2" VerticalAlignment="Center" MinWidth="110">
-                                                    <TextBlock Text="{Binding DisplayType}" Foreground="#b3e5fc" FontSize="10" FontWeight="Bold"/>
-                                                </Border>
-                                                <TextBlock Text="{Binding Schema}" Foreground="#64b5f6" FontSize="12" VerticalAlignment="Center"/>
-                                                <TextBlock Text="." Foreground="#e0e0e0" FontSize="12" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding Name}" Foreground="#e0e0e0" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#9e9e9e" FontSize="11"
-                                                           VerticalAlignment="Center" IsVisible="{Binding ShowRowCount}"/>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                            </Grid>
+                        <Border Grid.Row="2" Classes="card">
+                            <ListBox x:Name="ScriptObjectsListBox" ItemsSource="{Binding ScriptGeneration.Objects}"
+                                     Background="#0d1117" BorderBrush="#30363d" BorderThickness="1" Foreground="#c9d1d9" CornerRadius="6">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:DatabaseObject}">
+                                        <StackPanel Orientation="Horizontal" Spacing="10" Margin="5,6">
+                                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                            <Border Background="#1f6feb" CornerRadius="3" Padding="6,2" VerticalAlignment="Center" MinWidth="110">
+                                                <TextBlock Text="{Binding DisplayType}" Foreground="White" FontSize="10" FontWeight="SemiBold"/>
+                                            </Border>
+                                            <TextBlock Text="{Binding Schema}" Foreground="#58a6ff" FontSize="12" VerticalAlignment="Center"/>
+                                            <TextBlock Text="." Foreground="#8b949e" FontSize="12" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding Name}" Foreground="#c9d1d9" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#8b949e" FontSize="11"
+                                                       VerticalAlignment="Center" IsVisible="{Binding ShowRowCount}"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
                         </Border>
 
                         <!-- Counters + generate -->
-                        <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="0,12,0,0">
-                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="20" VerticalAlignment="Center">
-                                <TextBlock Foreground="#9e9e9e" FontWeight="Bold" FontSize="12" Text="{Binding ScriptGeneration.TotalObjectsCount, StringFormat='Oggetti totali: {0}'}"/>
-                                <TextBlock Foreground="#64b5f6" FontWeight="Bold" FontSize="12" Text="{Binding ScriptGeneration.SelectedCount, StringFormat='Selezionati: {0}'}"/>
-                            </StackPanel>
-                            <Button Grid.Column="1" x:Name="ScriptGenerateButton" Classes="primary" Height="44" FontSize="14"
-                                    IsEnabled="{Binding !ScriptGeneration.IsBusy}" Content="Genera Script su File..."/>
-                        </Grid>
+                        <Border Grid.Row="3" Classes="card">
+                            <Grid ColumnDefinitions="*,Auto" MinHeight="36">
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="20" VerticalAlignment="Center" HorizontalAlignment="Left">
+                                    <TextBlock VerticalAlignment="Center" Classes="muted" FontWeight="SemiBold" Text="{Binding ScriptGeneration.TotalObjectsCount, StringFormat='Oggetti totali: {0}'}"/>
+                                    <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="#58a6ff" Text="{Binding ScriptGeneration.SelectedCount, StringFormat='Selezionati: {0}'}"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" x:Name="ScriptGenerateButton" Classes="primary" Height="36"
+                                        IsEnabled="{Binding !ScriptGeneration.IsBusy}" Content="Genera Script su File..."/>
+                            </Grid>
+                        </Border>
 
                         <!-- Progress + status -->
-                        <StackPanel Grid.Row="4" Spacing="6" Margin="0,12,0,0">
-                            <Grid>
-                                <ProgressBar x:Name="ScriptProgressBar" Value="{Binding ScriptGeneration.ProgressPercentage}" Maximum="100" Height="22" Foreground="#43a047" Background="#3a3a3a"/>
-                                <TextBlock TextAlignment="Center" FontWeight="Bold" Foreground="White" FontSize="11" VerticalAlignment="Center"
-                                           Text="{Binding ScriptGeneration.ProgressPercentage, StringFormat='{}{0}%'}"/>
-                            </Grid>
-                            <TextBlock x:Name="ScriptStatusTextBlock" Foreground="#9e9e9e" FontSize="11" TextWrapping="Wrap"
-                                       Text="{Binding ScriptGeneration.StatusMessage}"/>
-                        </StackPanel>
+                        <Border Grid.Row="4" Classes="card" Margin="0">
+                            <StackPanel Spacing="8">
+                                <Grid>
+                                    <ProgressBar x:Name="ScriptProgressBar" Value="{Binding ScriptGeneration.ProgressPercentage}" Maximum="100" Height="22" Foreground="#3fb950" Background="#0d1117" CornerRadius="4"/>
+                                    <TextBlock TextAlignment="Center" FontWeight="SemiBold" Foreground="White" FontSize="11" VerticalAlignment="Center"
+                                               Text="{Binding ScriptGeneration.ProgressPercentage, StringFormat='{}{0}%'}"/>
+                                </Grid>
+                                <TextBlock x:Name="ScriptStatusTextBlock" Classes="muted" TextWrapping="Wrap"
+                                           Text="{Binding ScriptGeneration.StatusMessage}"/>
+                            </StackPanel>
+                        </Border>
                     </Grid>
                 </TabItem>
 
                 <!-- Tab 5: Log -->
-                <TabItem x:Name="LogTab" Background="#2a2a2a" Foreground="White" Padding="15,10">
+                <TabItem x:Name="LogTab">
                     <TabItem.Header>
                         <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                            <TextBlock Text="Log" FontSize="13" Foreground="White"/>
-                            <Border x:Name="LogErrorBadge" Background="#c62828" CornerRadius="9" Padding="5,1" IsVisible="False">
-                                <TextBlock x:Name="LogErrorBadgeText" Foreground="White" FontSize="10" FontWeight="Bold" Text="0"/>
+                            <TextBlock Text="Log"/>
+                            <Border x:Name="LogErrorBadge" Background="#da3633" CornerRadius="9" Padding="6,1" IsVisible="False">
+                                <TextBlock x:Name="LogErrorBadgeText" Foreground="White" FontSize="10" FontWeight="SemiBold" Text="0"/>
                             </Border>
                         </StackPanel>
                     </TabItem.Header>
-                    <Grid RowDefinitions="Auto,*" Margin="20" Background="#1a1a1a">
+                    <Grid RowDefinitions="Auto,*" Margin="24" Background="#0d1117">
 
                         <!-- Toolbar -->
-                        <Border Grid.Row="0" Background="#2a2a2a" CornerRadius="8" Padding="10,8"
-                                BorderBrush="#0d47a1" BorderThickness="1" Margin="0,0,0,10">
+                        <Border Grid.Row="0" Classes="card">
                             <DockPanel LastChildFill="False">
                                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="8">
                                     <Button x:Name="ClearLogButton" Classes="secondary"
@@ -470,8 +562,8 @@
                                             ToolTip.Tip="Copia il log visibile negli appunti"/>
                                     <CheckBox x:Name="FilterErrorsCheckBox"
                                               Content="Solo Errori"
-                                              Foreground="#e0e0e0" FontSize="12"
                                               VerticalContentAlignment="Center"
+                                              Margin="8,0,0,0"
                                               ToolTip.Tip="Mostra solo le righe di errore"/>
                                     <Button x:Name="OpenLogFileButton" Classes="secondary"
                                             Content="Apri file log"
@@ -479,18 +571,18 @@
                                 </StackPanel>
                                 <TextBlock x:Name="LogCountTextBlock"
                                            DockPanel.Dock="Right"
-                                           Foreground="#9e9e9e" FontSize="11"
+                                           Classes="muted"
                                            VerticalAlignment="Center" Margin="0,0,4,0"
                                            Text="0 voci"/>
                             </DockPanel>
                         </Border>
 
                         <!-- Log list -->
-                        <Border Grid.Row="1" Background="#0d0d0d" CornerRadius="8"
-                                BorderBrush="#0d47a1" BorderThickness="1">
+                        <Border Grid.Row="1" Classes="card" Margin="0" Padding="2">
                             <ListBox x:Name="LogListBox"
-                                     Background="Transparent"
+                                     Background="#0d1117"
                                      BorderThickness="0"
+                                     CornerRadius="6"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                      ScrollViewer.VerticalScrollBarVisibility="Auto">
                                 <ListBox.ItemTemplate>
@@ -498,7 +590,7 @@
                                         <Grid ColumnDefinitions="85,52,*" Margin="6,2">
                                             <TextBlock Grid.Column="0"
                                                        Text="{Binding FormattedTime}"
-                                                       Foreground="#616161"
+                                                       Foreground="#6e7681"
                                                        FontFamily="Consolas,Courier New,Monospace"
                                                        FontSize="11"
                                                        VerticalAlignment="Top"/>
@@ -525,7 +617,7 @@
                                         <Setter Property="Background" Value="Transparent"/>
                                     </Style>
                                     <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
-                                        <Setter Property="Background" Value="#1a2a3a"/>
+                                        <Setter Property="Background" Value="#1f6feb33"/>
                                     </Style>
                                 </ListBox.Styles>
                             </ListBox>
@@ -535,12 +627,12 @@
             </TabControl>
 
             <!-- Status Bar -->
-            <Border Grid.Row="1" Background="#0d47a1" Padding="12,8" Margin="0,10,0,0">
+            <Border Grid.Row="1" Background="#161b22" BorderBrush="#30363d" BorderThickness="0,1,0,0" Padding="16,10">
                 <DockPanel>
                     <TextBlock x:Name="StatusBarConnectionInfo"
-                               DockPanel.Dock="Right" Foreground="#b3e5fc" FontSize="11"
+                               DockPanel.Dock="Right" Foreground="#8b949e" FontSize="11"
                                VerticalAlignment="Center" Margin="10,0,0,0"/>
-                    <TextBlock x:Name="StatusBarTextBlock" Foreground="White" FontSize="12" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="StatusBarTextBlock" Foreground="#c9d1d9" FontSize="12" VerticalAlignment="Center"/>
                 </DockPanel>
             </Border>
         </Grid>
