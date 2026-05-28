@@ -249,28 +249,40 @@ public class ScriptGenerationService : DatabaseServiceBase
         {
             await WriteSectionAsync(output, "DROP DEGLI OGGETTI ESISTENTI");
 
-            // SQL Server non supporta DROP TABLE ... CASCADE: le FOREIGN KEY che referenziano
-            // le tabelle vanno rimosse esplicitamente prima dei DROP TABLE.
-            // (PostgreSQL usa CASCADE, Oracle usa CASCADE CONSTRAINTS — vedi BuildDropStatement.)
-            if (dialect == DatabaseType.SqlServer)
+            // 1) DROP delle FOREIGN KEY per rompere le dipendenze tra tabelle.
+            //    Necessario per SQL Server (non ha DROP TABLE ... CASCADE) e utile per
+            //    rendere lo script idempotente anche su PostgreSQL/Oracle quando si
+            //    rilancia solo la sezione constraint senza ricreare le tabelle.
+            foreach (var table in tables)
             {
-                foreach (var table in tables)
+                cancellationToken.ThrowIfCancellationRequested();
+                try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    try
-                    {
-                        foreach (var fk in await GetForeignKeysAsync(connection, source.DatabaseType, table))
-                            await WriteStatementAsync(output, dialect,
-                                $"ALTER TABLE {FormatTableName(dialect, table.Schema, table.Name)} " +
-                                $"DROP CONSTRAINT IF EXISTS {FormatConstraintName(dialect, fk.Name)}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Log($"[ScriptGeneration] FOREIGN KEY non rimosse per {table.QualifiedName}: {ex.Message}");
-                    }
+                    foreach (var fk in await GetForeignKeysAsync(connection, source.DatabaseType, table))
+                        await WriteDropConstraintAsync(output, dialect, table, fk.Name);
+                }
+                catch (Exception ex)
+                {
+                    Log($"[ScriptGeneration] FOREIGN KEY non rimosse per {table.QualifiedName}: {ex.Message}");
                 }
             }
 
+            // 2) DROP di PRIMARY KEY / UNIQUE: vanno dopo le FK perché le FK le referenziano.
+            foreach (var table in tables)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    foreach (var kc in await GetKeyConstraintsAsync(connection, source.DatabaseType, table))
+                        await WriteDropConstraintAsync(output, dialect, table, kc.Name);
+                }
+                catch (Exception ex)
+                {
+                    Log($"[ScriptGeneration] PK/UNIQUE non rimosse per {table.QualifiedName}: {ex.Message}");
+                }
+            }
+
+            // 3) DROP degli oggetti rimanenti in ordine inverso delle dipendenze.
             foreach (var o in triggers.Concat(routines).Concat(views).Concat(indexes)
                          .Concat(tables).Concat(sequences))
             {
@@ -1059,6 +1071,32 @@ public class ScriptGenerationService : DatabaseServiceBase
                 : $"DROP INDEX IF EXISTS {FormatTableName(dialect, obj.Schema, obj.Name)}",
             _ => $"-- DROP non supportato per {obj.QualifiedName}"
         };
+    }
+
+
+    // Emette un DROP CONSTRAINT idempotente per il dialetto target.
+    // Oracle non supporta IF EXISTS sulle constraint: si usa un blocco PL/SQL che ignora ORA-02443/02431.
+    private static async Task WriteDropConstraintAsync(TextWriter output, DatabaseType dialect,
+        DatabaseObject table, string constraintName)
+    {
+        string tableRef = FormatTableName(dialect, table.Schema, table.Name);
+        string name = FormatConstraintName(dialect, constraintName);
+
+        if (dialect == DatabaseType.Oracle)
+        {
+            string sql =
+                "BEGIN" + Environment.NewLine +
+                $"  EXECUTE IMMEDIATE 'ALTER TABLE {tableRef} DROP CONSTRAINT {name}';" + Environment.NewLine +
+                "EXCEPTION WHEN OTHERS THEN" + Environment.NewLine +
+                "  IF SQLCODE NOT IN (-2443, -2431, -942) THEN RAISE; END IF;" + Environment.NewLine +
+                "END;";
+            await WriteStatementAsync(output, dialect, sql, plsqlBlock: true);
+        }
+        else
+        {
+            await WriteStatementAsync(output, dialect,
+                $"ALTER TABLE {tableRef} DROP CONSTRAINT IF EXISTS {name}");
+        }
     }
 
     private static string FormatConstraintName(DatabaseType dialect, string name) => dialect switch
