@@ -714,8 +714,6 @@ public class SchemaMigrationService : DatabaseServiceBase
     internal async Task<List<ColumnDefinition>> GetTableColumnsAsync(DbConnection connection,
         DatabaseType dbType, string schema, string tableName)
     {
-        var columns = new List<ColumnDefinition>();
-        
         string query = dbType switch
         {
             DatabaseType.SqlServer => GetSqlServerColumnsQuery(),
@@ -723,6 +721,28 @@ public class SchemaMigrationService : DatabaseServiceBase
             DatabaseType.Oracle => GetOracleColumnsQuery(),
             _ => throw new NotSupportedException()
         };
+
+        try
+        {
+            return await ReadTableColumnsAsync(connection, dbType, schema, tableName, query);
+        }
+        catch (Exception ex) when (dbType != DatabaseType.SqlServer && IsMissingIdentityMetadataError(ex))
+        {
+            // PostgreSQL < 10 / Oracle < 12.1 lack the identity catalog the augmented query references.
+            // Those servers have no true identity columns, so the legacy (identity-free) query is correct.
+            Log($"[GetTableColumnsAsync] Identity metadata not available for {dbType} " +
+                $"({ex.Message.Trim()}); falling back to the legacy column query.");
+            string legacyQuery = dbType == DatabaseType.PostgreSQL
+                ? GetPostgresColumnsQueryLegacy()
+                : GetOracleColumnsQueryLegacy();
+            return await ReadTableColumnsAsync(connection, dbType, schema, tableName, legacyQuery);
+        }
+    }
+
+    private async Task<List<ColumnDefinition>> ReadTableColumnsAsync(DbConnection connection,
+        DatabaseType dbType, string schema, string tableName, string query)
+    {
+        var columns = new List<ColumnDefinition>();
 
         using (var command = connection.CreateCommand())
         {
@@ -741,33 +761,80 @@ public class SchemaMigrationService : DatabaseServiceBase
 
             using (var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "GetTableColumnsAsync.ExecuteReader"))
             {
+                // The legacy fallback query does not project the identity columns, so guard their presence.
+                bool hasIdentityColumns = ReaderHasColumn(reader, "IsIdentity");
+
                 while (await reader.ReadAsync())
                 {
-                    columns.Add(new ColumnDefinition
+                    var column = new ColumnDefinition
                     {
                         Name = reader["ColumnName"].ToString() ?? "",
                         DataType = reader["DataType"].ToString() ?? "",
                         IsNullable = Convert.ToBoolean(reader["IsNullable"]),
-                        MaxLength = reader["MaxLength"] != DBNull.Value 
-                            ? Convert.ToInt32(reader["MaxLength"]) 
+                        MaxLength = reader["MaxLength"] != DBNull.Value
+                            ? Convert.ToInt32(reader["MaxLength"])
                             : null,
-                        NumericPrecision = reader["Precision"] != DBNull.Value 
-                            ? Convert.ToInt32(reader["Precision"]) 
+                        NumericPrecision = reader["Precision"] != DBNull.Value
+                            ? Convert.ToInt32(reader["Precision"])
                             : null,
-                        NumericScale = reader["Scale"] != DBNull.Value 
-                            ? Convert.ToInt32(reader["Scale"]) 
+                        NumericScale = reader["Scale"] != DBNull.Value
+                            ? Convert.ToInt32(reader["Scale"])
                             : null,
-                        DateTimePrecision = reader["DateTimePrecision"] != DBNull.Value 
-                            ? Convert.ToInt32(reader["DateTimePrecision"]) 
+                        DateTimePrecision = reader["DateTimePrecision"] != DBNull.Value
+                            ? Convert.ToInt32(reader["DateTimePrecision"])
                             : null,
                         DefaultValue = reader["DefaultValue"]?.ToString(),
                         SourceDbType = dbType
-                    });
+                    };
+
+                    if (hasIdentityColumns)
+                    {
+                        column.IsIdentity = reader["IsIdentity"] != DBNull.Value && Convert.ToBoolean(reader["IsIdentity"]);
+                        if (column.IsIdentity)
+                        {
+                            column.IdentitySeed = reader["IdentitySeed"] != DBNull.Value
+                                ? reader["IdentitySeed"].ToString()
+                                : null;
+                            column.IdentityIncrement = reader["IdentityIncrement"] != DBNull.Value
+                                ? reader["IdentityIncrement"].ToString()
+                                : null;
+                            // SQL Server only: NOT FOR REPLICATION flag (absent from the PG/Oracle and legacy queries).
+                            if (ReaderHasColumn(reader, "IdentityNotForReplication"))
+                                column.IdentityNotForReplication =
+                                    reader["IdentityNotForReplication"] != DBNull.Value
+                                    && Convert.ToBoolean(reader["IdentityNotForReplication"]);
+                        }
+                    }
+
+                    columns.Add(column);
                 }
             }
         }
 
         return columns;
+    }
+
+    private static bool ReaderHasColumn(DbDataReader reader, string columnName)
+    {
+        for (int i = 0; i < reader.FieldCount; i++)
+        {
+            if (string.Equals(reader.GetName(i), columnName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    // True when the failure is caused by the identity catalog being absent (old PostgreSQL/Oracle servers),
+    // so GetTableColumnsAsync can retry with the legacy query. Matched on provider-agnostic error signatures.
+    private static bool IsMissingIdentityMetadataError(Exception ex)
+    {
+        string message = ex.Message;
+        return message.Contains("ORA-00904")              // Oracle: invalid identifier (IDENTITY_COLUMN)
+            || message.Contains("ORA-00942")              // Oracle: table or view does not exist (ALL_TAB_IDENTITY_COLS)
+            || message.Contains("42703")                  // PostgreSQL SQLSTATE: undefined_column
+            || message.Contains("is_identity")            // PostgreSQL: column "is_identity" does not exist
+            || message.Contains("identity_start")
+            || message.Contains("identity_increment");
     }
 
     /// <summary>
@@ -994,6 +1061,11 @@ public class SchemaMigrationService : DatabaseServiceBase
         string dataType = MapDataType(column.SourceDbType, dbType, column.DataType, 
             column.MaxLength, column.NumericPrecision, column.NumericScale, column.DateTimePrecision);
         
+        // Identity (auto-increment) clause, emitted in the target dialect's own syntax. All three forms allow
+        // INSERTing explicit values (SQL Server via SET IDENTITY_INSERT; PG/Oracle via "BY DEFAULT"), which is
+        // required because both live migration and the generated INSERT statements carry explicit key values.
+        string identity = BuildIdentityClause(dbType, column);
+
         // Oracle has different NULL/NOT NULL semantics:
         // - Columns are nullable by default in Oracle
         // - Only specify NOT NULL explicitly when needed
@@ -1001,9 +1073,19 @@ public class SchemaMigrationService : DatabaseServiceBase
         string nullable = dbType != DatabaseType.Oracle
             ? (column.IsNullable ? " NULL" : " NOT NULL")
             : (!column.IsNullable ? " NOT NULL" : "");
-        
+
+        if (column.IsIdentity)
+        {
+            // An identity column is implicitly NOT NULL in every dialect. Oracle REJECTS an explicit NOT NULL
+            // after the IDENTITY clause (ORA-30673/ORA-00907), so emit nothing there and rely on the implicit
+            // constraint; SQL Server and PostgreSQL accept (and SSMS emits) the explicit NOT NULL.
+            nullable = dbType == DatabaseType.Oracle ? "" : " NOT NULL";
+        }
+
+        // IDENTITY and DEFAULT are mutually exclusive in all three engines, so suppress the default for identity
+        // columns (a true identity column has no catalog default anyway; this is a defensive guard).
         string defaultValue = "";
-        if (!string.IsNullOrEmpty(column.DefaultValue))
+        if (!column.IsIdentity && !string.IsNullOrEmpty(column.DefaultValue))
         {
             var defaultVal = column.DefaultValue.Trim();
 
@@ -1035,7 +1117,33 @@ public class SchemaMigrationService : DatabaseServiceBase
             }
         }
 
-        return $"{colName} {dataType}{nullable}{defaultValue}";
+        return $"{colName} {dataType}{identity}{nullable}{defaultValue}";
+    }
+
+    /// <summary>
+    /// Builds the identity (auto-increment) clause for a column in the target dialect's syntax, or an empty
+    /// string when the column is not an identity column. The seed/increment are preserved from the source.
+    /// PostgreSQL/Oracle use GENERATED BY DEFAULT (never ALWAYS) so explicit-value inserts remain possible.
+    /// </summary>
+    private static string BuildIdentityClause(DatabaseType dbType, ColumnDefinition column)
+    {
+        if (!column.IsIdentity)
+            return "";
+
+        string seed = string.IsNullOrWhiteSpace(column.IdentitySeed) ? "1" : column.IdentitySeed!.Trim();
+        string increment = string.IsNullOrWhiteSpace(column.IdentityIncrement) ? "1" : column.IdentityIncrement!.Trim();
+
+        return dbType switch
+        {
+            // Matches SQL Server Management Studio "Generate Scripts": [col] <type> IDENTITY(seed,increment)
+            // [NOT FOR REPLICATION] NOT NULL.
+            DatabaseType.SqlServer => $" IDENTITY({seed},{increment})"
+                + (column.IdentityNotForReplication ? " NOT FOR REPLICATION" : ""),
+            DatabaseType.PostgreSQL => $" GENERATED BY DEFAULT AS IDENTITY (START WITH {seed} INCREMENT BY {increment})",
+            // ON NULL substitutes a generated value if an explicit NULL is supplied, a safe superset of BY DEFAULT.
+            DatabaseType.Oracle => $" GENERATED BY DEFAULT ON NULL AS IDENTITY (START WITH {seed} INCREMENT BY {increment})",
+            _ => ""
+        };
     }
 
     private string MapDataType(DatabaseType sourceDbType, DatabaseType targetDbType, 
@@ -1564,27 +1672,96 @@ public class SchemaMigrationService : DatabaseServiceBase
         return baseName;
     }
 
+    // The column queries also project IsIdentity / IdentitySeed / IdentityIncrement so that true identity
+    // columns can be reproduced faithfully (see ColumnDefinition + FormatColumnDefinition). sys.identity_columns
+    // (SQL Server), information_schema identity columns (PostgreSQL 10+) and all_tab_identity_cols (Oracle 12c+)
+    // are the authoritative sources. For PostgreSQL/Oracle the identity catalog is absent on older servers; in
+    // that case GetTableColumnsAsync transparently falls back to the *Legacy queries below.
+
     private string GetSqlServerColumnsQuery()
     {
+        // seed_value / increment_value are sql_variant; CONVERT them in SQL (reading a raw variant in ADO.NET is
+        // brittle). DECIMAL(38,0)->NVARCHAR is overflow-safe even for decimal(p,0) identities with p > 18.
         return @"
-            SELECT 
-                COLUMN_NAME as ColumnName,
-                DATA_TYPE as DataType,
-                CASE WHEN IS_NULLABLE = 'YES' THEN 1 ELSE 0 END as IsNullable,
-                CHARACTER_MAXIMUM_LENGTH as MaxLength,
-                NUMERIC_PRECISION as Precision,
-                NUMERIC_SCALE as Scale,
-                DATETIME_PRECISION as DateTimePrecision,
-                COLUMN_DEFAULT as DefaultValue
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = @schema AND TABLE_NAME = @tableName
-            ORDER BY ORDINAL_POSITION";
+            SELECT
+                c.COLUMN_NAME as ColumnName,
+                c.DATA_TYPE as DataType,
+                CASE WHEN c.IS_NULLABLE = 'YES' THEN 1 ELSE 0 END as IsNullable,
+                c.CHARACTER_MAXIMUM_LENGTH as MaxLength,
+                c.NUMERIC_PRECISION as Precision,
+                c.NUMERIC_SCALE as Scale,
+                c.DATETIME_PRECISION as DateTimePrecision,
+                c.COLUMN_DEFAULT as DefaultValue,
+                CASE WHEN ic.object_id IS NULL THEN 0 ELSE 1 END as IsIdentity,
+                CONVERT(NVARCHAR(40), CONVERT(DECIMAL(38,0), ic.seed_value)) as IdentitySeed,
+                CONVERT(NVARCHAR(40), CONVERT(DECIMAL(38,0), ic.increment_value)) as IdentityIncrement,
+                CASE WHEN ic.is_not_for_replication = 1 THEN 1 ELSE 0 END as IdentityNotForReplication
+            FROM INFORMATION_SCHEMA.COLUMNS c
+            LEFT JOIN sys.identity_columns ic
+                ON ic.object_id = OBJECT_ID(QUOTENAME(@schema) + N'.' + QUOTENAME(@tableName))
+               AND ic.name = c.COLUMN_NAME
+            WHERE c.TABLE_SCHEMA = @schema AND c.TABLE_NAME = @tableName
+            ORDER BY c.ORDINAL_POSITION";
     }
 
     private string GetPostgresColumnsQuery()
     {
+        // is_identity='YES' is set ONLY for GENERATED ... AS IDENTITY columns; SERIAL reports 'NO' with a
+        // nextval(...) default and is therefore (intentionally) left to the existing DEFAULT handling.
         return @"
-            SELECT 
+            SELECT
+                column_name as ColumnName,
+                data_type as DataType,
+                CASE WHEN is_nullable = 'YES' THEN 1 ELSE 0 END as IsNullable,
+                character_maximum_length as MaxLength,
+                numeric_precision as Precision,
+                numeric_scale as Scale,
+                datetime_precision as DateTimePrecision,
+                column_default as DefaultValue,
+                CASE WHEN is_identity = 'YES' THEN 1 ELSE 0 END as IsIdentity,
+                identity_start as IdentitySeed,
+                identity_increment as IdentityIncrement
+            FROM information_schema.columns
+            WHERE table_schema = @schema AND table_name = @tableName
+            ORDER BY ordinal_position";
+    }
+
+    private string GetOracleColumnsQuery()
+    {
+        // identity_column='YES' is the authoritative flag and excludes manual sequences / NEXTVAL defaults.
+        // IDENTITY_OPTIONS looks like 'START WITH 1, INCREMENT BY 1, MAX_VALUE ..., MIN_VALUE ...': anchor on the
+        // 'START WITH'/'INCREMENT BY' tokens (spaces) so MAX_VALUE/MIN_VALUE (underscores) are not mis-captured.
+        // [+-]? preserves the sign of descending identities.
+        return @"
+            SELECT
+                c.column_name as ColumnName,
+                c.data_type as DataType,
+                CASE WHEN c.nullable = 'Y' THEN 1 ELSE 0 END as IsNullable,
+                c.data_length as MaxLength,
+                c.data_precision as Precision,
+                c.data_scale as Scale,
+                CASE WHEN c.data_type LIKE 'TIMESTAMP%' THEN c.data_scale ELSE NULL END as DateTimePrecision,
+                c.data_default as DefaultValue,
+                CASE WHEN c.identity_column = 'YES' THEN 1 ELSE 0 END as IsIdentity,
+                REGEXP_SUBSTR(idc.identity_options, 'START WITH ([+-]?[0-9]+)', 1, 1, NULL, 1) as IdentitySeed,
+                REGEXP_SUBSTR(idc.identity_options, 'INCREMENT BY ([+-]?[0-9]+)', 1, 1, NULL, 1) as IdentityIncrement
+            FROM all_tab_columns c
+            LEFT JOIN all_tab_identity_cols idc
+                   ON idc.owner = c.owner
+                  AND idc.table_name = c.table_name
+                  AND idc.column_name = c.column_name
+            WHERE c.owner = :schema AND c.table_name = :tableName
+            ORDER BY c.column_id";
+    }
+
+    // Legacy column queries used as a fallback for PostgreSQL < 10 / Oracle < 12.1, where the identity catalog
+    // columns/views do not exist and the identity-aware query above would fail to parse. Those servers have no
+    // true identity columns, so reporting every column as non-identity is fully correct.
+
+    private string GetPostgresColumnsQueryLegacy()
+    {
+        return @"
+            SELECT
                 column_name as ColumnName,
                 data_type as DataType,
                 CASE WHEN is_nullable = 'YES' THEN 1 ELSE 0 END as IsNullable,
@@ -1598,10 +1775,10 @@ public class SchemaMigrationService : DatabaseServiceBase
             ORDER BY ordinal_position";
     }
 
-    private string GetOracleColumnsQuery()
+    private string GetOracleColumnsQueryLegacy()
     {
         return @"
-            SELECT 
+            SELECT
                 column_name as ColumnName,
                 data_type as DataType,
                 CASE WHEN nullable = 'Y' THEN 1 ELSE 0 END as IsNullable,
@@ -1671,4 +1848,17 @@ internal class ColumnDefinition
     public int? DateTimePrecision { get; set; }  // Fractional seconds precision for datetime/time types as reported by the source database
     public string? DefaultValue { get; set; }
     public DatabaseType SourceDbType { get; set; }
+
+    // Identity (auto-increment) metadata. Set ONLY for true identity columns:
+    // SQL Server IDENTITY, PostgreSQL GENERATED ... AS IDENTITY (information_schema is_identity='YES'),
+    // Oracle 12c+ identity columns (all_tab_columns.identity_column='YES'). It is deliberately NOT set for
+    // PostgreSQL SERIAL or Oracle manually-managed sequences (those keep their DEFAULT/sequence handling).
+    public bool IsIdentity { get; set; }
+    // Seed (START WITH) and step (INCREMENT BY) kept as strings to preserve the sign of descending
+    // identities and large/decimal values exactly. Null when the column is not an identity column.
+    public string? IdentitySeed { get; set; }
+    public string? IdentityIncrement { get; set; }
+    // SQL Server only: true when the identity carries NOT FOR REPLICATION (SSMS scripts it inside the IDENTITY
+    // clause). Always false for PostgreSQL/Oracle and for non-identity columns.
+    public bool IdentityNotForReplication { get; set; }
 }
