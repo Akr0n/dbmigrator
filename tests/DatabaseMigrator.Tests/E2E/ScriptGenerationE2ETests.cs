@@ -11,7 +11,7 @@ namespace DatabaseMigrator.Tests.E2E;
 /// Strategia di verifica:
 ///  - <b>Round-trip nello stesso dialetto</b>: si genera lo script per un sottoinsieme di
 ///    oggetti del database sorgente, lo si <i>esegue realmente</i> tramite il client SQL
-///    nativo (psql / sqlcmd / sqlplus, invocato con <c>docker exec</c> sui container E2E)
+///    nativo (psql / sqlcmd / sqlplus, invocato con <c>&lt;engine&gt; exec</c> sui container E2E)
 ///    e si verifica che schema e dati vengano ricreati fedelmente. È la prova che lo
 ///    script prodotto è valido e ri-eseguibile.
 ///  - <b>Cross-dialetto</b>: si verifica che la generazione traduca il DDL nel dialetto
@@ -20,9 +20,10 @@ namespace DatabaseMigrator.Tests.E2E;
 ///  - <b>Opzioni</b>: si verifica il rispetto dei flag IncludeSchema / IncludeData.
 ///
 /// I test girano solo quando la variabile d'ambiente <c>DBMIGRATOR_RUN_E2E=true</c> è
-/// impostata (vedi <c>scripts/run-e2e-matrix.ps1</c>), che presuppone i container Docker
-/// di docker-compose.yml attivi e sani. I container nativi contengono i client SQL usati
-/// per eseguire gli script generati.
+/// impostata (vedi <c>scripts/run-e2e-matrix.ps1</c>), che presuppone i tre container di
+/// test attivi e sani (avviati dal container engine configurato — Podman di default,
+/// Docker come fallback). I container contengono i client SQL usati per eseguire gli
+/// script generati.
 ///
 /// La classe crea da sé i propri oggetti fixture (vista, indice, sequenza) in modo
 /// idempotente: non modifica gli script di init condivisi.
@@ -37,6 +38,52 @@ public class ScriptGenerationE2ETests
     private const string FixtureView = "vw_user_orders";
     private const string FixtureIndex = "idx_e2e_orders_user";
     private const string FixtureSequence = "seq_e2e_demo";
+
+    // Container engine usato per `exec` sui container di test. Risolto una sola volta:
+    // Podman di default, Docker come fallback durante la transizione. Lo script
+    // run-e2e-matrix.ps1 esporta DBMIGRATOR_CONTAINER_ENGINE col percorso assoluto già
+    // risolto; se assente si ripiega su "podman" (con l'install dir nota su Windows).
+    private static readonly string ContainerEngine = ResolveContainerEngine();
+
+    private static string ResolveContainerEngine()
+    {
+        var requested = Environment.GetEnvironmentVariable("DBMIGRATOR_CONTAINER_ENGINE");
+        if (string.IsNullOrWhiteSpace(requested))
+        {
+            requested = "podman";
+        }
+
+        // Percorso assoluto a un eseguibile esistente: usalo così com'è.
+        if (File.Exists(requested))
+        {
+            return requested;
+        }
+
+        // Nome nudo: Podman spesso non è sul PATH subito dopo l'installazione su Windows,
+        // quindi si ripiega sulle posizioni di installazione standard.
+        if (requested.Equals("podman", StringComparison.OrdinalIgnoreCase))
+        {
+            var candidates = new[]
+            {
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                    "RedHat", "Podman", "podman.exe"),
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Programs", "RedHat", "Podman", "podman.exe"),
+            };
+            foreach (var candidate in candidates)
+            {
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        // Ultima risorsa: lascia risolvere al sistema operativo tramite PATH.
+        return requested;
+    }
 
     public static IEnumerable<object[]> AllDialects()
     {
@@ -229,12 +276,15 @@ public class ScriptGenerationE2ETests
 
     private static ConnectionInfo BuildConnectionInfo(DatabaseType databaseType)
     {
+        // 127.0.0.1 (not "localhost"): under Podman the SQL Server container listens only on
+        // IPv4 and Microsoft.Data.SqlClient does not fall back from ::1 to IPv4, so "localhost"
+        // hangs until timeout. 127.0.0.1 is unambiguous and works on every container engine.
         return databaseType switch
         {
             DatabaseType.SqlServer => new ConnectionInfo
             {
                 DatabaseType = DatabaseType.SqlServer,
-                Server = "localhost",
+                Server = "127.0.0.1",
                 Port = 1433,
                 Database = "TestDB",
                 Username = "sa",
@@ -244,7 +294,7 @@ public class ScriptGenerationE2ETests
             DatabaseType.PostgreSQL => new ConnectionInfo
             {
                 DatabaseType = DatabaseType.PostgreSQL,
-                Server = "localhost",
+                Server = "127.0.0.1",
                 Port = 5432,
                 Database = "testdb",
                 Username = "pguser",
@@ -253,7 +303,7 @@ public class ScriptGenerationE2ETests
             DatabaseType.Oracle => new ConnectionInfo
             {
                 DatabaseType = DatabaseType.Oracle,
-                Server = "localhost",
+                Server = "127.0.0.1",
                 Port = 1521,
                 Database = "FREEPDB1",
                 Username = "migration_test",
@@ -383,7 +433,9 @@ public class ScriptGenerationE2ETests
 
     /// <summary>
     /// Esegue uno script SQL nel database indicato tramite il client SQL nativo del
-    /// rispettivo container Docker (psql / sqlcmd / sqlplus). Restituisce exit code e output.
+    /// rispettivo container (psql / sqlcmd / sqlplus), invocato con
+    /// <c>&lt;engine&gt; exec</c> sul container engine configurato (Podman di default).
+    /// Restituisce exit code e output.
     /// </summary>
     private static async Task<(int ExitCode, string Output)> RunViaClientAsync(
         DatabaseType dialect, string sql, bool asSystem = false)
@@ -428,7 +480,7 @@ public class ScriptGenerationE2ETests
                 throw new NotSupportedException($"Database type {dialect} non supportato");
         }
 
-        var psi = new ProcessStartInfo("docker")
+        var psi = new ProcessStartInfo(ContainerEngine)
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -444,7 +496,8 @@ public class ScriptGenerationE2ETests
         }
 
         using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException("Impossibile avviare il processo 'docker'.");
+            ?? throw new InvalidOperationException(
+                $"Impossibile avviare il container engine '{ContainerEngine}'.");
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
