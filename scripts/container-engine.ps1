@@ -42,13 +42,19 @@ function Resolve-ContainerEngine {
     }
 
     # 3. Podman fallback: standard Windows install locations (PATH not yet propagated).
+    #    Built only from base dirs that exist, so this is a clean no-op on non-Windows
+    #    (where $env:ProgramFiles / $env:LOCALAPPDATA are null and Join-Path would throw) —
+    #    there podman is expected on PATH and we fall through to the clear error below.
     if ($requested -ieq 'podman') {
-        $candidates = @(
-            (Join-Path $env:ProgramFiles 'RedHat\Podman\podman.exe'),
-            (Join-Path $env:LOCALAPPDATA 'Programs\RedHat\Podman\podman.exe')
-        )
+        $candidates = @()
+        if ($env:ProgramFiles) {
+            $candidates += Join-Path $env:ProgramFiles 'RedHat\Podman\podman.exe'
+        }
+        if ($env:LOCALAPPDATA) {
+            $candidates += Join-Path $env:LOCALAPPDATA 'Programs\RedHat\Podman\podman.exe'
+        }
         foreach ($candidate in $candidates) {
-            if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
                 return $candidate
             }
         }
