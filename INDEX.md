@@ -13,7 +13,7 @@
 2. Explore: Source code in `src/`
 3. Build: `dotnet build` or `.\publish.ps1`
 4. Modify: Add features/fix bugs
-5. Test: **[DOCKER_E2E_TESTING.md](DOCKER_E2E_TESTING.md)**
+5. Test: **[PODMAN_E2E_TESTING.md](PODMAN_E2E_TESTING.md)**
 
 ### 🚀 If You Need to **Deploy**
 1. Read: **[DEPLOYMENT.md](DEPLOYMENT.md)** (requirements and best practices)
@@ -32,12 +32,13 @@ c:\_repositories\dbmigrator
 ├── 📄 QUICKSTART.md .................. Quick start (5 min)
 ├── 📄 DEPLOYMENT.md .................. Deployment + troubleshooting
 ├── 📄 ARCHITECTURE.md ................ Technical deep dive
-├── 📄 DOCKER_E2E_TESTING.md .......... E2E testing with Docker
+├── 📄 PODMAN_E2E_TESTING.md .......... E2E testing with Podman
 ├── 📄 INDEX.md ....................... This file
 │
 ├── 🔨 publish.ps1 .................... Build script (PowerShell)
 ├── 🔨 publish.bat .................... Build script (Batch)
-├── 🐳 docker-compose.yml ............. Docker test environment
+├── 🧪 scripts/run-e2e-matrix.ps1 ..... Podman E2E orchestration
+├── 🧪 scripts/container-engine.ps1 ... Container engine resolver
 │
 ├── 📂 src/
 │   ├── DatabaseMigrator/ ............. 🎨 UI Application (Avalonia)
@@ -62,7 +63,7 @@ c:\_repositories\dbmigrator
 │           ├── SchemaMigrationService.cs 📊 Schema + type mapping
 │           └── LoggerService.cs ....... Logging service
 │
-├── 📂 init-scripts/ .................. Docker init scripts
+├── 📂 init-scripts/ .................. DB init/seed scripts
 ├── 📂 release/ ....................... ✅ FINAL EXECUTABLE
 │   └── DatabaseMigrator.exe .......... ~166 MB - READY TO USE!
 │
@@ -87,7 +88,7 @@ c:\_repositories\dbmigrator
 |----------|---------|------|
 | ARCHITECTURE.md | All | 30 min |
 | README.md | "Build from Source" | 5 min |
-| DOCKER_E2E_TESTING.md | All | 15 min |
+| PODMAN_E2E_TESTING.md | All | 15 min |
 | Source code | Services + ViewModels | 1 hour |
 
 ### 🚀 DEVOPS / SYSTEM ADMIN
@@ -96,7 +97,7 @@ c:\_repositories\dbmigrator
 |----------|---------|------|
 | DEPLOYMENT.md | All | 20 min |
 | ARCHITECTURE.md | "Performance", "Security" | 15 min |
-| DOCKER_E2E_TESTING.md | "Troubleshooting" | 10 min |
+| PODMAN_E2E_TESTING.md | "Troubleshooting" | 10 min |
 
 ---
 
@@ -130,11 +131,8 @@ dotnet build
 # Run the application
 .\release\DatabaseMigrator.exe
 
-# Start Docker test environment
-docker-compose up -d
-
-# Stop Docker test environment
-docker-compose down
+# Run the E2E matrix (Podman): start DBs, seed fixtures, test, tear down
+.\scripts\run-e2e-matrix.ps1
 ```
 
 ---
@@ -144,5 +142,5 @@ docker-compose down
 For issues and questions:
 1. Check the [Troubleshooting](DEPLOYMENT.md#troubleshooting) section
 2. Review application logs
-3. Test with Docker environment
+3. Test with the Podman E2E environment
 4. Check network connectivity

@@ -182,7 +182,7 @@ Cross-database E2E matrix automation is available via:
 .\scripts\run-e2e-matrix.ps1
 ```
 
-See `DOCKER_E2E_TESTING.md` for prerequisites and details.
+See `PODMAN_E2E_TESTING.md` for prerequisites and details.
 
 ## License
 

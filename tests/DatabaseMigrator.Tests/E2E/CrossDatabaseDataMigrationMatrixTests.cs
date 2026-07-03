@@ -56,12 +56,15 @@ public class CrossDatabaseDataMigrationMatrixTests
 
     private static ConnectionInfo BuildConnectionInfo(DatabaseType databaseType)
     {
+        // 127.0.0.1 (not "localhost"): under Podman the SQL Server container listens only on
+        // IPv4 and Microsoft.Data.SqlClient does not fall back from ::1 to IPv4, so "localhost"
+        // hangs until timeout. 127.0.0.1 is unambiguous and works on every container engine.
         return databaseType switch
         {
             DatabaseType.SqlServer => new ConnectionInfo
             {
                 DatabaseType = DatabaseType.SqlServer,
-                Server = "localhost",
+                Server = "127.0.0.1",
                 Port = 1433,
                 Database = "TestDB",
                 Username = "sa",
@@ -71,7 +74,7 @@ public class CrossDatabaseDataMigrationMatrixTests
             DatabaseType.PostgreSQL => new ConnectionInfo
             {
                 DatabaseType = DatabaseType.PostgreSQL,
-                Server = "localhost",
+                Server = "127.0.0.1",
                 Port = 5432,
                 Database = "testdb",
                 Username = "pguser",
@@ -80,7 +83,7 @@ public class CrossDatabaseDataMigrationMatrixTests
             DatabaseType.Oracle => new ConnectionInfo
             {
                 DatabaseType = DatabaseType.Oracle,
-                Server = "localhost",
+                Server = "127.0.0.1",
                 Port = 1521,
                 Database = "FREEPDB1",
                 Username = "migration_test",

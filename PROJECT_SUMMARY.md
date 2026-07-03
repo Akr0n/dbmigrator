@@ -80,7 +80,7 @@ DatabaseMigrator.sln
 │       ├── Models/                 # Data models
 │       └── Services/               # Business logic
 │
-├── init-scripts/                   # Docker initialization
+├── init-scripts/                   # DB init/seed scripts
 ├── release/                        # Published executable
 └── docs/                           # Documentation
 ```
@@ -112,7 +112,7 @@ DatabaseMigrator.sln
 | [QUICKSTART.md](QUICKSTART.md) | 5-minute quick start |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical documentation |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Deployment and troubleshooting |
-| [DOCKER_E2E_TESTING.md](DOCKER_E2E_TESTING.md) | Testing with Docker |
+| [PODMAN_E2E_TESTING.md](PODMAN_E2E_TESTING.md) | Testing with Podman |
 | [INDEX.md](INDEX.md) | Documentation index |
 
 ## License

@@ -44,29 +44,33 @@ public class DocumentedTestCasesTests
     private static readonly SchemaMigrationService SchemaSvc = new();
 
     // ─── Connection strings ────────────────────────────────────────────────
-    private const string SsConnStr = "Server=localhost,1433;Database=TestDB;User Id=sa;Password=SqlServer@123;TrustServerCertificate=True";
-    private const string PgConnStr = "Host=localhost;Port=5432;Database=testdb;Username=pguser;Password=pgpass123";
+    // 127.0.0.1 (not "localhost"): under Podman the SQL Server container listens only on
+    // IPv4, and "localhost" resolves to ::1 first — Microsoft.Data.SqlClient does not fall
+    // back to IPv4, so the connection hangs until timeout. 127.0.0.1 is unambiguous and
+    // works on every container engine.
+    private const string SsConnStr = "Server=127.0.0.1,1433;Database=TestDB;User Id=sa;Password=SqlServer@123;TrustServerCertificate=True";
+    private const string PgConnStr = "Host=127.0.0.1;Port=5432;Database=testdb;Username=pguser;Password=pgpass123";
 
     // ─── ConnectionInfo builders ───────────────────────────────────────────
     private static ConnectionInfo SS => new()
     {
-        DatabaseType = DatabaseType.SqlServer, Server = "localhost", Port = 1433,
+        DatabaseType = DatabaseType.SqlServer, Server = "127.0.0.1", Port = 1433,
         Database = "TestDB", Username = "sa", Password = "SqlServer@123",
         TrustServerCertificate = true
     };
     private static ConnectionInfo PG => new()
     {
-        DatabaseType = DatabaseType.PostgreSQL, Server = "localhost", Port = 5432,
+        DatabaseType = DatabaseType.PostgreSQL, Server = "127.0.0.1", Port = 5432,
         Database = "testdb", Username = "pguser", Password = "pgpass123"
     };
     private static ConnectionInfo OracleCI => new()
     {
-        DatabaseType = DatabaseType.Oracle, Server = "localhost", Port = 1521,
+        DatabaseType = DatabaseType.Oracle, Server = "127.0.0.1", Port = 1521,
         Database = "FREEPDB1", Username = "migration_test", Password = "oraclepass123"
     };
     private static ConnectionInfo SsWrongPwd => new()
     {
-        DatabaseType = DatabaseType.SqlServer, Server = "localhost", Port = 1433,
+        DatabaseType = DatabaseType.SqlServer, Server = "127.0.0.1", Port = 1433,
         Database = "TestDB", Username = "sa", Password = "PASSWORDERRATA",
         TrustServerCertificate = true
     };

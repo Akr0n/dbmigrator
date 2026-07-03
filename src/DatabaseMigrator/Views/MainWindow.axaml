@@ -225,7 +225,7 @@
                                         </Grid>
                                     </StackPanel>
                                     <CheckBox x:Name="SourceTrustServerCertificateCheckBox" IsChecked="True">
-                                        <TextBlock Text="Accetta certificato server (SSL) — consigliato per SQL Server in Docker" FontSize="11" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Accetta certificato server (SSL) — consigliato per SQL Server in container" FontSize="11" TextWrapping="Wrap"/>
                                     </CheckBox>
                                 </StackPanel>
                             </Border>
@@ -279,7 +279,7 @@
                                         </Grid>
                                     </StackPanel>
                                     <CheckBox x:Name="TargetTrustServerCertificateCheckBox" IsChecked="True">
-                                        <TextBlock Text="Accetta certificato server (SSL) — per SQL Server in Docker" FontSize="11" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Accetta certificato server (SSL) — per SQL Server in container" FontSize="11" TextWrapping="Wrap"/>
                                     </CheckBox>
                                 </StackPanel>
                             </Border>
