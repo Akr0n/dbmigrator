@@ -63,17 +63,15 @@ mssql_data/
 *~
 
 # IDE
-.cursor/
 .idea/
 *.sublime-workspace
 *.sublime-project
 
-#MCP servers
-.serena/
-.mcp.json
-
-#IA
+# Claude Code & local AI tooling — memory/config/indexes, never published to GitHub
 .claude/
+.mcp.json
+CLAUDE.md
+.codegraph/
 
 #Test Coverage
 *.docx
