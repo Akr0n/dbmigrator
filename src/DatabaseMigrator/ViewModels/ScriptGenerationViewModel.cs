@@ -176,6 +176,13 @@ public class ScriptGenerationViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Handler opzionale invocato prima della generazione quando esistono oggetti selezionati
+    /// ma non visibili con il filtro/ricerca attuale. Riceve (totaleSelezionati, nonVisibili) e
+    /// ritorna true per procedere, false per annullare. Impostato dalla View.
+    /// </summary>
+    public Func<int, int, Task<bool>>? ConfirmHiddenSelectionAsync { get; set; }
+
     /// <summary>Genera lo script .sql per gli oggetti selezionati e lo salva nel percorso indicato.</summary>
     public async Task<bool> GenerateScriptAsync(string filePath)
     {
@@ -195,6 +202,20 @@ public class ScriptGenerationViewModel : ViewModelBase
         {
             StatusMessage = "Abilita almeno una tra \"Includi schema\" e \"Includi dati\".";
             return false;
+        }
+
+        // La selezione è globale e persiste tra i filtri: se sono selezionati oggetti non
+        // visibili con il filtro/ricerca attuale, avvisa prima di includerli nello script.
+        var visible = new HashSet<DatabaseObject>(Objects);
+        int hiddenSelected = selected.Count(o => !visible.Contains(o));
+        if (hiddenSelected > 0 && ConfirmHiddenSelectionAsync != null)
+        {
+            bool proceed = await ConfirmHiddenSelectionAsync(selected.Count, hiddenSelected);
+            if (!proceed)
+            {
+                StatusMessage = "Generazione annullata.";
+                return false;
+            }
         }
 
         var options = new ScriptGenerationOptions
@@ -246,11 +267,19 @@ public class ScriptGenerationViewModel : ViewModelBase
 
     public void SelectAll() => SetSelectionForVisible(true);
 
-    public void DeselectAll() => SetSelectionForVisible(false);
+    // "Deseleziona tutto" azzera l'INTERA selezione, inclusi gli oggetti nascosti da un
+    // filtro/ricerca attivo. Altrimenti un oggetto selezionato ma non visibile resterebbe
+    // marcato e rientrerebbe silenziosamente nello script successivo.
+    public void DeselectAll()
+    {
+        foreach (var obj in _allObjects)
+            obj.IsSelected = false;
+        RecomputeSelection();
+    }
 
     private void SetSelectionForVisible(bool selected)
     {
-        // Agisce sugli oggetti attualmente visibili, così i filtri restringono l'operazione.
+        // "Seleziona tutto" resta limitato ai visibili: abilita "filtra → seleziona i risultati".
         foreach (var obj in Objects)
             obj.IsSelected = selected;
         RecomputeSelection();

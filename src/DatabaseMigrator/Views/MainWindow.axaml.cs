@@ -114,6 +114,7 @@ namespace DatabaseMigrator.Views;
             ScriptGenerateButton.Click += OnScriptGenerateClicked;
             ScriptSelectAllButton.Click += (s, e) => _vm?.ScriptGeneration.SelectAll();
             ScriptDeselectAllButton.Click += (s, e) => _vm?.ScriptGeneration.DeselectAll();
+            _vm.ScriptGeneration.ConfirmHiddenSelectionAsync = ShowHiddenSelectionConfirmDialogAsync;
             ScriptDialectCombo.SelectionChanged += OnScriptDialectChanged;
             ScriptTypeFilterCombo.SelectionChanged += OnScriptTypeFilterChanged;
 
@@ -452,7 +453,90 @@ namespace DatabaseMigrator.Views;
         await dialog.ShowDialog(this);
         return userConfirmed;
     }
-    
+
+    // Avviso mostrato prima di generare lo script quando esistono oggetti selezionati NON
+    // visibili con il filtro/ricerca corrente. Ritorna true per includerli, false per annullare.
+    private async Task<bool> ShowHiddenSelectionConfirmDialogAsync(int totalSelected, int hiddenSelected)
+    {
+        var dialog = new Window
+        {
+            Title = "⚠️ Oggetti selezionati non visibili",
+            Width = 520,
+            Height = 260,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false,
+            ShowInTaskbar = false
+        };
+
+        var stackPanel = new StackPanel
+        {
+            Margin = new Thickness(20),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Spacing = 15
+        };
+
+        var messageText = new TextBlock
+        {
+            Text = $"Oggetti selezionati: {totalSelected} — di cui {hiddenSelected} non visibili " +
+                   "con il filtro/ricerca attuale.\n\n" +
+                   "La selezione resta attiva anche sugli oggetti nascosti da un filtro. " +
+                   "Vuoi includere nello script anche quelli non visibili?",
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            FontSize = 14
+        };
+
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing = 10,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center
+        };
+
+        bool userConfirmed = false;
+
+        var continueButton = new Button
+        {
+            Content = "Includi e continua",
+            Width = 160,
+            Padding = new Thickness(10, 5),
+            Background = Avalonia.Media.Brushes.DodgerBlue,
+            Foreground = Avalonia.Media.Brushes.White,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            IsDefault = true
+        };
+
+        var cancelButton = new Button
+        {
+            Content = "Annulla",
+            Width = 140,
+            Padding = new Thickness(10, 5),
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            IsCancel = true
+        };
+
+        continueButton.Click += (s, e) =>
+        {
+            userConfirmed = true;
+            dialog.Close();
+        };
+
+        cancelButton.Click += (s, e) =>
+        {
+            dialog.Close();
+        };
+
+        buttonPanel.Children.Add(continueButton);
+        buttonPanel.Children.Add(cancelButton);
+
+        stackPanel.Children.Add(messageText);
+        stackPanel.Children.Add(buttonPanel);
+
+        dialog.Content = stackPanel;
+
+        await dialog.ShowDialog(this);
+        return userConfirmed;
+    }
+
     private async void SelectAllButton_Click(object? sender, RoutedEventArgs e)
     {
         Log("[SelectAllButton_Click] Button clicked!");
