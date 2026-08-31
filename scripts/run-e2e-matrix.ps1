@@ -148,17 +148,24 @@ function Start-DatabaseContainers {
     )
 }
 
-function Wait-ContainerHealthy {
+function Wait-ContainerReady {
     param(
         [Parameter(Mandatory = $true)][string]$ContainerName,
+        [Parameter(Mandatory = $true)][string[]]$ProbeCommand,
         [int]$TimeoutSeconds = 300
     )
 
     $start = Get-Date
     while ($true) {
-        $state = & $Engine inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" $ContainerName 2>$null
-        if ($LASTEXITCODE -eq 0 -and ($state -eq "healthy" -or $state -eq "running")) {
-            Write-Host "[$ContainerName] status: $state" -ForegroundColor Green
+        # Probe the service directly instead of trusting the engine-reported health status.
+        # Podman schedules --health-cmd through transient systemd timers; on the rootless CI
+        # runner those never fire (podman 5.x on ubuntu-24.04), so .State.Health.Status sits at
+        # "starting" forever while the database is long since ready. exec is the same channel
+        # the fixture seeding uses right after, so this adds no new dependency.
+        & $Engine exec $ContainerName @ProbeCommand *> $null
+        $probeExit = $LASTEXITCODE
+        if ($probeExit -eq 0) {
+            Write-Host "[$ContainerName] ready." -ForegroundColor Green
             return
         }
 
@@ -167,13 +174,16 @@ function Wait-ContainerHealthy {
         if ($LASTEXITCODE -eq 0 -and ($runState -eq "exited" -or $runState -eq "dead")) {
             Write-Host "[$ContainerName] container is $runState — dumping logs:" -ForegroundColor Red
             & $Engine logs --tail 100 $ContainerName
-            throw "Container '$ContainerName' exited before becoming healthy (status=$runState, health=$state)."
+            throw "Container '$ContainerName' exited before becoming ready (status=$runState)."
         }
 
         if ((Get-Date) - $start -gt (New-TimeSpan -Seconds $TimeoutSeconds)) {
-            Write-Host "[$ContainerName] timeout reached — dumping logs:" -ForegroundColor Red
+            # Dump the health state too: when this timed out under the old health-status wait the
+            # logs looked perfectly healthy and the one broken field was never captured.
+            Write-Host "[$ContainerName] timeout reached — health state and logs:" -ForegroundColor Red
+            & $Engine inspect --format '{{json .State.Health}}' $ContainerName
             & $Engine logs --tail 100 $ContainerName
-            throw "Timeout waiting for container '$ContainerName' to become healthy."
+            throw "Timeout waiting for container '$ContainerName' to become ready (last probe exit $probeExit)."
         }
 
         Start-Sleep -Seconds 5
@@ -314,9 +324,16 @@ try {
         Start-DatabaseContainers
     }
 
-    Wait-ContainerHealthy -ContainerName $PgName    -TimeoutSeconds 180
-    Wait-ContainerHealthy -ContainerName $MssqlName -TimeoutSeconds 240
-    Wait-ContainerHealthy -ContainerName $OraName   -TimeoutSeconds 420
+    # -h 127.0.0.1 on purpose: the postgres entrypoint runs a temporary init server on the unix
+    # socket only, so a socket-only pg_isready reports ready before the real TCP listener exists —
+    # and Initialize-Postgres seeds immediately after this returns.
+    Wait-ContainerReady -ContainerName $PgName -TimeoutSeconds 180 `
+        -ProbeCommand @('pg_isready', '-h', '127.0.0.1', '-U', 'pguser', '-d', 'testdb')
+    Wait-ContainerReady -ContainerName $MssqlName -TimeoutSeconds 240 `
+        -ProbeCommand @('/opt/mssql-tools18/bin/sqlcmd', '-S', 'localhost', '-U', 'sa',
+                        '-P', 'SqlServer@123', '-C', '-Q', 'SELECT 1', '-b')
+    Wait-ContainerReady -ContainerName $OraName -TimeoutSeconds 420 `
+        -ProbeCommand @('healthcheck.sh')
 
     Initialize-Postgres
     Initialize-SqlServer
