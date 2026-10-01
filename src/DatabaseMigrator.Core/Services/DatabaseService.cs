@@ -453,6 +453,40 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         }
     }
 
+    /// <summary>
+    /// True if an enabled FOREIGN KEY from another table points at this one with a delete rule other than NO ACTION,
+    /// i.e. deleting its rows would cascade (or SET NULL / SET DEFAULT) into that table. Self-references are ignored.
+    /// </summary>
+    private async Task<bool> HasEnabledCascadingReferenceAsync(DbConnection connection, DbTransaction? transaction,
+        string schema, string tableName)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandTimeout = _commandTimeoutSeconds;
+        command.CommandText = @"
+            SELECT COUNT(*)
+            FROM sys.foreign_keys fk
+            JOIN sys.tables pt ON pt.object_id = fk.referenced_object_id
+            JOIN sys.schemas ps ON ps.schema_id = pt.schema_id
+            WHERE ps.name = @schema AND pt.name = @tableName
+              AND fk.is_disabled = 0
+              AND fk.delete_referential_action <> 0
+              AND fk.parent_object_id <> fk.referenced_object_id";
+
+        var schemaParam = command.CreateParameter();
+        schemaParam.ParameterName = "@schema";
+        schemaParam.Value = schema;
+        command.Parameters.Add(schemaParam);
+
+        var tableParam = command.CreateParameter();
+        tableParam.ParameterName = "@tableName";
+        tableParam.Value = tableName;
+        command.Parameters.Add(tableParam);
+
+        return Convert.ToInt32(await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(),
+            "MigrateTableAsync.CheckCascadingReferences")) > 0;
+    }
+
     public async Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, TableInfo table, IProgress<int> progress)
     {
         using (var sourceConn = CreateConnection(source))
@@ -546,7 +580,23 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                         if (transaction != null)
                             truncateCommand.Transaction = transaction;
                         truncateCommand.CommandTimeout = _commandTimeoutSeconds;
-                        await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.Truncate");
+                        try
+                        {
+                            await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.Truncate");
+                        }
+                        catch (SqlException ex) when (target.DatabaseType == DatabaseType.SqlServer && ex.Number == 4712)
+                        {
+                            // SQL Server refuses TRUNCATE on any table a FOREIGN KEY points at, even when that key is
+                            // disabled or the referencing table is empty. DELETE is allowed once the keys are off, but
+                            // an ENABLED key with ON DELETE CASCADE / SET NULL / SET DEFAULT would silently wipe or alter
+                            // rows in a referencing table, which may not be one the user selected. Let the user decide.
+                            if (await HasEnabledCascadingReferenceAsync(targetConn, transaction, table.Schema, table.TableName))
+                                throw;
+
+                            Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} is referenced by a foreign key: using DELETE instead of TRUNCATE");
+                            truncateCommand.CommandText = $"DELETE FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}";
+                            await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.DeleteInsteadOfTruncate");
+                        }
                     }
                     Log($"[MigrateTableAsync] Table truncated successfully");
                 }

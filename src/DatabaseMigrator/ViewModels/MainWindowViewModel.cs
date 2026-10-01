@@ -20,6 +20,7 @@ public class MainWindowViewModel : ViewModelBase
 {
     private readonly IDatabaseService _databaseService;
     private readonly SchemaMigrationService _schemaMigrationService;
+    private readonly ForeignKeyService _foreignKeyService;
 
     private static void Log(string message) => LoggerService.Log(message);
 
@@ -229,10 +230,12 @@ public class MainWindowViewModel : ViewModelBase
     {
     }
 
-    public MainWindowViewModel(IDatabaseService? databaseService, SchemaMigrationService? schemaMigrationService)
+    public MainWindowViewModel(IDatabaseService? databaseService, SchemaMigrationService? schemaMigrationService,
+        ForeignKeyService? foreignKeyService = null)
     {
         _databaseService = databaseService ?? new DatabaseService();
         _schemaMigrationService = schemaMigrationService ?? new SchemaMigrationService();
+        _foreignKeyService = foreignKeyService ?? new ForeignKeyService();
 
         // Wire TRUNCATE-failed prompt handler into the concrete database service (if applicable).
         if (_databaseService is DatabaseService dbService)
@@ -543,7 +546,10 @@ public class MainWindowViewModel : ViewModelBase
         // Track tables created during schema migration for rollback on data migration failure
         var tablesCreatedDuringMigration = new List<TableInfo>();
         var constraintsAddedDuringMigration = new List<ConstraintAddedInfo>();
-        
+        // Foreign-key problems found while closing the data load: shown to the user, not only logged.
+        var foreignKeyWarnings = new List<string>();
+        DataLoadPlan? dataLoadPlan = null;
+
         try
         {
             Log($"[StartMigrationAsync] Starting migration...");
@@ -700,6 +706,12 @@ public class MainWindowViewModel : ViewModelBase
                 StatusMessage = "Migrazione dati...";
                 int tablesProcessed = 0;
 
+                // The target may already enforce FOREIGN KEYs: load parents before children and, on SQL Server,
+                // switch the keys off for the load. Walking the tables alphabetically made a real migration fail
+                // (ACT_GE_BYTEARRAY loaded before ACT_RE_DEPLOYMENT it references).
+                dataLoadPlan = await _foreignKeyService.PrepareDataLoadAsync(TargetConnection.ConnectionInfo, tablesToMigrate);
+                tablesToMigrate = dataLoadPlan.OrderedTables.ToList();
+
                 foreach (var table in tablesToMigrate)
                 {
                     Log($"[StartMigrationAsync] Migrating table {table.Schema}.{table.TableName}...");
@@ -732,7 +744,10 @@ public class MainWindowViewModel : ViewModelBase
                     ProgressPercentage = finalPercent;
                     ProgressText = $"{finalPercent}% - {capturedTableName}";
                 }
-                
+
+                // Switch the foreign keys back on (validating the loaded rows); a failure is handled in the catch below.
+                foreignKeyWarnings.AddRange(await dataLoadPlan.CompleteAsync(succeeded: true));
+
                 // Set final progress to 100% with generic text for modes that include data migration
                 ProgressPercentage = 100;
                 ProgressText = "100%";
@@ -747,7 +762,9 @@ public class MainWindowViewModel : ViewModelBase
             constraintsAddedDuringMigration.Clear();
 
             Log($"[StartMigrationAsync] Migration completed successfully!");
-            ErrorMessage = "";
+            ErrorMessage = foreignKeyWarnings.Count == 0
+                ? ""
+                : "Migrazione completata, ma con avvisi sulle chiavi esterne." + DescribeForeignKeyWarnings(foreignKeyWarnings);
             
             string modeDescription = SelectedMigrationMode switch
             {
@@ -761,7 +778,11 @@ public class MainWindowViewModel : ViewModelBase
         {
             Log($"[StartMigrationAsync] ERROR: {ex.Message}");
             Log($"[StartMigrationAsync] Stack trace: {ex.StackTrace}");
-            
+
+            // Never leave the target with its foreign keys switched off. No-op when the load already completed.
+            if (dataLoadPlan != null)
+                foreignKeyWarnings.AddRange(await dataLoadPlan.CompleteAsync(succeeded: false));
+
             // Rollback: drop constraints and/or tables that were created during schema migration if data migration fails.
             // In SchemaAndData mode the schema service can add PK/UNIQUE constraints even when the table already existed.
             if (SelectedMigrationMode == MigrationMode.SchemaAndData && 
@@ -812,7 +833,7 @@ public class MainWindowViewModel : ViewModelBase
                 Log($"[StartMigrationAsync] Rollback completed");
             }
             
-            ErrorMessage = $"Errore migrazione: {ex.Message}";
+            ErrorMessage = $"Errore migrazione: {ex.Message}" + DescribeForeignKeyWarnings(foreignKeyWarnings);
             StatusMessage = "Migration failed";
             ProgressPercentage = 0;
         }
@@ -821,6 +842,12 @@ public class MainWindowViewModel : ViewModelBase
             IsMigrating = false;
         }
     }
+
+    private static string DescribeForeignKeyWarnings(IReadOnlyList<string> warnings) =>
+        warnings.Count == 0
+            ? ""
+            : " Chiavi esterne: " + string.Join(" | ", warnings.Take(3)) +
+              (warnings.Count > 3 ? $" (e altri {warnings.Count - 3} avvisi, vedi il log)" : "");
 
     public void SelectAllTablesDirectly()
     {
