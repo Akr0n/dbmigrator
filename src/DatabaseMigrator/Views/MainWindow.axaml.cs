@@ -115,6 +115,7 @@ namespace DatabaseMigrator.Views;
             ScriptSelectAllButton.Click += (s, e) => _vm?.ScriptGeneration.SelectAll();
             ScriptDeselectAllButton.Click += (s, e) => _vm?.ScriptGeneration.DeselectAll();
             _vm.ScriptGeneration.ConfirmHiddenSelectionAsync = ShowHiddenSelectionConfirmDialogAsync;
+            _vm.ConfirmHiddenTablesAsync = ShowHiddenTablesMigrationConfirmDialogAsync;
             ScriptDialectCombo.SelectionChanged += OnScriptDialectChanged;
             ScriptTypeFilterCombo.SelectionChanged += OnScriptTypeFilterChanged;
 
@@ -456,13 +457,38 @@ namespace DatabaseMigrator.Views;
 
     // Avviso mostrato prima di generare lo script quando esistono oggetti selezionati NON
     // visibili con il filtro/ricerca corrente. Ritorna true per includerli, false per annullare.
-    private async Task<bool> ShowHiddenSelectionConfirmDialogAsync(int totalSelected, int hiddenSelected)
+    private Task<bool> ShowHiddenSelectionConfirmDialogAsync(int totalSelected, int hiddenSelected) =>
+        ShowConfirmDialogAsync(
+            "⚠️ Oggetti selezionati non visibili",
+            $"Oggetti selezionati: {totalSelected} — di cui {hiddenSelected} non visibili " +
+            "con il filtro/ricerca attuale.\n\n" +
+            "La selezione resta attiva anche sugli oggetti nascosti da un filtro. " +
+            "Vuoi includere nello script anche quelli non visibili?",
+            height: 260, destructive: false);
+
+    // Avviso mostrato prima di avviare una migrazione quando esistono tabelle selezionate NON visibili con il
+    // filtro/ricerca corrente: verrebbero migrate comunque e, se la migrazione include i dati, svuotate sul target.
+    private Task<bool> ShowHiddenTablesMigrationConfirmDialogAsync(int totalSelected, int hiddenSelected, bool replacesTargetData) =>
+        ShowConfirmDialogAsync(
+            "⚠️ Tabelle selezionate non visibili",
+            $"Tabelle selezionate: {totalSelected} — di cui {hiddenSelected} non visibili " +
+            "con il filtro/ricerca attuale.\n\n" +
+            "Le tabelle nascoste da un filtro restano selezionate e verranno migrate anche loro" +
+            (replacesTargetData
+                ? ": i dati che hanno nel database di destinazione verranno sostituiti " +
+                  "(le tabelle vengono svuotate prima del caricamento).\n\n"
+                : ".\n\n") +
+            "Vuoi includerle nella migrazione?",
+            height: 320, destructive: replacesTargetData);
+
+    // Finestra di conferma modale. Se l'azione e' distruttiva il pulsante predefinito (Invio) e' Annulla.
+    private async Task<bool> ShowConfirmDialogAsync(string title, string message, int height, bool destructive)
     {
         var dialog = new Window
         {
-            Title = "⚠️ Oggetti selezionati non visibili",
+            Title = title,
             Width = 520,
-            Height = 260,
+            Height = height,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false,
             ShowInTaskbar = false
@@ -477,10 +503,7 @@ namespace DatabaseMigrator.Views;
 
         var messageText = new TextBlock
         {
-            Text = $"Oggetti selezionati: {totalSelected} — di cui {hiddenSelected} non visibili " +
-                   "con il filtro/ricerca attuale.\n\n" +
-                   "La selezione resta attiva anche sugli oggetti nascosti da un filtro. " +
-                   "Vuoi includere nello script anche quelli non visibili?",
+            Text = message,
             TextWrapping = Avalonia.Media.TextWrapping.Wrap,
             FontSize = 14
         };
@@ -499,10 +522,10 @@ namespace DatabaseMigrator.Views;
             Content = "Includi e continua",
             Width = 160,
             Padding = new Thickness(10, 5),
-            Background = Avalonia.Media.Brushes.DodgerBlue,
+            Background = destructive ? Avalonia.Media.Brushes.Firebrick : Avalonia.Media.Brushes.DodgerBlue,
             Foreground = Avalonia.Media.Brushes.White,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            IsDefault = true
+            IsDefault = !destructive
         };
 
         var cancelButton = new Button
@@ -511,7 +534,8 @@ namespace DatabaseMigrator.Views;
             Width = 140,
             Padding = new Thickness(10, 5),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            IsCancel = true
+            IsCancel = true,
+            IsDefault = destructive
         };
 
         continueButton.Click += (s, e) =>

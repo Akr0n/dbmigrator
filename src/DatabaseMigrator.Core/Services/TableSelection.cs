@@ -44,6 +44,33 @@ public static class TableSelection
             table.IsSelected = false;
     }
 
+    /// <summary>How many selected tables the filter currently hides.</summary>
+    public static int CountHidden(IEnumerable<TableInfo> tables, string? searchFilter)
+    {
+        var all = tables.ToList();
+        var visible = new HashSet<TableInfo>(Visible(all, searchFilter));
+        return all.Count(table => table.IsSelected && !visible.Contains(table));
+    }
+
+    /// <summary>
+    /// After a reload, selects the freshly loaded tables that are selected among the tables currently on screen.
+    /// It takes the on-screen tables themselves, not a snapshot of their keys, so it always sees the selection as it
+    /// is when it is called: a click made while the reload was running is kept instead of being undone.
+    /// Tables are matched by exact (schema, name): names that differ only by case, or that contain a dot, are
+    /// different tables.
+    /// </summary>
+    public static void CarryOver(IEnumerable<TableInfo> current, IEnumerable<TableInfo> reloaded)
+    {
+        var selected = new HashSet<(string Schema, string Table)>(
+            current.Where(table => table.IsSelected).Select(table => (table.Schema, table.TableName)));
+
+        foreach (var table in reloaded)
+        {
+            if (selected.Contains((table.Schema, table.TableName)))
+                table.IsSelected = true;
+        }
+    }
+
     private static bool Matches(TableInfo table, string lowerCaseFilter) =>
         table.TableName.ToLowerInvariant().Contains(lowerCaseFilter) ||
         table.Schema.ToLowerInvariant().Contains(lowerCaseFilter) ||

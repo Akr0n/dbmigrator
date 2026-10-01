@@ -294,6 +294,13 @@ public class MainWindowViewModel : ViewModelBase
     /// </summary>
     public Func<TruncateFailureContext, Task<bool>>? TruncateFailedPromptHandlerAsync { get; set; }
 
+    /// <summary>
+    /// Optional handler asked before a migration starts when some selected tables are hidden by the search filter.
+    /// Receives (selected tables, how many of them are hidden, whether their data in the target will be replaced)
+    /// and returns true to go ahead or false to cancel.
+    /// </summary>
+    public Func<int, int, bool, Task<bool>>? ConfirmHiddenTablesAsync { get; set; }
+
     private void OnLogMessageReceived(LogEntry entry)
     {
         // Called from any thread; dispatch to UI thread for collection updates.
@@ -369,8 +376,6 @@ public class MainWindowViewModel : ViewModelBase
         _tableSubscriptions.Clear();
     }
 
-    private static string BuildTableKey(string schema, string tableName) => $"{schema}.{tableName}";
-
     private void RecomputeTableViews(bool force = false)
     {
         if (!Dispatcher.UIThread.CheckAccess())
@@ -395,14 +400,17 @@ public class MainWindowViewModel : ViewModelBase
         Log($"[RecomputeTableViews] Filtered={FilteredTables.Count}, Selected={SelectedTablesCount}, TotalRows={TotalRowsToMigrate}");
     }
 
-    private void ReplaceTablesOnUiThread(IEnumerable<TableInfo> tables, HashSet<string>? selectedTableKeys = null)
+    /// <param name="previousTables">
+    /// The tables currently on screen, whose selection is carried over to <paramref name="tables"/>. Passed as the live
+    /// objects (not as a snapshot of keys) so that anything the user selected while the reload ran is kept.
+    /// </param>
+    private void ReplaceTablesOnUiThread(IEnumerable<TableInfo> tables, IEnumerable<TableInfo>? previousTables = null)
     {
         if (!Dispatcher.UIThread.CheckAccess())
         {
             throw new InvalidOperationException("ReplaceTablesOnUiThread must run on the UI thread.");
         }
 
-        var selectedKeys = selectedTableKeys ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var nextTables = new List<TableInfo>();
 
         _suppressTableSelectionUpdates = true;
@@ -410,14 +418,9 @@ public class MainWindowViewModel : ViewModelBase
         {
             DisposeAllTableSubscriptions();
 
-            foreach (var table in tables)
-            {
-                if (selectedKeys.Contains(BuildTableKey(table.Schema, table.TableName)))
-                {
-                    table.IsSelected = true;
-                }
-                nextTables.Add(table);
-            }
+            nextTables.AddRange(tables);
+            if (previousTables != null)
+                TableSelection.CarryOver(previousTables, nextTables);
 
             Tables = new ObservableCollection<TableInfo>(nextTables);
             foreach (var table in nextTables)
@@ -546,6 +549,10 @@ public class MainWindowViewModel : ViewModelBase
         try
         {
             Log($"[StartMigrationAsync] Starting migration...");
+            // Kept only to put back if the user cancels at the hidden-tables question below: nothing ran in that case.
+            var previousError = ErrorMessage;
+            var previousProgress = ProgressPercentage;
+            var previousProgressText = ProgressText;
             IsMigrating = true;
             ErrorMessage = "";
             ProgressPercentage = 0;
@@ -566,6 +573,24 @@ public class MainWindowViewModel : ViewModelBase
                 ErrorMessage = "Errore: Connessioni non valide";
                 StatusMessage = "Connessioni invalide";
                 return;
+            }
+
+            // A selected table the search filter hides is still migrated, and its data on the target replaced: say so first.
+            int hiddenSelected = TableSelection.CountHidden(Tables, TableSearchFilter);
+            if (hiddenSelected > 0 && ConfirmHiddenTablesAsync is { } confirmHidden)
+            {
+                bool replacesTargetData = SelectedMigrationMode != MigrationMode.SchemaOnly;
+                bool proceed = await Dispatcher.UIThread.InvokeAsync(
+                    () => confirmHidden(tablesToMigrate.Count, hiddenSelected, replacesTargetData));
+                if (!proceed)
+                {
+                    Log($"[StartMigrationAsync] Cancelled by the user: {hiddenSelected} selected table(s) are hidden by the filter");
+                    StatusMessage = "Migrazione annullata";
+                    ErrorMessage = previousError;
+                    ProgressPercentage = previousProgress;
+                    ProgressText = previousProgressText;
+                    return;
+                }
             }
 
             // Verifica se database target esiste
@@ -889,7 +914,8 @@ public class MainWindowViewModel : ViewModelBase
                 _suppressTableSelectionUpdates = false;
             }
 
-            RecomputeTableViews();
+            // Forced: during a reload the normal recompute is skipped, which left the counters stale after this click.
+            RecomputeTableViews(force: true);
             Log($"[{operation}TablesDirectly] Completed. SelectedTablesCount={SelectedTablesCount}");
         });
     }
@@ -939,24 +965,15 @@ public class MainWindowViewModel : ViewModelBase
                 return;
             }
 
-            // Preserve selected tables before reloading metadata.
-            var selectedTablesCopy = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                foreach (var t in Tables.Where(t => t.IsSelected))
-                {
-                    selectedTablesCopy.Add(BuildTableKey(t.Schema, t.TableName));
-                }
-            });
-            
-            Log($"[RefreshTablesAsync] Preserving {selectedTablesCopy.Count} selected tables");
-
-            // Reload tables from source database.
+            // Reload tables from source database. The selection to keep is read when the tables are replaced, not
+            // before this await: the user can keep selecting while the reload runs, and a snapshot taken up front
+            // would silently undo those clicks when it is applied to the reloaded tables.
             var tables = await _databaseService.GetTablesAsync(SourceConnection.ConnectionInfo);
-            
+
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                ReplaceTablesOnUiThread(tables, selectedTablesCopy);
+                Log($"[RefreshTablesAsync] Preserving {Tables.Count(t => t.IsSelected)} selected tables");
+                ReplaceTablesOnUiThread(tables, previousTables: Tables);
                 StatusMessage = $"Tabelle ricaricate! Trovate {tables.Count} tabelle";
                 ErrorMessage = "";
             });
@@ -975,7 +992,13 @@ public class MainWindowViewModel : ViewModelBase
         finally
         {
             _isRefreshingTables = false;
-            await Dispatcher.UIThread.InvokeAsync(() => IsMigrating = false);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                IsMigrating = false;
+                // While reloading, RecomputeTableViews does nothing, so a filter typed or a click made in the meantime
+                // (and every failure path, which never replaces the tables) leaves the lists and counters out of date.
+                RecomputeTableViews();
+            });
         }
     }
 
