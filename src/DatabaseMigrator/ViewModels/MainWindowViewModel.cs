@@ -388,14 +388,7 @@ public class MainWindowViewModel : ViewModelBase
         TotalRowsToMigrate = selectedTables.Sum(t => t.RowCount);
         SelectedTablesForMigration = new ObservableCollection<TableInfo>(selectedTables);
 
-        IEnumerable<TableInfo> filteredSource = Tables;
-        if (!string.IsNullOrWhiteSpace(TableSearchFilter))
-        {
-            var filter = TableSearchFilter.ToLowerInvariant();
-            filteredSource = Tables.Where(t => MatchesFilter(t, filter));
-        }
-
-        var filteredList = filteredSource.ToList();
+        var filteredList = TableSelection.Visible(Tables, TableSearchFilter);
         FilteredTables = new ObservableCollection<TableInfo>(filteredList);
         FilteredTargetTables = new ObservableCollection<TableInfo>(filteredList.Where(t => t.IsSelected));
 
@@ -883,10 +876,13 @@ public class MainWindowViewModel : ViewModelBase
             _suppressTableSelectionUpdates = true;
             try
             {
-                foreach (var table in Tables)
-                {
-                    table.IsSelected = isSelected;
-                }
+                // "Select all" acts on what the search box shows, so filtering a schema and pressing it selects that
+                // schema only. "Deselect all" clears everything: a selected table the filter hides would still be
+                // migrated (and emptied on the target) without the user seeing it.
+                if (isSelected)
+                    TableSelection.SelectVisible(Tables, TableSearchFilter);
+                else
+                    TableSelection.DeselectAll(Tables);
             }
             finally
             {
@@ -896,19 +892,6 @@ public class MainWindowViewModel : ViewModelBase
             RecomputeTableViews();
             Log($"[{operation}TablesDirectly] Completed. SelectedTablesCount={SelectedTablesCount}");
         });
-    }
-
-    /// <summary>
-    /// Checks if a table matches the given filter string.
-    /// </summary>
-    /// <param name="table">The table to check.</param>
-    /// <param name="filter">The filter string (should be lowercase).</param>
-    /// <returns>True if the table matches the filter, false otherwise.</returns>
-    private bool MatchesFilter(TableInfo table, string filter)
-    {
-        return table.TableName.ToLowerInvariant().Contains(filter) ||
-               table.Schema.ToLowerInvariant().Contains(filter) ||
-               $"{table.Schema}.{table.TableName}".ToLowerInvariant().Contains(filter);
     }
 
     private void UpdateTableStatistics()
