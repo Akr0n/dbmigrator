@@ -62,7 +62,7 @@ public class OracleDeleteCheckTests
 
         Assert.Equal(["APP.CHILD"], check.Populated);
         Assert.Empty(check.UnverifiableSchemas);
-        Assert.False(check.GrantsNotVisible);
+        Assert.Empty(check.NotOwned!);
     }
 
     [Fact]
@@ -80,7 +80,102 @@ public class OracleDeleteCheckTests
         var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [], "APP");
 
         Assert.Equal(["G"], check.UnverifiableSchemas);
+        Assert.Equal(["G.VISIBLE_CHILD"], check.NotOwned); // and its own grants cannot be read: it is not the user's table
         Assert.Empty(check.Populated);
+    }
+
+    [Fact]
+    public async Task AGrandchildBehindACascadeChild_HasItsGrantsChecked_EvenWhenTheChildIsLoadedLater()
+    {
+        // HEAD cascades to C1 (owned by the user), and a schema S was granted REFERENCES on C1: S may own a populated table that
+        // cascades from C1. Emptying HEAD empties C1 through the cascade and that table with it, hidden from the user, although
+        // C1 is itself reloaded later. Only HEAD's grants used to be read.
+        var keys = Keys(("APP", "C1", "APP", "HEAD", 1));
+        using var connection = new FakeConnection(
+            command => command.Contains("APP.HEAD") ? 1 : null,
+            readerWithBinds: (command, binds) =>
+                command.Contains("dba_constraints") ? throw OracleError(942)
+                : command.Contains("all_tab_privs") ? Names(binds["tab"]!.ToString() == "C1" ? ["S"] : []).CreateDataReader()
+                : keys.CreateDataReader());
+
+        var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [new TableInfo { Schema = "APP", TableName = "C1" }], "APP");
+
+        Assert.Equal(["S"], check.UnverifiableSchemas);
+    }
+
+    [Fact]
+    public async Task ATableOfAnotherSchemaInTheCascade_CannotHaveItsGrantsRead()
+    {
+        var keys = Keys(("OTHER", "CHILD", "APP", "HEAD", 1));
+        using var connection = new FakeConnection(
+            command => command.Contains("APP.HEAD") ? 1 : null, // the visible child is empty
+            command => command.Contains("dba_constraints") ? throw OracleError(942)
+                : command.Contains("all_tab_privs") ? Names().CreateDataReader()
+                : keys.CreateDataReader());
+
+        var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [], "APP");
+
+        Assert.Equal(["OTHER.CHILD"], check.NotOwned);
+    }
+
+    [Fact]
+    public async Task AGrantOfReferencesOnSomeColumnsOnly_IsReadToo()
+    {
+        // It is recorded in ALL_COL_PRIVS, not in ALL_TAB_PRIVS: the schema holding it can own a table that cascades from here.
+        using var connection = new FakeConnection(
+            command => command.Contains("ROWNUM = 1") ? 1 : null,
+            command => command.Contains("dba_constraints") ? throw OracleError(942)
+                : command.Contains("all_col_privs") ? Names("S").CreateDataReader()
+                : Keys().CreateDataReader());
+
+        var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [], "APP");
+
+        Assert.Equal(["S"], check.UnverifiableSchemas);
+    }
+
+    // ── the keys are kept for a short while, and for the view they were read from ─
+
+    [Fact]
+    public async Task TheKeys_AreReadAgainOnceTheirLifetimeIsOver()
+    {
+        var clock = new StepClock();
+        using var connection = new FakeConnection(
+            command => command.Contains("ROWNUM = 1") ? 1 : null,
+            command => Keys().CreateDataReader());
+        var service = new DatabaseService { Clock = clock };
+
+        await service.CheckOracleDeleteAsync(connection, Head, [], "APP");
+        clock.Now += TimeSpan.FromSeconds(10);
+        await service.CheckOracleDeleteAsync(connection, Head, [], "APP");
+        Assert.Equal(1, connection.CountOf("dba_constraints")); // still fresh
+
+        clock.Now += TimeSpan.FromSeconds(30);
+        await service.CheckOracleDeleteAsync(connection, Head, [], "APP");
+
+        Assert.Equal(2, connection.CountOf("dba_constraints")); // it never expired: a key added later would never be seen
+    }
+
+    [Fact]
+    public async Task TheKeysReadFromTheVisibleView_AreNotTakenForTheCompleteOnes()
+    {
+        // Without access to DBA_CONSTRAINTS the visible keys are cached. A later check on the same service must still find the
+        // DBA view unreadable: answering it from the cache made the incomplete list look complete, and every grant check was skipped.
+        using var connection = new FakeConnection(
+            command => command.Contains("ROWNUM = 1") ? 1 : null,
+            command => command.Contains("dba_constraints") ? throw OracleError(942) : Keys().CreateDataReader());
+        var service = new DatabaseService();
+
+        var first = await service.CheckOracleDeleteAsync(connection, Head, [], "ETL");
+        var second = await service.CheckOracleDeleteAsync(connection, Head, [], "ETL");
+
+        Assert.Equal(["APP.HEAD"], first.NotOwned);
+        Assert.Equal(["APP.HEAD"], second.NotOwned);
+    }
+
+    private sealed class StepClock : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 
     [Fact]
@@ -94,7 +189,7 @@ public class OracleDeleteCheckTests
 
         var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [], "ETL");
 
-        Assert.True(check.GrantsNotVisible);
+        Assert.Equal(["APP.HEAD"], check.NotOwned);
         Assert.Equal(0, connection.CountOf("all_tab_privs"));
     }
 
@@ -107,7 +202,7 @@ public class OracleDeleteCheckTests
 
         var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [], "ETL"); // not the owner: does not matter
 
-        Assert.False(check.GrantsNotVisible);
+        Assert.Empty(check.NotOwned!);
         Assert.Empty(check.UnverifiableSchemas);
         Assert.Empty(check.Populated);
     }
@@ -166,21 +261,25 @@ public class OracleDeleteCheckTests
     {
         private readonly Func<string, object?> _scalar;
         private readonly Func<string, DbDataReader>? _reader;
+        private readonly Func<string, IReadOnlyDictionary<string, object?>, DbDataReader>? _readerWithBinds;
         private readonly List<string> _executed = [];
 
-        public FakeConnection(Func<string, object?> scalar, Func<string, DbDataReader>? reader = null)
+        public FakeConnection(Func<string, object?> scalar, Func<string, DbDataReader>? reader = null,
+            Func<string, IReadOnlyDictionary<string, object?>, DbDataReader>? readerWithBinds = null)
         {
             _scalar = scalar;
             _reader = reader;
+            _readerWithBinds = readerWithBinds;
         }
 
         public int CountOf(string fragment) => _executed.Count(sql => sql.Contains(fragment));
 
         internal object? Scalar(string sql) { _executed.Add(sql); return _scalar(sql); }
 
-        internal DbDataReader Reader(string sql)
+        internal DbDataReader Reader(string sql, IReadOnlyDictionary<string, object?> binds)
         {
             _executed.Add(sql);
+            if (_readerWithBinds != null) return _readerWithBinds(sql, binds);
             if (_reader == null) throw new InvalidOperationException("no reader configured for: " + sql);
             return _reader(sql);
         }
@@ -217,7 +316,8 @@ public class OracleDeleteCheckTests
         public override object? ExecuteScalar() => _owner.Scalar(CommandText);
         public override void Prepare() { }
         protected override DbParameter CreateDbParameter() => new FakeParameter();
-        protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior) => _owner.Reader(CommandText);
+        protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior) =>
+            _owner.Reader(CommandText, DbParameterCollection.Cast<DbParameter>().ToDictionary(p => p.ParameterName, p => p.Value));
     }
 
     private sealed class FakeParameter : DbParameter

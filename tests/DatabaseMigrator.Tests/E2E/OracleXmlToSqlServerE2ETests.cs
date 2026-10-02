@@ -40,6 +40,74 @@ public class OracleXmlToSqlServerE2ETests
 
     [Trait("Category", "E2E")]
     [Fact]
+    public async Task AnXmlTypeLoadedIntoAnExistingTextColumn_KeepsItsDeclaration()
+    {
+        if (!ShouldRunE2E()) return;
+
+        // The declaration is only dropped for an xml column, where SQL Server discards it anyway. A target table that already
+        // exists with a text column (kept as it is) gets the document exactly as the source returned it.
+        string id = Guid.NewGuid().ToString("N")[..8];
+        string table = $"XMLT_{id}".ToUpperInvariant();
+        const string document = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><a>1</a>";
+        var source = new ConnectionInfo
+        {
+            DatabaseType = DatabaseType.Oracle, Server = "127.0.0.1", Port = 1521, Database = "FREEPDB1",
+            Username = "migration_test", Password = "oraclepass123"
+        };
+        var master = SqlServer("master");
+        var target = SqlServer($"xmltx_{id}");
+
+        await using var oracle = new OracleConnection(source.GetConnectionString());
+        await oracle.OpenAsync();
+        try
+        {
+            foreach (var statement in new[]
+            {
+                $"CREATE TABLE {table} (id NUMBER(10) PRIMARY KEY, doc XMLTYPE)",
+                $"INSERT INTO {table} VALUES (1, XMLTYPE('{document.Replace("'", "''")}'))",
+                "COMMIT"
+            })
+            {
+                await using var command = new OracleCommand(statement, oracle);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await ExecAsync(master, $"CREATE DATABASE [{target.Database}]");
+            await ExecAsync(target, "CREATE SCHEMA [MIGRATION_TEST]");
+            await ExecAsync(target, $"CREATE TABLE [MIGRATION_TEST].[{table}] ([ID] INT NOT NULL PRIMARY KEY, [DOC] NVARCHAR(MAX) NULL)");
+
+            await new DatabaseService().MigrateTableAsync(source, target, new TableInfo { Schema = "MIGRATION_TEST", TableName = table }, new Progress<int>());
+
+            string? stored = await ScalarAsync(target, $"SELECT [DOC] FROM [MIGRATION_TEST].[{table}] WHERE [ID] = 1");
+            Assert.StartsWith("<?xml version=\"1.0\" encoding=\"UTF-8\"?>", stored); // it used to be "<a>1</a>"
+            Assert.Contains("<a>1</a>", stored);
+        }
+        finally
+        {
+            try
+            {
+                await using var drop = new OracleCommand($"DROP TABLE {table} PURGE", oracle);
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch
+            {
+                // Best effort.
+            }
+
+            SqlConnection.ClearAllPools();
+            try
+            {
+                await ExecAsync(master, $"ALTER DATABASE [{target.Database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{target.Database}];");
+            }
+            catch
+            {
+                // Best effort.
+            }
+        }
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
     public async Task AnXmlTypeWithAnEncodingDeclaration_IsLoadedIntoAnXmlColumn()
     {
         if (!ShouldRunE2E()) return;

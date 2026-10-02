@@ -1151,34 +1151,36 @@ public class ScriptGenerationService : DatabaseServiceBase
     // catalog) must be doubled or it would end the literal and the rest of the name would run as PL/SQL.
     /// <summary>
     /// Items separated by commas, going on to a new physical line whenever the current one would pass
-    /// <see cref="DatabaseService.OracleScriptLineBudget"/>: SQL*Plus ignores a line of more than 4999 characters (and still
+    /// <see cref="DatabaseService.OracleScriptLineBudget"/>: SQL*Plus ignores a line of more than 4999 bytes (and still
     /// exits with 0), which a table with many columns or one with long text would otherwise reach. An item that has line
     /// breaks of its own (a long text value) counts from its last one.
     /// </summary>
     internal static string JoinForSqlPlus(IEnumerable<string> items)
     {
         var sb = new System.Text.StringBuilder();
-        int lineStart = 0;
+        int lineBytes = 0;
         foreach (string item in items)
         {
+            int itemBytes = DatabaseService.Utf8Bytes(item);
             if (sb.Length > 0)
             {
                 sb.Append(',');
-                if (sb.Length - lineStart + item.Length > DatabaseService.OracleScriptLineBudget)
+                lineBytes += 1;
+                if (lineBytes + itemBytes > DatabaseService.OracleScriptLineBudget)
                 {
                     sb.Append(Environment.NewLine);
-                    lineStart = sb.Length;
+                    lineBytes = 0;
                 }
                 else
                 {
                     sb.Append(' ');
+                    lineBytes += 1;
                 }
             }
 
             sb.Append(item);
             int lastBreak = item.LastIndexOf('\n');
-            if (lastBreak >= 0)
-                lineStart = sb.Length - (item.Length - lastBreak - 1);
+            lineBytes = lastBreak >= 0 ? DatabaseService.Utf8Bytes(item[(lastBreak + 1)..]) : lineBytes + itemBytes;
         }
 
         return sb.ToString();

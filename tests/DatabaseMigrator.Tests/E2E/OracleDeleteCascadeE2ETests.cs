@@ -255,6 +255,68 @@ public class OracleDeleteCascadeE2ETests
 
     [Trait("Category", "E2E")]
     [Fact]
+    public async Task AHiddenGrandchildBehindACascadeChildLoadedLater_IsRefusedWithoutCatalogAccess()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(childRule: "ON DELETE CASCADE");
+        await db.OracleAsync("INSERT INTO {head} VALUES (1, 'old')", "INSERT INTO {child} VALUES (1, 1, 'old')");
+        // head -> child (the migration user's own, visible, loaded later in this run) -> grandchild_other, which belongs to a
+        // schema that was granted REFERENCES on child. Emptying head empties child through the cascade and, through it, a table
+        // that nobody can see: it used to pass, because only head's own grants were looked at.
+        string otherSchema = await db.CreateGrandchildInAnotherSchemaAsync();
+        var asked = new List<string>();
+        var service = new DatabaseService { TruncateFailedHandlerAsync = ctx => { asked.Add(ctx.ErrorMessage ?? ""); return Task.FromResult(false); } };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.MigrateTableAsync(db.Source, db.Target, db.Table("head"), new Progress<int>(), tablesLoadedLater: [db.Table("child")]));
+
+        Assert.Contains(otherSchema, asked.Single());
+        Assert.Equal(1, await db.ScalarAsync($"SELECT COUNT(*) FROM {otherSchema}.grandchild_other", asSystem: true));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task AGrantOfReferencesOnSomeColumnsOnly_IsRefusedWithoutCatalogAccess()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(childRule: "ON DELETE CASCADE");
+        await db.OracleAsync("INSERT INTO {head} VALUES (1, 'old')");
+        // GRANT REFERENCES (id) ON head: ALL_TAB_PRIVS has no row for it (ALL_COL_PRIVS does), and the schema's key is not visible.
+        string otherSchema = await db.CreateChildInAnotherSchemaAsync(columnLevelGrantOnly: true);
+        var asked = new List<string>();
+        var service = new DatabaseService { TruncateFailedHandlerAsync = ctx => { asked.Add(ctx.ErrorMessage ?? ""); return Task.FromResult(false); } };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.MigrateTableAsync(db.Source, db.Target, db.Table("head"), new Progress<int>(), tablesLoadedLater: []));
+
+        Assert.Contains(otherSchema, asked.Single());
+        Assert.Equal(1, await db.ScalarAsync($"SELECT COUNT(*) FROM {otherSchema}.child_other", asSystem: true));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task AStraySpaceInTheUserName_DoesNotMakeTheOwnerLookLikeAnotherUser()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(childRule: "ON DELETE CASCADE");
+        await db.OracleAsync("INSERT INTO {head} VALUES (1, 'old')");
+        // The user box is not trimmed: ODP.NET connects as the same user, and the owner must still be recognised as the owner.
+        var typedWithASpace = new ConnectionInfo
+        {
+            DatabaseType = DatabaseType.Oracle, Server = db.Target.Server, Port = db.Target.Port, Database = db.Target.Database,
+            Username = db.Target.Username + " ", Password = db.Target.Password
+        };
+        var asked = 0;
+        var service = new DatabaseService { TruncateFailedHandlerAsync = _ => { asked++; return Task.FromResult(false); } };
+
+        await service.MigrateTableAsync(db.Source, typedWithASpace, db.Table("head"), new Progress<int>(), tablesLoadedLater: []);
+
+        Assert.Equal(0, asked); // no "you are not the owner" question
+        Assert.Equal(3, await db.ScalarAsync("SELECT COUNT(*) FROM {head} WHERE name = 'new'"));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
     public async Task AGrantOfAllPrivilegesToAnotherUser_IsRefusedWithoutCatalogAccess_AndAcceptedWithIt()
     {
         if (!ShouldRunE2E()) return;
@@ -412,14 +474,15 @@ public class OracleDeleteCascadeE2ETests
         /// Creates another Oracle user that was granted REFERENCES on head and owns child_other with an ON DELETE CASCADE key
         /// to it and one row. The migration user cannot read that schema. Returns the other schema's name.
         /// </summary>
-        public async Task<string> CreateChildInAnotherSchemaAsync(bool alsoAVisibleEmptyChild = false)
+        public async Task<string> CreateChildInAnotherSchemaAsync(bool alsoAVisibleEmptyChild = false, bool columnLevelGrantOnly = false)
         {
             string user = $"OCAS_O_{_id}".ToUpperInvariant();
             string password = $"Pw_{_id}_x1";
             _foreignUsers.Add(user);
             await SystemAsync($"CREATE USER {user} IDENTIFIED BY \"{password}\" QUOTA UNLIMITED ON USERS",
                 $"GRANT CREATE SESSION, CREATE TABLE TO {user}",
-                $"GRANT REFERENCES ON {Schema}.{Name("head")} TO {user}");
+                // REFERENCES on some columns only is recorded in ALL_COL_PRIVS, not in ALL_TAB_PRIVS.
+                $"GRANT REFERENCES {(columnLevelGrantOnly ? "(id) " : "")}ON {Schema}.{Name("head")} TO {user}");
 
             var owner = new ConnectionInfo
             {
@@ -445,6 +508,42 @@ public class OracleDeleteCascadeE2ETests
             }
 
             foreach (var statement in statements)
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = statement;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            return user;
+        }
+
+        /// <summary>
+        /// Creates another Oracle user that was granted REFERENCES on child (a table of the migration user, that references head)
+        /// and owns grandchild_other with an ON DELETE CASCADE key to child and one row. The migration user cannot read it.
+        /// </summary>
+        public async Task<string> CreateGrandchildInAnotherSchemaAsync()
+        {
+            string user = $"OCAS_G_{_id}".ToUpperInvariant();
+            string password = $"Pw_{_id}_x3";
+            _foreignUsers.Add(user);
+            await SystemAsync($"CREATE USER {user} IDENTIFIED BY \"{password}\" QUOTA UNLIMITED ON USERS",
+                $"GRANT CREATE SESSION, CREATE TABLE TO {user}",
+                $"GRANT REFERENCES ON {Schema}.{Name("child")} TO {user}");
+
+            var owner = new ConnectionInfo
+            {
+                DatabaseType = DatabaseType.Oracle, Server = "127.0.0.1", Port = 1521, Database = "FREEPDB1",
+                Username = user, Password = password
+            };
+            await using var connection = new OracleConnection(owner.GetConnectionString());
+            await connection.OpenAsync();
+            foreach (var statement in new[]
+            {
+                $"CREATE TABLE grandchild_other (id NUMBER(10) PRIMARY KEY, child_id NUMBER(10) NOT NULL, " +
+                    $"CONSTRAINT fk_g_{_id} FOREIGN KEY (child_id) REFERENCES {Schema}.{Name("child")}(id) ON DELETE CASCADE)",
+                "INSERT INTO grandchild_other VALUES (1, 1)",
+                "COMMIT"
+            })
             {
                 await using var command = connection.CreateCommand();
                 command.CommandText = statement;

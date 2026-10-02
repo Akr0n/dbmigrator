@@ -522,6 +522,9 @@ public class ScriptGenerationE2ETests
             [1] = (Lines(150, "first column line"), Lines(150, "second column line")), // ~ 5400 characters in the one-line form
             [2] = (Lines(60, "x"), Lines(60, "y")),                                      // each value alone is short, the row is not
             [3] = ("plain", "plain too"),
+            // 1300 CJK characters are 3900 bytes: under the VARCHAR2(4000) limit, and over what a line of SQL*Plus accepts when
+            // counted in characters (it counts bytes), so each of these two values has to be written over several lines.
+            [4] = (new string((char)0x3042, 1300), new string((char)0x3044, 1300)),
         };
         const int columns = 250;
         string ColumnName(int i) => $"col_{i:000}";

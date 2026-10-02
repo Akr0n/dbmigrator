@@ -506,7 +506,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
         var populated = new List<string>();
         var unreadable = new List<string>();
-        foreach (var (schema, name) in DeleteCascadeReach.Affected(owner, tableName, edges))
+        var affected = DeleteCascadeReach.Affected(owner, tableName, edges).ToList();
+        foreach (var (schema, name) in affected)
         {
             if (loadedLater.Contains((schema.ToUpperInvariant(), name.ToUpperInvariant())))
                 continue;
@@ -522,27 +523,40 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         }
 
         var unverifiable = new List<string>();
-        bool grantsNotVisible = false;
+        var notOwned = new List<string>();
         if (!seesEveryKey)
         {
             Log("[MigrateTableAsync] The migration user cannot read DBA_CONSTRAINTS: foreign keys owned by schemas it cannot access " +
                 "are not checked (grant SELECT_CATALOG_ROLE to check them)");
-            if (!string.Equals(owner, currentUser, StringComparison.OrdinalIgnoreCase))
+
+            // The grants of a table are visible to its owner, the grantor and the grantee only, so they can be read for the tables
+            // of the migration user's own schema. The tables the cascade passes through count as much as the one being emptied:
+            // a schema granted REFERENCES on a child can own a table that cascades from it, whether or not this run loads that
+            // child later. A table of another schema cannot be asked at all.
+            var cascadeTables = new List<(string Schema, string Name)> { (owner, tableName) };
+            cascadeTables.AddRange(affected);
+            foreach (var (schema, name) in cascadeTables)
             {
-                // The grants of a table are visible to its owner, the grantor and the grantee only.
-                grantsNotVisible = true;
-            }
-            else
-            {
-                // Bind variables: a distinct literal per table would be hard-parsed by the server every time.
-                unverifiable.AddRange(await ReadOracleNamesAsync(connection,
-                    "SELECT DISTINCT grantee FROM all_tab_privs WHERE table_schema = :owner AND table_name = :tab " +
-                    "AND privilege = 'REFERENCES' AND grantee <> :owner",
-                    ("owner", owner), ("tab", tableName)));
+                if (!string.Equals(schema, currentUser, StringComparison.OrdinalIgnoreCase))
+                {
+                    notOwned.Add($"{schema}.{name}");
+                    continue;
+                }
+
+                // Bind variables: a distinct literal per table would be hard-parsed by the server every time. A grant of REFERENCES
+                // on some columns only is recorded in ALL_COL_PRIVS, not in ALL_TAB_PRIVS: both are read.
+                foreach (var grantee in await ReadOracleNamesAsync(connection,
+                    "SELECT grantee FROM all_tab_privs WHERE table_schema = :owner AND table_name = :tab AND privilege = 'REFERENCES' AND grantee <> :owner " +
+                    "UNION SELECT grantee FROM all_col_privs WHERE table_schema = :owner AND table_name = :tab AND privilege = 'REFERENCES' AND grantee <> :owner",
+                    ("owner", schema), ("tab", name)))
+                {
+                    if (!unverifiable.Contains(grantee, StringComparer.OrdinalIgnoreCase))
+                        unverifiable.Add(grantee);
+                }
             }
         }
 
-        return new OracleDeleteCheck(populated, unreadable, unverifiable, grantsNotVisible);
+        return new OracleDeleteCheck(populated, unreadable, unverifiable, notOwned);
     }
 
     /// <summary>
@@ -556,7 +570,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         string cacheKey = connection.ConnectionString + "|" + view;
         lock (_oracleKeyCacheLock)
         {
-            if (_oracleKeyCache is { } cached && cached.Key == cacheKey && DateTime.UtcNow - cached.ReadAt < OracleKeyCacheLifetime)
+            if (_oracleKeyCache is { } cached && cached.Key == cacheKey && Clock.GetUtcNow().UtcDateTime - cached.ReadAt < OracleKeyCacheLifetime)
                 return cached.Edges;
         }
 
@@ -576,7 +590,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 edges.Add(new DeleteRuleEdge(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                     Convert.ToInt32(reader.GetValue(4)) == 1));
             lock (_oracleKeyCacheLock)
-                _oracleKeyCache = (cacheKey, DateTime.UtcNow, edges);
+                _oracleKeyCache = (cacheKey, Clock.GetUtcNow().UtcDateTime, edges);
             return edges;
         }
         catch (OracleException ex) when (ex.Number == 942)
@@ -586,6 +600,9 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             return null;
         }
     }
+
+    /// <summary>The clock the key cache measures its lifetime with (a test replaces it).</summary>
+    internal TimeProvider Clock { get; set; } = TimeProvider.System;
 
     private readonly object _oracleKeyCacheLock = new();
     private (string Key, DateTime ReadAt, List<DeleteRuleEdge> Edges)? _oracleKeyCache;
@@ -636,7 +653,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
     /// <summary>What <see cref="CheckOracleDeleteAsync"/> learned about a DELETE of every row of a table.</summary>
     internal sealed record OracleDeleteCheck(List<string> Populated, List<string> Unreadable, List<string> UnverifiableSchemas,
-        bool GrantsNotVisible = false);
+        List<string>? NotOwned = null);
 
     /// <summary>What <see cref="CheckPostgresCascadeAsync"/> learned: whether the table has rows, and what else a cascade would lose.</summary>
     private sealed record CascadeCheck(bool? TableHasRows, List<string> PopulatedElsewhere);
@@ -761,6 +778,9 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             await ExecuteWithRetryAsync(() => sourceConn.OpenAsync(), "MigrateTableAsync.SourceOpen");
             await ExecuteWithRetryAsync(() => targetConn.OpenAsync(), "MigrateTableAsync.TargetOpen");
 
+            // The user the Oracle session really runs as (not the text typed in the user box: a stray space or another spelling).
+            string? oracleSessionUser = null;
+
             // Diagnostica: logga lo schema e l'utente per Oracle
             if (target.DatabaseType == DatabaseType.Oracle && targetConn is OracleConnection oracleConn)
             {
@@ -770,6 +790,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                     {
                         diagCmd.CommandText = "SELECT USER FROM DUAL";
                         var currentUser = await ExecuteWithRetryAsync(() => diagCmd.ExecuteScalarAsync(), "MigrateTableAsync.OracleCurrentUser");
+                        oracleSessionUser = Convert.ToString(currentUser);
                         Log($"[MigrateTableAsync] Oracle current user: {currentUser}");
                     }
                 }
@@ -851,7 +872,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                     {
                         // Oracle empties the table with DELETE, which an enabled ON DELETE CASCADE / SET NULL key spreads to
                         // the tables that reference it, selected or not.
-                        var check = await CheckOracleDeleteAsync(targetConn, table, tablesLoadedLater, target.Username);
+                        var check = await CheckOracleDeleteAsync(targetConn, table, tablesLoadedLater,
+                            oracleSessionUser ?? target.Username.Trim());
                         if (check.Populated.Count > 0)
                         {
                             throw new InvalidOperationException(
@@ -867,16 +889,20 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                 "Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
                         }
 
-                        if (check.GrantsNotVisible)
+                        if (check.NotOwned is { Count: > 0 })
                         {
+                            // A role is active only in sessions opened after it was granted: drop the pooled ones so that a retry
+                            // right after the DBA's GRANT sees it, without restarting the application.
+                            OracleConnection.ClearAllPools();
                             throw new InvalidOperationException(
-                                $"L'utente di migrazione non è il proprietario di {table.Schema}.{table.TableName} e non può leggere tutte le chiavi esterne che la riferiscono: " +
+                                $"L'utente di migrazione non è il proprietario di {ListNames(check.NotOwned)} e non può leggere tutte le chiavi esterne che le riferiscono: " +
                                 "potrebbero esserci tabelle con dati e ON DELETE CASCADE / SET NULL che il DELETE svuoterebbe. Concedi il ruolo SELECT_CATALOG_ROLE all'utente di migrazione per verificarlo, oppure svuota la tabella tu. " +
                                 "Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
                         }
 
                         if (check.UnverifiableSchemas.Count > 0)
                         {
+                            OracleConnection.ClearAllPools(); // see above
                             throw new InvalidOperationException(
                                 $"Gli schemi {ListNames(check.UnverifiableSchemas)} hanno il privilegio REFERENCES su {table.Schema}.{table.TableName} e le loro chiavi esterne non sono visibili all'utente di migrazione: " +
                                 "potrebbero avere tabelle con dati e ON DELETE CASCADE / SET NULL che il DELETE svuoterebbe. Concedi il ruolo SELECT_CATALOG_ROLE all'utente di migrazione per verificarlo, oppure svuota la tabella tu. " +
@@ -1026,7 +1052,18 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                 }
 
                                 // SQL Server drops an xml column's declaration but refuses a Unicode literal that has one with an encoding.
-                                int[] xmlColumns = target.DatabaseType == DatabaseType.SqlServer ? XmlColumnIndexes(reader) : [];
+                                // It is removed only where the target column is xml: a text column of a table that already existed
+                                // gets the document as the source returned it.
+                                int[] xmlColumns = [];
+                                if (target.DatabaseType == DatabaseType.SqlServer)
+                                {
+                                    xmlColumns = XmlColumnIndexes(reader);
+                                    if (xmlColumns.Length > 0)
+                                    {
+                                        var targetXml = await GetSqlServerXmlColumnsAsync(targetConn, table.Schema, table.TableName, transaction);
+                                        xmlColumns = xmlColumns.Where(i => targetXml.Contains(reader.GetName(i))).ToArray();
+                                    }
+                                }
                                 var batchRows = new List<object?[]>(_batchSize);
                                 while (await reader.ReadAsync())
                                 {
@@ -1195,6 +1232,37 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     /// <summary>
     /// Checks if a SQL Server table has an IDENTITY column.
     /// </summary>
+    /// <summary>The names of the xml columns of a SQL Server table (case-insensitive).</summary>
+    private async Task<HashSet<string>> GetSqlServerXmlColumnsAsync(DbConnection connection, string schema, string tableName, DbTransaction? transaction)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            SELECT c.name
+            FROM sys.columns c
+            INNER JOIN sys.tables t ON c.object_id = t.object_id
+            INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+            WHERE s.name = @Schema AND t.name = @TableName AND TYPE_NAME(c.user_type_id) = 'xml'";
+        command.CommandTimeout = _commandTimeoutSeconds;
+        if (transaction != null)
+            command.Transaction = transaction;
+
+        var schemaParam = command.CreateParameter();
+        schemaParam.ParameterName = "@Schema";
+        schemaParam.Value = schema;
+        command.Parameters.Add(schemaParam);
+
+        var tableParam = command.CreateParameter();
+        tableParam.ParameterName = "@TableName";
+        tableParam.Value = tableName;
+        command.Parameters.Add(tableParam);
+
+        using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.FindXmlColumns");
+        while (await reader.ReadAsync())
+            names.Add(reader.GetString(0));
+        return names;
+    }
+
     private async Task<bool> HasIdentityColumnAsync(DbConnection connection, string schema, string tableName, DbTransaction? transaction)
     {
         using (var command = connection.CreateCommand())
@@ -1580,38 +1648,44 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         }
     }
 
-    /// <summary>Characters of text in one quoted piece of a long Oracle script literal.</summary>
-    private const int OracleScriptPiece = 500;
+    /// <summary>Characters of text in one quoted piece of a long Oracle script literal (at most 4 bytes each in UTF-8).</summary>
+    private const int OracleScriptPiece = 400;
 
-    /// <summary>Characters after which a long Oracle script literal goes on to the next physical line.</summary>
-    internal const int OracleScriptLineBudget = 1200;
+    /// <summary>UTF-8 bytes after which a long Oracle script literal goes on to the next physical line.</summary>
+    internal const int OracleScriptLineBudget = 800;
+
+    /// <summary>The size of a text in UTF-8: what SQL*Plus counts against its line limit, not the number of characters.</summary>
+    internal static int Utf8Bytes(string text) => System.Text.Encoding.UTF8.GetByteCount(text);
 
     /// <summary>
     /// A string literal for an Oracle script: every CR and LF is written as CHR(13) / CHR(10), the text in pieces of at most
-    /// <see cref="OracleScriptPiece"/> characters, all joined with ||. SQL*Plus ignores a line of more than 4999 characters
-    /// (and still exits with 0), so after a || the literal goes on to a new physical line once the current one is over
-    /// <see cref="OracleScriptLineBudget"/>: a line break outside the quotes is just white space to Oracle. A short value
+    /// <see cref="OracleScriptPiece"/> characters, all joined with ||. SQL*Plus ignores a line of more than 4999 bytes (and
+    /// still exits with 0), so after a || the literal goes on to a new physical line once the current one is over
+    /// <see cref="OracleScriptLineBudget"/> bytes: a line break outside the quotes is just white space to Oracle. A short value
     /// stays on one line, exactly as before.
     /// </summary>
     private string OracleScriptLiteral(string value)
     {
         var result = new System.Text.StringBuilder();
         var text = new System.Text.StringBuilder();
-        int lineStart = 0;
+        int lineBytes = 0;
 
         void Piece(string piece)
         {
+            int bytes = Utf8Bytes(piece);
             if (result.Length > 0)
             {
                 result.Append("||");
-                if (result.Length - lineStart + piece.Length > OracleScriptLineBudget)
+                lineBytes += 2;
+                if (lineBytes + bytes > OracleScriptLineBudget)
                 {
                     result.Append(Environment.NewLine);
-                    lineStart = result.Length;
+                    lineBytes = 0;
                 }
             }
 
             result.Append(piece);
+            lineBytes += bytes;
         }
 
         void FlushText()

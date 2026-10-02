@@ -19,7 +19,8 @@ public class OracleScriptLineLengthTests
     private static string Literal(string value) =>
         new DatabaseService().FormatSqlValue(DatabaseType.Oracle, value, unicodeStringLiterals: true, oracleLineBreaksAsChr: true);
 
-    private static int LongestLine(string text) => text.Split('\n').Max(line => line.TrimEnd('\r').Length);
+    // SQL*Plus measures a line in bytes (a line of 1700 CJK characters is over its limit), so the tests do too.
+    private static int LongestLine(string text) => text.Split('\n').Max(line => Encoding.UTF8.GetByteCount(line.TrimEnd('\r')));
 
     /// <summary>Reads a literal back the way Oracle does: pieces joined by ||, '' for a quote, CHR(10)/CHR(13), line breaks between pieces ignored.</summary>
     private static string Decode(string literal)
@@ -73,6 +74,35 @@ public class OracleScriptLineLengthTests
 
         Assert.True(LongestLine(literal) < MaxLine, $"longest line was {LongestLine(literal)}");
         Assert.Equal(value, Decode(literal));
+    }
+
+    [Fact]
+    public void WideCharacters_AreWrappedByTheirBytes_NotTheirCount()
+    {
+        string cjk = new string((char)0x3042, 3000);                                   // 3 bytes each: 9000 bytes
+        string emoji = string.Concat(Enumerable.Repeat(char.ConvertFromUtf32(0x1F600), 1500)); // 4 bytes each: 6000 bytes
+
+        foreach (string value in new[] { cjk, emoji })
+        {
+            string literal = Literal(value);
+
+            Assert.True(LongestLine(literal) < MaxLine, $"longest line was {LongestLine(literal)} bytes");
+            Assert.Equal(value, Decode(literal));
+        }
+    }
+
+    [Fact]
+    public void ARowOfWideCharacterNamesAndValues_StaysUnderTheLimitOnEveryLine()
+    {
+        // 190 columns named with 3 CJK characters and two 500-character CJK values: the line that ends the column list, closes
+        // it and opens the values is the one that went over 4999 bytes, with each part under the old count of 1200 characters.
+        var names = Enumerable.Range(0, 190).Select(i => new string((char)(0x3042 + i % 20), 3) + "X").ToList();
+        var values = new List<string> { Literal(new string((char)0x3044, 500)), Literal(new string((char)0x3046, 500)) };
+        values.AddRange(Enumerable.Repeat("NULL", 190 - 2));
+
+        string statement = $"INSERT INTO T ({ScriptGenerationService.JoinForSqlPlus(names)}) VALUES ({ScriptGenerationService.JoinForSqlPlus(values)});";
+
+        Assert.True(LongestLine(statement) < 4000, $"longest line was {LongestLine(statement)} bytes");
     }
 
     [Fact]
