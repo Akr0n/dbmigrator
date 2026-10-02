@@ -1243,6 +1243,12 @@ public class SchemaMigrationService : DatabaseServiceBase
             return BuildSameDbTypeMapping(sourceDbType, normalized, maxLength, precision, scale, isMaxLength, dateTimePrecision);
         }
 
+        // Oracle reports the precision of a timestamp or an interval inside the type name (TIMESTAMP(6) WITH TIME ZONE,
+        // INTERVAL DAY(2) TO SECOND(6)); the precision travels separately, and the cases below are the bare names. Left in, the
+        // column fell through to the text fallback. Not for Oracle to Oracle above: there the precision is part of the type.
+        if (sourceDbType == DatabaseType.Oracle)
+            normalized = Regex.Replace(normalized, @"\(\d+\)", "");
+
         // Mapping cross-database
         if (sourceDbType == DatabaseType.SqlServer && targetDbType == DatabaseType.PostgreSQL)
         {
