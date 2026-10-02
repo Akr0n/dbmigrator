@@ -1113,17 +1113,15 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                 }
 
                                 // SQL Server drops an xml column's declaration but refuses a Unicode literal that has one with an encoding.
-                                // It is removed only where the target column is xml: a text column of a table that already existed
-                                // gets the document as the source returned it.
+                                // What decides is the TARGET column: it is removed wherever that is xml, whatever the source type is (an
+                                // XMLTYPE, or a text column holding a document), and nowhere else: a text column of a table that already
+                                // existed gets the document as the source returned it.
                                 int[] xmlColumns = [];
                                 if (target.DatabaseType == DatabaseType.SqlServer)
                                 {
-                                    xmlColumns = XmlColumnIndexes(reader);
-                                    if (xmlColumns.Length > 0)
-                                    {
-                                        var targetXml = await GetSqlServerXmlColumnsAsync(targetConn, table.Schema, table.TableName, transaction);
-                                        xmlColumns = xmlColumns.Where(i => targetXml.Contains(reader.GetName(i))).ToArray();
-                                    }
+                                    var targetXml = await GetSqlServerXmlColumnsAsync(targetConn, table.Schema, table.TableName, transaction);
+                                    if (targetXml.Count > 0)
+                                        xmlColumns = Enumerable.Range(0, reader.FieldCount).Where(i => targetXml.Contains(reader.GetName(i))).ToArray();
                                 }
                                 var batchRows = new List<object?[]>(_batchSize);
                                 while (await reader.ReadAsync())

@@ -40,6 +40,47 @@ public class OracleXmlToSqlServerE2ETests
 
     [Trait("Category", "E2E")]
     [Fact]
+    public async Task TextHoldingXmlWithADeclaration_IsLoadedIntoAnExistingXmlColumn()
+    {
+        if (!ShouldRunE2E()) return;
+
+        // What decides is the TARGET column: a varchar / nvarchar / CLOB source column that holds a document with its declaration,
+        // loaded into a table that already has an xml column, used to fail with "unable to switch the encoding" (the plain literal
+        // of the old code was accepted). The source is a SQL Server database here: nothing in this depends on Oracle.
+        string id = Guid.NewGuid().ToString("N")[..8];
+        var master = SqlServer("master");
+        var source = SqlServer($"xmltxs_{id}");
+        var target = SqlServer($"xmltxt_{id}");
+        const string document = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><a>7</a>";
+        try
+        {
+            await ExecAsync(master, $"CREATE DATABASE [{source.Database}]; CREATE DATABASE [{target.Database}];");
+            await ExecAsync(source, $"CREATE TABLE dbo.docs (id INT NOT NULL PRIMARY KEY, doc NVARCHAR(MAX) NULL); INSERT dbo.docs VALUES (1, N'{document}');");
+            await ExecAsync(target, "CREATE TABLE dbo.docs (id INT NOT NULL PRIMARY KEY, doc XML NULL);");
+
+            await new DatabaseService().MigrateTableAsync(source, target, new TableInfo { Schema = "dbo", TableName = "docs" }, new Progress<int>());
+
+            Assert.Equal("7", await ScalarAsync(target, "SELECT doc.value('(/a)[1]', 'nvarchar(10)') FROM dbo.docs WHERE id = 1"));
+        }
+        finally
+        {
+            SqlConnection.ClearAllPools();
+            foreach (var database in new[] { source.Database, target.Database })
+            {
+                try
+                {
+                    await ExecAsync(master, $"ALTER DATABASE [{database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{database}];");
+                }
+                catch
+                {
+                    // Best effort.
+                }
+            }
+        }
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
     public async Task AnXmlTypeLoadedThroughAViewOverAnXmlColumn_IsStrippedToo()
     {
         if (!ShouldRunE2E()) return;
