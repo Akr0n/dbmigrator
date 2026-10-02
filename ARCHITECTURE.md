@@ -290,9 +290,8 @@ The application supports bidirectional mapping between all supported databases:
 **PostgreSQL / Oracle → SQL Server** (text is always Unicode, whatever the source type):
 | Source | SQL Server |
 |--------|------------|
-| varchar(n) / VARCHAR2(n) / NVARCHAR2(n), n <= 4000 | nvarchar(n) |
-| char(n) / CHAR(n) / NCHAR(n), n <= 4000 | nchar(n) |
-| text / CLOB / NCLOB / LONG, or n > 4000 | nvarchar(max) |
+| varchar(n) / VARCHAR2(n) / NVARCHAR2(n), char(n) / CHAR(n) / NCHAR(n), n <= 4000 | nvarchar(n) |
+| text / CLOB / NCLOB / LONG / JSON / any unknown type, or n > 4000 | nvarchar(max) |
 
 **Same Database Migrations**:
 When source and target are the same database type, original types are preserved with correct sizes, including handling of MAX/unlimited length types.

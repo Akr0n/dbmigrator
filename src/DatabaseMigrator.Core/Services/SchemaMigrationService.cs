@@ -1221,17 +1221,12 @@ public class SchemaMigrationService : DatabaseServiceBase
         };
     }
 
-    // nvarchar(n)/nchar(n) stop at 4000 (the n is in 2-byte units): longer or unbounded text can only be nvarchar(max).
+    // nvarchar(n) stops at 4000 (the n is in 2-byte units): longer or unbounded text can only be nvarchar(max). Fixed-width
+    // CHAR/NCHAR columns become nvarchar too: a fixed-width nchar(n) is 2n bytes in every row and cannot be moved off the row,
+    // so a table of many CHAR columns that fit SQL Server's 8060-byte row as char(n) could not be created as nchar(n). The
+    // values stay as they are read (padded by the source), the column just is not padded again.
     private static string UnicodeVarchar(int? maxLength)
         => maxLength is > 0 and <= 4000 ? $"nvarchar({maxLength})" : "nvarchar(max)";
-
-    private static string UnicodeChar(int? maxLength)
-        => maxLength switch
-        {
-            null or <= 0 => "nchar(1)",
-            <= 4000 => $"nchar({maxLength})",
-            _ => "nvarchar(max)"
-        };
 
     private string MapDataType(DatabaseType sourceDbType, DatabaseType targetDbType, 
         string sourceDataType, int? maxLength, int? precision, int? scale, int? dateTimePrecision)
@@ -1372,7 +1367,7 @@ public class SchemaMigrationService : DatabaseServiceBase
                 // PostgreSQL stores text in any script; a SQL Server varchar would turn what its code page lacks into '?'.
                 "varchar" or "character varying" => UnicodeVarchar(maxLength),
                 "text" => "nvarchar(max)",
-                "char" or "character" => UnicodeChar(maxLength),
+                "char" or "character" => UnicodeVarchar(maxLength is > 0 ? maxLength : 1),
                 "boolean" or "bool" => "bit",
                 "bytea" => "varbinary(max)",
                 "uuid" => "uniqueidentifier",
@@ -1462,7 +1457,7 @@ public class SchemaMigrationService : DatabaseServiceBase
                 "binary_double" => "float",
                 // Oracle databases are usually AL32UTF8: keep the text Unicode on the SQL Server side too.
                 "varchar2" or "nvarchar2" => UnicodeVarchar(maxLength),
-                "char" or "nchar" => UnicodeChar(maxLength),
+                "char" or "nchar" => UnicodeVarchar(maxLength is > 0 ? maxLength : 1),
                 "clob" or "nclob" or "long" => "nvarchar(max)",
                 "blob" => "varbinary(max)",
                 "long raw" => "varbinary(max)",
@@ -1485,7 +1480,7 @@ public class SchemaMigrationService : DatabaseServiceBase
                 "urowid" => "varchar(4000)",
                 "xmltype" => "xml",
                 "bfile" => "varbinary(max)",
-                _ => "varchar(max)"
+                _ => "nvarchar(max)"  // JSON and anything else unknown: text, and text must not lose its non-Latin characters
             };
         }
 

@@ -104,6 +104,57 @@ public class TextToSqlServerUnicodeE2ETests
         }
     }
 
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task ManyFixedWidthOracleColumns_StillCreateTheTable()
+    {
+        if (!ShouldRunE2E()) return;
+
+        // 12 x CHAR(100 CHAR) reports data_length 400 each. As fixed-width nchar(400) that is 9600 bytes of every row, over SQL
+        // Server's 8060: the CREATE TABLE was refused ("minimum row size would be 9612"), where char(400) x 12 had fit.
+        string id = Guid.NewGuid().ToString("N")[..8];
+        string table = $"WIDE_{id}".ToUpperInvariant();
+        var source = new ConnectionInfo
+        {
+            DatabaseType = DatabaseType.Oracle, Server = "127.0.0.1", Port = 1521, Database = "FREEPDB1",
+            Username = "migration_test", Password = "oraclepass123"
+        };
+        await using var oracle = new OracleConnection(source.GetConnectionString());
+        await oracle.OpenAsync();
+        var master = SqlServer("master");
+        var target = SqlServer($"unitxt_{id}");
+        try
+        {
+            string columns = string.Join(", ", Enumerable.Range(0, 12).Select(i => $"C{i} CHAR(100 CHAR)"));
+            await ExecOracleAsync(oracle, $"CREATE TABLE {table} (ID NUMBER(10) PRIMARY KEY, {columns})");
+            await ExecOracleAsync(oracle, $"INSERT INTO {table} (ID, C0, C11) VALUES (1, 'first', 'last')");
+            await ExecSqlServerAsync(master, $"CREATE DATABASE [{target.Database}] COLLATE SQL_Latin1_General_CP1_CI_AS");
+            await ExecSqlServerAsync(target, "CREATE SCHEMA [MIGRATION_TEST]");
+            var info = new TableInfo { Schema = "MIGRATION_TEST", TableName = table };
+
+            var created = new List<TableInfo>();
+            await new SchemaMigrationService().MigrateSchemaAsync(source, target, [info], created);
+            Assert.Single(created);
+            await new DatabaseService().MigrateTableAsync(source, target, info, new Progress<int>());
+
+            var row = (await QuerySqlServerAsync(target, $"SELECT RTRIM(C0) + '|' + RTRIM(C11) FROM [MIGRATION_TEST].[{table}]")).Single();
+            Assert.Equal("first|last", row);
+        }
+        finally
+        {
+            try { await ExecOracleAsync(oracle, $"DROP TABLE {table} PURGE"); } catch { /* best effort */ }
+            SqlConnection.ClearAllPools(); // pooled connections would keep the database from being dropped
+            try
+            {
+                await ExecSqlServerAsync(master, $"ALTER DATABASE [{target.Database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{target.Database}];");
+            }
+            catch
+            {
+                // Best effort: a leftover scratch database must not mask the real test result.
+            }
+        }
+    }
+
     /// <summary>Runs the schema and data migration into a fresh SQL Server database (code page 1252) and checks both.</summary>
     private static async Task MigrateAndVerifyAsync(ConnectionInfo source, string schema, string table, string id)
     {
@@ -121,15 +172,16 @@ public class TextToSqlServerUnicodeE2ETests
             Assert.Single(created);
             await new DatabaseService().MigrateTableAsync(source, target, info, new Progress<int>());
 
-            // The three text columns are Unicode types; PostgreSQL's lower-case names and Oracle's upper-case ones both land here.
+            // The three text columns are variable-width Unicode types (a fixed-width nchar would double the row size and could
+            // stop a table of many CHAR columns from being created); PostgreSQL's lower-case names and Oracle's upper-case ones both land here.
             var types = await QuerySqlServerAsync(target,
                 $"SELECT LOWER(COLUMN_NAME) + '=' + DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{schema}' " +
                 $"AND TABLE_NAME = '{table}' AND LOWER(COLUMN_NAME) IN ('v','t','c') ORDER BY COLUMN_NAME");
-            Assert.Equal(["c=nchar", "t=nvarchar", "v=nvarchar"], types);
+            Assert.Equal(["c=nvarchar", "t=nvarchar", "v=nvarchar"], types);
 
-            // The data: it used to be "????? ??? ?????? ?". CHAR is blank-padded by definition, and Oracle reports the size of a
-            // multi-byte CHAR(n CHAR) in bytes (data_length), so the target column is wider and the value padded: compare it trimmed.
-            var row = (await QuerySqlServerAsync(target, $"SELECT v + '|' + t + '|' + RTRIM(c) FROM [{schema}].[{table}]")).Single();
+            // The data: it used to be "????? ??? ?????? ?". Oracle reports the size of a multi-byte CHAR(n CHAR) in bytes, so the
+            // column is wider than the 3 characters; being nvarchar, it is not padded to that width either.
+            var row = (await QuerySqlServerAsync(target, $"SELECT v + '|' + t + '|' + c FROM [{schema}].[{table}]")).Single();
             Assert.Equal($"{Mixed}|{Long}|{Cyrillic}", row);
         }
         finally
