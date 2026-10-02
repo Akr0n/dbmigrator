@@ -448,10 +448,14 @@ public class MainWindowViewModel : ViewModelBase
     {
         DatabaseType.SqlServer when !connection.TrustServerCertificate =>
             " Con un certificato autofirmato (ad esempio SQL Server in un container) spunta «Accetta certificato server (SSL)».",
-        DatabaseType.PostgreSQL or DatabaseType.Oracle when connection.RequireEncryption =>
+        DatabaseType.PostgreSQL when connection.RequireEncryption =>
             " La cifratura TLS è richiesta: il server deve offrirla"
-            + (connection.TrustServerCertificate ? "." : " con un certificato valido, oppure spunta «Accetta certificato server (SSL)».")
-            ,
+            + (connection.TrustServerCertificate ? "." : " con un certificato valido, oppure spunta «Accetta certificato server (SSL)»."),
+        // For Oracle that box only skips the check that the certificate's name is the server's: the chain is still verified, so a
+        // self-signed certificate has to be one Windows trusts (or be in the client wallet), whatever the box says.
+        DatabaseType.Oracle when connection.RequireEncryption =>
+            " La cifratura TLS è richiesta: il server deve offrirla (TCPS) con un certificato che Windows considera attendibile. "
+            + "«Accetta certificato server (SSL)» salta solo il controllo del nome del certificato, non quello dell'emittente.",
         _ => ""
     };
 
@@ -1035,11 +1039,19 @@ public class MainWindowViewModel : ViewModelBase
     /// <summary>
     /// Salva la configurazione corrente in un file JSON
     /// </summary>
-    public async Task<bool> SaveConfigurationAsync(string filePath)
+    /// <param name="source">
+    /// The source and target connections to save; when null, the view model's own (those of the last Connect or Load).
+    /// The window passes what its fields show, so that a change made since the last Connect is not left out of the file.
+    /// </param>
+    public async Task<bool> SaveConfigurationAsync(string filePath, ConnectionInfo? source = null, ConnectionInfo? target = null)
     {
         try
         {
-            if (SourceConnection?.ConnectionInfo == null || TargetConnection?.ConnectionInfo == null)
+            source ??= SourceConnection?.ConnectionInfo;
+            target ??= TargetConnection?.ConnectionInfo;
+            if (source == null || target == null ||
+                string.IsNullOrWhiteSpace(source.Server) || string.IsNullOrWhiteSpace(source.Database) ||
+                string.IsNullOrWhiteSpace(target.Server) || string.IsNullOrWhiteSpace(target.Database))
             {
                 ErrorMessage = "Errore: configurazioni di connessione non complete";
                 Log("[SaveConfigurationAsync] Errore: configurazioni incomplete");
@@ -1049,8 +1061,8 @@ public class MainWindowViewModel : ViewModelBase
             var config = new ConnectionConfig
             {
                 Name = Path.GetFileNameWithoutExtension(filePath),
-                Source = DatabaseConnectionData.FromConnectionInfo(SourceConnection.ConnectionInfo),
-                Target = DatabaseConnectionData.FromConnectionInfo(TargetConnection.ConnectionInfo),
+                Source = DatabaseConnectionData.FromConnectionInfo(source),
+                Target = DatabaseConnectionData.FromConnectionInfo(target),
                 Timestamp = DateTime.Now
             };
 

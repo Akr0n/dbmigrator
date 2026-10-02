@@ -717,24 +717,9 @@ namespace DatabaseMigrator.Views;
             Log($"[MainWindow] Source Username: {SourceUsernameTextBox.Text}");
             
             // Mapping to enum: 0=SqlServer, 1=Oracle, 2=PostgreSQL
-            _vm.SourceConnection!.SelectedDatabaseType = (DatabaseType)sourceType;
-            _vm.SourceConnection.Server = SourceServerTextBox.Text ?? "";
-            _vm.SourceConnection.Port = int.TryParse(SourcePortTextBox.Text, out int sp) ? sp : 1433;
-            _vm.SourceConnection.Database = SourceDatabaseTextBox.Text ?? "";
-            _vm.SourceConnection.Username = SourceUsernameTextBox.Text ?? "";
-            _vm.SourceConnection.Password = SourcePasswordTextBox.Text ?? "";
-            _vm.SourceConnection.TrustServerCertificate = SourceTrustServerCertificateCheckBox.IsChecked == true;
-            _vm.SourceConnection.RequireEncryption = SourceRequireEncryptionCheckBox.IsChecked == true;
-            
-            _vm.TargetConnection!.SelectedDatabaseType = (DatabaseType)targetType;
-            _vm.TargetConnection.Server = TargetServerTextBox.Text ?? "";
-            _vm.TargetConnection.Port = int.TryParse(TargetPortTextBox.Text, out int tp) ? tp : 5432;
-            _vm.TargetConnection.Database = TargetDatabaseTextBox.Text ?? "";
-            _vm.TargetConnection.Username = TargetUsernameTextBox.Text ?? "";
-            _vm.TargetConnection.Password = TargetPasswordTextBox.Text ?? "";
-            _vm.TargetConnection.TrustServerCertificate = TargetTrustServerCertificateCheckBox.IsChecked == true;
-            _vm.TargetConnection.RequireEncryption = TargetRequireEncryptionCheckBox.IsChecked == true;
-            
+            ApplyToViewModel(_vm.SourceConnection!, ReadFields(source: true));
+            ApplyToViewModel(_vm.TargetConnection!, ReadFields(source: false));
+
             Log($"[MainWindow] Executing ConnectDatabasesCommand...");
             _vm.ConnectDatabasesCommand.Execute(Unit.Default);
         }
@@ -744,6 +729,69 @@ namespace DatabaseMigrator.Views;
             ErrorTextBlock.Text = $"Errore: {ex.Message}";
             StatusBarTextBlock.Text = "Errore durante la connessione";
         }
+    }
+
+    /// <summary>The connection a side's fields and boxes describe. Nothing is validated, connected or applied to the view model.</summary>
+    private ConnectionInfo ReadFields(bool source)
+    {
+        var type = (DatabaseType)(source ? SourceTypeCombo : TargetTypeCombo).SelectedIndex;
+        return source
+            ? new ConnectionInfo
+            {
+                DatabaseType = type,
+                Server = SourceServerTextBox.Text ?? "",
+                Port = int.TryParse(SourcePortTextBox.Text, out int sp) ? sp : 1433,
+                Database = SourceDatabaseTextBox.Text ?? "",
+                Username = SourceUsernameTextBox.Text ?? "",
+                Password = SourcePasswordTextBox.Text ?? "",
+                TrustServerCertificate = SourceTrustServerCertificateCheckBox.IsChecked == true,
+                RequireEncryption = SourceRequireEncryptionCheckBox.IsChecked == true
+            }
+            : new ConnectionInfo
+            {
+                DatabaseType = type,
+                Server = TargetServerTextBox.Text ?? "",
+                Port = int.TryParse(TargetPortTextBox.Text, out int tp) ? tp : 5432,
+                Database = TargetDatabaseTextBox.Text ?? "",
+                Username = TargetUsernameTextBox.Text ?? "",
+                Password = TargetPasswordTextBox.Text ?? "",
+                TrustServerCertificate = TargetTrustServerCertificateCheckBox.IsChecked == true,
+                RequireEncryption = TargetRequireEncryptionCheckBox.IsChecked == true
+            };
+    }
+
+    private static void ApplyToViewModel(ConnectionViewModel connection, ConnectionInfo info)
+    {
+        connection.SelectedDatabaseType = info.DatabaseType; // first: its setter resets the port to the type's default
+        connection.Server = info.Server;
+        connection.Port = info.Port;
+        connection.Database = info.Database;
+        connection.Username = info.Username;
+        connection.Password = info.Password;
+        connection.TrustServerCertificate = info.TrustServerCertificate;
+        connection.RequireEncryption = info.RequireEncryption;
+    }
+
+    /// <summary>
+    /// Saves what the fields and boxes show now, not what the last Connect left in the view model: a box ticked after it (a
+    /// request for encryption) would otherwise be silently left out of the file. The live connections are not touched, so a
+    /// save never makes unvalidated settings what Start Migration runs with. During a migration the connections in use are saved.
+    /// </summary>
+    private async Task<bool> SaveConfigurationToAsync(string path)
+    {
+        if (_vm == null) return false;
+        if (_vm.IsMigrating)
+            return await _vm.SaveConfigurationAsync(path);
+
+        int maxType = Enum.GetValues(typeof(DatabaseType)).Length - 1;
+        if (SourceTypeCombo.SelectedIndex < 0 || SourceTypeCombo.SelectedIndex > maxType ||
+            TargetTypeCombo.SelectedIndex < 0 || TargetTypeCombo.SelectedIndex > maxType)
+        {
+            ErrorTextBlock.Text = "Seleziona un tipo di database valido";
+            return false;
+        }
+
+        return await _vm.SaveConfigurationAsync(path, ReadFields(source: true), ReadFields(source: false));
     }
 
     private async void OnSaveConfigurationClicked(object? sender, RoutedEventArgs e)
@@ -786,7 +834,7 @@ namespace DatabaseMigrator.Views;
             {
                 var result = file.Path.LocalPath;
                 Log($"[OnSaveConfigurationClicked] Salvando in {result}");
-                if (await _vm!.SaveConfigurationAsync(result))
+                if (await SaveConfigurationToAsync(result))
                 {
                     Log("[OnSaveConfigurationClicked] Configurazione salvata con successo");
                 }
@@ -847,10 +895,11 @@ namespace DatabaseMigrator.Views;
     /// <summary>Puts the view model's connections into the fields of the Connections tab, boxes included.</summary>
     private void ShowConnectionsInFields()
     {
-        // A box left behind would be read back by the next Connect: "off" over a loaded "encryption required" opens a plaintext connection.
-        if (_vm?.SourceConnection?.ConnectionInfo is { } source)
+        // A box left behind would be read back by the next Connect: "off" over a loaded "encryption required" opens a plaintext
+        // connection. The view model's own properties are read, not its ConnectionInfo (null while a server or database is blank).
+        if (_vm?.SourceConnection is { } source)
         {
-            SourceTypeCombo.SelectedIndex = (int)source.DatabaseType;
+            SourceTypeCombo.SelectedIndex = (int)source.SelectedDatabaseType;
             SourceServerTextBox.Text = source.Server;
             SourcePortTextBox.Text = source.Port.ToString();
             SourceDatabaseTextBox.Text = source.Database;
@@ -860,9 +909,9 @@ namespace DatabaseMigrator.Views;
             SourceRequireEncryptionCheckBox.IsChecked = source.RequireEncryption;
         }
 
-        if (_vm?.TargetConnection?.ConnectionInfo is { } target)
+        if (_vm?.TargetConnection is { } target)
         {
-            TargetTypeCombo.SelectedIndex = (int)target.DatabaseType;
+            TargetTypeCombo.SelectedIndex = (int)target.SelectedDatabaseType;
             TargetServerTextBox.Text = target.Server;
             TargetPortTextBox.Text = target.Port.ToString();
             TargetDatabaseTextBox.Text = target.Database;

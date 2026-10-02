@@ -225,7 +225,7 @@
                                         </Grid>
                                     </StackPanel>
                                     <CheckBox x:Name="SourceTrustServerCertificateCheckBox">
-                                        <TextBlock Text="Accetta certificato server (SSL) — per SQL Server in container o con certificato autofirmato" FontSize="11" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Accetta certificato server (SSL) — SQL Server in container, PostgreSQL con certificato autofirmato; per Oracle salta solo il controllo del nome" FontSize="11" TextWrapping="Wrap"/>
                                     </CheckBox>
                                     <CheckBox x:Name="SourceRequireEncryptionCheckBox">
                                         <TextBlock Text="Richiedi connessione cifrata TLS (PostgreSQL e Oracle; SQL Server è sempre cifrato)" FontSize="11" TextWrapping="Wrap"/>
@@ -282,7 +282,7 @@
                                         </Grid>
                                     </StackPanel>
                                     <CheckBox x:Name="TargetTrustServerCertificateCheckBox">
-                                        <TextBlock Text="Accetta certificato server (SSL) — per SQL Server in container o con certificato autofirmato" FontSize="11" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Accetta certificato server (SSL) — SQL Server in container, PostgreSQL con certificato autofirmato; per Oracle salta solo il controllo del nome" FontSize="11" TextWrapping="Wrap"/>
                                     </CheckBox>
                                     <CheckBox x:Name="TargetRequireEncryptionCheckBox">
                                         <TextBlock Text="Richiedi connessione cifrata TLS (PostgreSQL e Oracle; SQL Server è sempre cifrato)" FontSize="11" TextWrapping="Wrap"/>
