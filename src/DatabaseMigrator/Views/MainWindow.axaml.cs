@@ -215,6 +215,9 @@ namespace DatabaseMigrator.Views;
                 if (FollowLogToggle.IsChecked == true)
                     ScrollLogToEndLater(); // switched on again: go to the last line now, without waiting for a new one
             };
+            // The list of a tab that is not shown is not in the tree, so the scrolls the lines asked for while it was hidden did
+            // nothing: when the tab is opened, follow means being at the last line.
+            LogListBox.AttachedToVisualTree += (s, e) => ScrollLogToEndLater();
 
             ClearLogButton.Click += (s, e) =>
                 _vm?.ClearLogCommand.Execute(System.Reactive.Unit.Default).Subscribe();

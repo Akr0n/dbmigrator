@@ -96,6 +96,31 @@ public class LogFollowUiTests
         }
     }
 
+    [AvaloniaFact]
+    public async Task LinesThatArrivedWhileTheLogTabWasHidden_AreFollowedWhenItIsOpened()
+    {
+        var (window, viewModel) = await Ui.OpenWindowAsync();
+        try
+        {
+            await Ui.RunAsync(viewModel.ClearLogCommand);
+            var tabs = window.FindControl<TabControl>("MainTabControl")!;
+            tabs.SelectedIndex = 0; // the Log tab is not shown: its list is not laid out, so nothing can scroll it yet
+            await AddLinesAsync(viewModel, "while-hidden");
+            await Task.Delay(300); // the scroll each line asked for runs now, while there is no list to scroll, and is spent
+
+            tabs.SelectedIndex = LogTabIndex;
+
+            var list = window.FindControl<ListBox>("LogListBox")!;
+            var scroll = await Ui.WaitForAsync(() => list.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault(),
+                "the log list's scroll viewer");
+            await Ui.WaitUntilAsync(() => AtTheEnd(scroll), "the log, opened after its lines arrived, to show the last one");
+        }
+        finally
+        {
+            await PutBackAsync(window, viewModel);
+        }
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>The shared window with the Log tab open and its list laid out (a tab that is not shown has no scroll viewer).</summary>
