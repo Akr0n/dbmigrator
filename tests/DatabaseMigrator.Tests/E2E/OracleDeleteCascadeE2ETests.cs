@@ -209,6 +209,88 @@ public class OracleDeleteCascadeE2ETests
         }
     }
 
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task AUserThatDoesNotOwnTheTable_IsAskedBeforeADeleteCouldCascadeIntoSchemasItCannotSee()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(childRule: "ON DELETE CASCADE");
+        await db.OracleAsync("INSERT INTO {head} VALUES (1, 'old')");
+        string otherSchema = await db.CreateChildInAnotherSchemaAsync();
+        // The usual separate ETL user: it may read, insert into and delete from the table, but it neither owns it nor can see
+        // the REFERENCES granted on it (those are visible to the owner, the grantor and the grantee only).
+        var etl = await db.CreateUserAsync("OCAS_E", "SELECT", "INSERT", "DELETE");
+        var asked = new List<string>();
+        var service = new DatabaseService { TruncateFailedHandlerAsync = ctx => { asked.Add(ctx.ErrorMessage ?? ""); return Task.FromResult(false); } };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.MigrateTableAsync(db.Source, etl, db.Table("head"), new Progress<int>(), tablesLoadedLater: []));
+
+        Assert.Contains("proprietario", asked.Single());
+        Assert.Contains("SELECT_CATALOG_ROLE", asked.Single()); // says how to let the check see the keys
+        Assert.Equal(1, await db.ScalarAsync($"SELECT COUNT(*) FROM {otherSchema}.child_other", asSystem: true)); // not wiped unseen
+        Assert.Equal(1, await db.ScalarAsync("SELECT COUNT(*) FROM {head} WHERE name = 'old'"));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task ASchemaWithOneVisibleEmptyChildAndOneHiddenPopulatedChild_IsStillRefused()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(childRule: "ON DELETE CASCADE");
+        await db.OracleAsync("INSERT INTO {head} VALUES (1, 'old')");
+        // The migration user reads (and sees the key of) the empty child; the populated one it cannot see at all. Seeing one key
+        // of a schema does not mean the schema holds no other: the hidden child used to be emptied by the cascade, unseen.
+        string otherSchema = await db.CreateChildInAnotherSchemaAsync(alsoAVisibleEmptyChild: true);
+        var asked = new List<string>();
+        var service = new DatabaseService { TruncateFailedHandlerAsync = ctx => { asked.Add(ctx.ErrorMessage ?? ""); return Task.FromResult(false); } };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.MigrateTableAsync(db.Source, db.Target, db.Table("head"), new Progress<int>(), tablesLoadedLater: []));
+
+        Assert.Contains(otherSchema, asked.Single());
+        Assert.Contains("SELECT_CATALOG_ROLE", asked.Single());
+        Assert.Equal(1, await db.ScalarAsync($"SELECT COUNT(*) FROM {otherSchema}.child_other", asSystem: true));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task AGrantOfAllPrivilegesToAnotherUser_IsRefusedWithoutCatalogAccess_AndAcceptedWithIt()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(childRule: "ON DELETE CASCADE");
+        await db.OracleAsync("INSERT INTO {head} VALUES (1, 'old')");
+        // GRANT ALL includes REFERENCES: without a way to read the other schema's keys the check cannot tell that this user
+        // holds none, so it asks (a deliberate choice: a missed cascade empties a table nobody selected). With access to the
+        // DBA views it knows, and the same migration just runs.
+        var other = await db.CreateUserAsync("OCAS_G");
+        await db.SystemAsync($"GRANT ALL ON {{head}} TO {other.Username}".Replace("{head}", $"migration_test.{db.Name("head")}"));
+        var asked = new List<string>();
+        var service = new DatabaseService { TruncateFailedHandlerAsync = ctx => { asked.Add(ctx.ErrorMessage ?? ""); return Task.FromResult(false); } };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.MigrateTableAsync(db.Source, db.Target, db.Table("head"), new Progress<int>(), tablesLoadedLater: []));
+
+        Assert.Contains(other.Username, asked.Single());
+        Assert.Contains("SELECT_CATALOG_ROLE", asked.Single());
+        Assert.Equal(1, await db.ScalarAsync("SELECT COUNT(*) FROM {head} WHERE name = 'old'")); // nothing was deleted
+
+        await db.SystemAsync("GRANT SELECT_CATALOG_ROLE TO migration_test");
+        Oracle.ManagedDataAccess.Client.OracleConnection.ClearAllPools(); // a role is active only in sessions opened after the grant
+        try
+        {
+            await new DatabaseService().MigrateTableAsync(db.Source, db.Target, db.Table("head"), new Progress<int>(), tablesLoadedLater: []);
+
+            Assert.Equal(3, await db.ScalarAsync("SELECT COUNT(*) FROM {head} WHERE name = 'new'"));
+            Assert.Equal(0, await db.ScalarAsync("SELECT COUNT(*) FROM {head} WHERE name = 'old'"));
+        }
+        finally
+        {
+            await db.SystemAsync("REVOKE SELECT_CATALOG_ROLE FROM migration_test");
+            Oracle.ManagedDataAccess.Client.OracleConnection.ClearAllPools();
+        }
+    }
+
     /// <summary>A SQL Server source database with the rows to load, and the matching tables in the Oracle fixture schema.</summary>
     private sealed class Scratch : IAsyncDisposable
     {
@@ -330,7 +412,7 @@ public class OracleDeleteCascadeE2ETests
         /// Creates another Oracle user that was granted REFERENCES on head and owns child_other with an ON DELETE CASCADE key
         /// to it and one row. The migration user cannot read that schema. Returns the other schema's name.
         /// </summary>
-        public async Task<string> CreateChildInAnotherSchemaAsync()
+        public async Task<string> CreateChildInAnotherSchemaAsync(bool alsoAVisibleEmptyChild = false)
         {
             string user = $"OCAS_O_{_id}".ToUpperInvariant();
             string password = $"Pw_{_id}_x1";
@@ -346,13 +428,23 @@ public class OracleDeleteCascadeE2ETests
             };
             await using var connection = new OracleConnection(owner.GetConnectionString());
             await connection.OpenAsync();
-            foreach (var statement in new[]
+            var statements = new List<string>
             {
                 $"CREATE TABLE child_other (id NUMBER(10) PRIMARY KEY, head_id NUMBER(10) NOT NULL, " +
                     $"CONSTRAINT fk_o_{_id} FOREIGN KEY (head_id) REFERENCES {Schema}.{Name("head")}(id) ON DELETE CASCADE)",
                 "INSERT INTO child_other VALUES (1, 1)",
                 "COMMIT"
-            })
+            };
+            if (alsoAVisibleEmptyChild)
+            {
+                // A second child of the same schema that the migration user may read (and that is empty): its key shows in
+                // ALL_CONSTRAINTS while the first child's key does not.
+                statements.Insert(0, $"CREATE TABLE child_visible (id NUMBER(10) PRIMARY KEY, head_id NUMBER(10) NOT NULL, " +
+                    $"CONSTRAINT fk_v_{_id} FOREIGN KEY (head_id) REFERENCES {Schema}.{Name("head")}(id) ON DELETE CASCADE)");
+                statements.Insert(1, $"GRANT SELECT ON child_visible TO {Schema}");
+            }
+
+            foreach (var statement in statements)
             {
                 await using var command = connection.CreateCommand();
                 command.CommandText = statement;
@@ -360,6 +452,25 @@ public class OracleDeleteCascadeE2ETests
             }
 
             return user;
+        }
+
+        /// <summary>
+        /// Creates an Oracle user that owns nothing, with the given privileges on head, and returns a connection as that user.
+        /// </summary>
+        public async Task<ConnectionInfo> CreateUserAsync(string prefix, params string[] privilegesOnHead)
+        {
+            string user = $"{prefix}_{_id}".ToUpperInvariant();
+            string password = $"Pw_{_id}_x2";
+            _foreignUsers.Add(user);
+            await SystemAsync($"CREATE USER {user} IDENTIFIED BY \"{password}\" QUOTA UNLIMITED ON USERS", $"GRANT CREATE SESSION TO {user}");
+            foreach (var privilege in privilegesOnHead)
+                await SystemAsync($"GRANT {privilege} ON {Schema}.{Name("head")} TO {user}");
+
+            return new ConnectionInfo
+            {
+                DatabaseType = DatabaseType.Oracle, Server = "127.0.0.1", Port = 1521, Database = "FREEPDB1",
+                Username = user, Password = password
+            };
         }
 
         private async Task SqlServerAsync(ConnectionInfo database, string sql)

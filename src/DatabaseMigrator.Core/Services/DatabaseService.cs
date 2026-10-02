@@ -479,12 +479,16 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     /// as the catalog spells it), and the other schemas whose keys cannot be checked. Emptying those would lose data the user
     /// did not ask to replace. Plain NO ACTION keys need no check: Oracle itself refuses the DELETE (ORA-02292). Deleting from
     /// an empty table changes nothing, so then there is nothing to check.
-    /// The keys are read from DBA_CONSTRAINTS when the migration user may (DBA, or SELECT_CATALOG_ROLE); otherwise from
-    /// ALL_CONSTRAINTS, which leaves out tables in schemas the user cannot access although Oracle still cascades into them.
-    /// In that case a schema that was granted REFERENCES on this table and shows no key to it is reported as unverifiable.
+    /// The keys are read from DBA_CONSTRAINTS when the migration user may (DBA, or SELECT_CATALOG_ROLE): then the answer is
+    /// exact. Otherwise from ALL_CONSTRAINTS, which leaves out tables in schemas the user cannot access although Oracle still
+    /// cascades into them, and the answer is only as good as what can be told otherwise: a user that does not own the table
+    /// cannot see who was granted REFERENCES on it, and every schema that was granted it (the owner sees them) may hold a key
+    /// that cannot be seen, even when another key of the same schema can. All of those are reported as unverifiable.
+    /// A catalog query that fails for any reason other than the missing privilege makes the check fail: it must never read
+    /// as "no keys". The only answer that lets the DELETE go ahead is a complete one.
     /// </summary>
-    private async Task<OracleDeleteCheck> CheckOracleDeleteAsync(DbConnection connection, TableInfo table,
-        IEnumerable<TableInfo>? tablesLoadedLater)
+    internal async Task<OracleDeleteCheck> CheckOracleDeleteAsync(DbConnection connection, TableInfo table,
+        IEnumerable<TableInfo>? tablesLoadedLater, string currentUser)
     {
         // The cheapest question first: with no rows in the table nothing can cascade, and the catalog query is not worth
         // running for each of the thousands of freshly created, empty tables of a new migration.
@@ -518,21 +522,27 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         }
 
         var unverifiable = new List<string>();
+        bool grantsNotVisible = false;
         if (!seesEveryKey)
         {
             Log("[MigrateTableAsync] The migration user cannot read DBA_CONSTRAINTS: foreign keys owned by schemas it cannot access " +
                 "are not checked (grant SELECT_CATALOG_ROLE to check them)");
-            string on = $"table_schema = '{EscapeSqlString(owner)}' AND table_name = '{EscapeSqlString(tableName)}'";
-            var grantees = await ReadOracleNamesAsync(connection,
-                $"SELECT DISTINCT grantee FROM all_tab_privs WHERE {on} AND privilege = 'REFERENCES' AND grantee <> '{EscapeSqlString(owner)}'");
-            var visibleChildOwners = await ReadOracleNamesAsync(connection,
-                "SELECT DISTINCT c.owner FROM all_constraints c " +
-                "JOIN all_constraints p ON p.owner = c.r_owner AND p.constraint_name = c.r_constraint_name " +
-                $"WHERE c.constraint_type = 'R' AND p.owner = '{EscapeSqlString(owner)}' AND p.table_name = '{EscapeSqlString(tableName)}'");
-            unverifiable.AddRange(grantees.Where(g => !visibleChildOwners.Contains(g, StringComparer.OrdinalIgnoreCase)));
+            if (!string.Equals(owner, currentUser, StringComparison.OrdinalIgnoreCase))
+            {
+                // The grants of a table are visible to its owner, the grantor and the grantee only.
+                grantsNotVisible = true;
+            }
+            else
+            {
+                // Bind variables: a distinct literal per table would be hard-parsed by the server every time.
+                unverifiable.AddRange(await ReadOracleNamesAsync(connection,
+                    "SELECT DISTINCT grantee FROM all_tab_privs WHERE table_schema = :owner AND table_name = :tab " +
+                    "AND privilege = 'REFERENCES' AND grantee <> :owner",
+                    ("owner", owner), ("tab", tableName)));
+            }
         }
 
-        return new OracleDeleteCheck(populated, unreadable, unverifiable);
+        return new OracleDeleteCheck(populated, unreadable, unverifiable, grantsNotVisible);
     }
 
     /// <summary>
@@ -541,6 +551,15 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     /// </summary>
     private async Task<List<DeleteRuleEdge>?> ReadOracleDeleteRuleKeysAsync(DbConnection connection, string view)
     {
+        // The keys are the same for every table of a run and cost a scan of the dictionary view joined to itself: read once and
+        // kept for a short while (a run creates no key), not once per table.
+        string cacheKey = connection.ConnectionString + "|" + view;
+        lock (_oracleKeyCacheLock)
+        {
+            if (_oracleKeyCache is { } cached && cached.Key == cacheKey && DateTime.UtcNow - cached.ReadAt < OracleKeyCacheLifetime)
+                return cached.Edges;
+        }
+
         try
         {
             var edges = new List<DeleteRuleEdge>();
@@ -556,33 +575,42 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             while (await reader.ReadAsync())
                 edges.Add(new DeleteRuleEdge(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                     Convert.ToInt32(reader.GetValue(4)) == 1));
+            lock (_oracleKeyCacheLock)
+                _oracleKeyCache = (cacheKey, DateTime.UtcNow, edges);
             return edges;
         }
-        catch (OracleException ex)
+        catch (OracleException ex) when (ex.Number == 942)
         {
-            Log($"[MigrateTableAsync] Could not read {view}: {ex.Message}");
+            // ORA-00942: the view does not exist for this user, i.e. no access to the DBA_ views. Any other error is not an answer.
+            Log($"[MigrateTableAsync] No access to {view}: {ex.Message}");
             return null;
         }
     }
 
-    /// <summary>The first column of a query as strings; empty when the query cannot be run.</summary>
-    private async Task<List<string>> ReadOracleNamesAsync(DbConnection connection, string sql)
+    private readonly object _oracleKeyCacheLock = new();
+    private (string Key, DateTime ReadAt, List<DeleteRuleEdge> Edges)? _oracleKeyCache;
+    private static readonly TimeSpan OracleKeyCacheLifetime = TimeSpan.FromSeconds(30);
+
+    /// <summary>The first column of a query as strings. A query that cannot be run is an error, not an empty answer.</summary>
+    private async Task<List<string>> ReadOracleNamesAsync(DbConnection connection, string sql, params (string Name, string Value)[] binds)
     {
         var names = new List<string>();
-        try
+        using var command = connection.CreateCommand();
+        command.CommandTimeout = _commandTimeoutSeconds;
+        command.CommandText = sql;
+        if (command is OracleCommand oracleCommand)
+            oracleCommand.BindByName = true;
+        foreach (var (name, value) in binds)
         {
-            using var command = connection.CreateCommand();
-            command.CommandTimeout = _commandTimeoutSeconds;
-            command.CommandText = sql;
-            using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.ReadOracleNames");
-            while (await reader.ReadAsync())
-                names.Add(reader.GetString(0));
-        }
-        catch (OracleException ex)
-        {
-            Log($"[MigrateTableAsync] Could not run a catalog query: {ex.Message}");
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = name;
+            parameter.Value = value;
+            command.Parameters.Add(parameter);
         }
 
+        using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.ReadOracleNames");
+        while (await reader.ReadAsync())
+            names.Add(reader.GetString(0));
         return names;
     }
 
@@ -607,7 +635,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     }
 
     /// <summary>What <see cref="CheckOracleDeleteAsync"/> learned about a DELETE of every row of a table.</summary>
-    private sealed record OracleDeleteCheck(List<string> Populated, List<string> Unreadable, List<string> UnverifiableSchemas);
+    internal sealed record OracleDeleteCheck(List<string> Populated, List<string> Unreadable, List<string> UnverifiableSchemas,
+        bool GrantsNotVisible = false);
 
     /// <summary>What <see cref="CheckPostgresCascadeAsync"/> learned: whether the table has rows, and what else a cascade would lose.</summary>
     private sealed record CascadeCheck(bool? TableHasRows, List<string> PopulatedElsewhere);
@@ -822,7 +851,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                     {
                         // Oracle empties the table with DELETE, which an enabled ON DELETE CASCADE / SET NULL key spreads to
                         // the tables that reference it, selected or not.
-                        var check = await CheckOracleDeleteAsync(targetConn, table, tablesLoadedLater);
+                        var check = await CheckOracleDeleteAsync(targetConn, table, tablesLoadedLater, target.Username);
                         if (check.Populated.Count > 0)
                         {
                             throw new InvalidOperationException(
@@ -835,6 +864,14 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                             throw new InvalidOperationException(
                                 $"DELETE FROM {table.Schema}.{table.TableName} cancellerebbe o modificherebbe anche righe di tabelle che l'utente di migrazione non può leggere (chiavi esterne ON DELETE CASCADE / SET NULL): {ListNames(check.Unreadable)}. " +
                                 "Non si può sapere se contengono dati: concedi SELECT su quelle tabelle, oppure selezionale per la migrazione o svuotale tu. " +
+                                "Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
+                        }
+
+                        if (check.GrantsNotVisible)
+                        {
+                            throw new InvalidOperationException(
+                                $"L'utente di migrazione non è il proprietario di {table.Schema}.{table.TableName} e non può leggere tutte le chiavi esterne che la riferiscono: " +
+                                "potrebbero esserci tabelle con dati e ON DELETE CASCADE / SET NULL che il DELETE svuoterebbe. Concedi il ruolo SELECT_CATALOG_ROLE all'utente di migrazione per verificarlo, oppure svuota la tabella tu. " +
                                 "Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
                         }
 
