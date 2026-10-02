@@ -122,7 +122,7 @@ In the **"Migration"** tab:
 3. Click the **"Start Migration"** button
 
 What happens automatically:
-- ✅ Creates target database if it doesn't exist
+- ✅ Creates the tables on the target (the target database itself must already exist)
 - ✅ Creates tables with correct schema and data types
 - ✅ Migrates Primary Keys and UNIQUE constraints
 - ✅ Applies correct identifier case for target database
