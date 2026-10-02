@@ -19,8 +19,9 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     private readonly int _rowCountMaxConcurrency;
 
     /// <summary>
-    /// Optional handler invoked when TRUNCATE TABLE fails during data migration.
-    /// Returns true to continue inserting, false to abort the migration.
+    /// Optional handler invoked when emptying a target table fails or is refused during data migration: the TRUNCATE / DELETE
+    /// itself failed, or the PostgreSQL / Oracle pre-check found that it would empty tables the migration does not load.
+    /// Returns true to continue inserting WITHOUT emptying the table, false to abort the migration.
     /// </summary>
     public Func<TruncateFailureContext, Task<bool>>? TruncateFailedHandlerAsync { get; set; }
 
@@ -41,7 +42,15 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         try
         {
             Log($"TestConnectionAsync started for {DescribeConnection(connectionInfo)}");
-            
+
+            // A role (SELECT_CATALOG_ROLE, say) is active only in sessions opened after it was granted. Connecting again must
+            // not hand back a pooled session from before: the check before an Oracle DELETE asks for exactly that role.
+            if (connectionInfo.DatabaseType == DatabaseType.Oracle)
+            {
+                OracleConnection.ClearAllPools();
+                ResetOracleCaches(); // and what was read about keys and grants: Connect starts from what the catalog says now
+            }
+
             using (var connection = CreateConnection(connectionInfo))
             {
                 Log("Opening connection...");
@@ -156,23 +165,14 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         try
         {
             // Crea una connessione (per Oracle usa il service name dall'utente: FREEPDB1, XE, ecc.)
-            var connInfo = new ConnectionInfo
+            var connInfo = connectionInfo.WithDatabase(connectionInfo.DatabaseType switch
             {
-                DatabaseType = connectionInfo.DatabaseType,
-                Server = connectionInfo.Server,
-                Port = connectionInfo.Port,
-                Username = connectionInfo.Username,
-                Password = connectionInfo.Password,
-                TrustServerCertificate = connectionInfo.TrustServerCertificate,
-                Database = connectionInfo.DatabaseType switch
-                {
-                    DatabaseType.Oracle => string.IsNullOrWhiteSpace(connectionInfo.Database)
-                        ? "FREEPDB1"
-                        : connectionInfo.Database,
-                    DatabaseType.PostgreSQL => "postgres",
-                    _ => "master"
-                }
-            };
+                DatabaseType.Oracle => string.IsNullOrWhiteSpace(connectionInfo.Database)
+                    ? "FREEPDB1"
+                    : connectionInfo.Database,
+                DatabaseType.PostgreSQL => "postgres",
+                _ => "master"
+            });
 
             using (var connection = CreateConnection(connInfo))
             {
@@ -231,21 +231,12 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             }
 
             // Crea connessione al sistema database (per Oracle usa il service name dall'utente)
-            var systemConnInfo = new ConnectionInfo
+            var systemConnInfo = connectionInfo.WithDatabase(connectionInfo.DatabaseType switch
             {
-                DatabaseType = connectionInfo.DatabaseType,
-                Server = connectionInfo.Server,
-                Port = connectionInfo.Port,
-                Username = connectionInfo.Username,
-                Password = connectionInfo.Password,
-                TrustServerCertificate = connectionInfo.TrustServerCertificate,
-                Database = connectionInfo.DatabaseType switch
-                {
-                    DatabaseType.Oracle => string.IsNullOrWhiteSpace(connectionInfo.Database) ? "FREEPDB1" : connectionInfo.Database,
-                    DatabaseType.PostgreSQL => "postgres",  // PostgreSQL system database
-                    _ => "master"  // SQL Server system database
-                }
-            };
+                DatabaseType.Oracle => string.IsNullOrWhiteSpace(connectionInfo.Database) ? "FREEPDB1" : connectionInfo.Database,
+                DatabaseType.PostgreSQL => "postgres",  // PostgreSQL system database
+                _ => "master"  // SQL Server system database
+            });
 
             using (var connection = CreateConnection(systemConnInfo))
             {
@@ -453,13 +444,403 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         }
     }
 
-    public async Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, TableInfo table, IProgress<int> progress)
+    /// <summary>
+    /// True if an enabled FOREIGN KEY from another table points at this one with a delete rule other than NO ACTION,
+    /// i.e. deleting its rows would cascade (or SET NULL / SET DEFAULT) into that table. Self-references are ignored.
+    /// </summary>
+    private async Task<bool> HasEnabledCascadingReferenceAsync(DbConnection connection, DbTransaction? transaction,
+        string schema, string tableName)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandTimeout = _commandTimeoutSeconds;
+        command.CommandText = @"
+            SELECT COUNT(*)
+            FROM sys.foreign_keys fk
+            JOIN sys.tables pt ON pt.object_id = fk.referenced_object_id
+            JOIN sys.schemas ps ON ps.schema_id = pt.schema_id
+            WHERE ps.name = @schema AND pt.name = @tableName
+              AND fk.is_disabled = 0
+              AND fk.delete_referential_action <> 0
+              AND fk.parent_object_id <> fk.referenced_object_id";
+
+        var schemaParam = command.CreateParameter();
+        schemaParam.ParameterName = "@schema";
+        schemaParam.Value = schema;
+        command.Parameters.Add(schemaParam);
+
+        var tableParam = command.CreateParameter();
+        tableParam.ParameterName = "@tableName";
+        tableParam.Value = tableName;
+        command.Parameters.Add(tableParam);
+
+        return Convert.ToInt32(await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(),
+            "MigrateTableAsync.CheckCascadingReferences")) > 0;
+    }
+
+    private static string ListNames(List<string> names) =>
+        string.Join(", ", names.Take(3)) + (names.Count > 3 ? $" e altre {names.Count - 3}" : "");
+
+    /// <summary>
+    /// Oracle only: the tables that a DELETE of every row of this one would also delete from or update through enabled
+    /// ON DELETE CASCADE / SET NULL keys, that hold rows and that this migration does not load later ("schema.table", spelled
+    /// as the catalog spells it), and the other schemas whose keys cannot be checked. Emptying those would lose data the user
+    /// did not ask to replace. Plain NO ACTION keys need no check: Oracle itself refuses the DELETE (ORA-02292). Deleting from
+    /// an empty table changes nothing, so then there is nothing to check.
+    /// The keys are read from DBA_CONSTRAINTS when the migration user may (DBA, or SELECT_CATALOG_ROLE): then the answer is
+    /// exact. Otherwise from ALL_CONSTRAINTS, which leaves out tables in schemas the user cannot access although Oracle still
+    /// cascades into them, and the answer is only as good as what can be told otherwise: a user that does not own the table
+    /// cannot see who was granted REFERENCES on it, and every schema that was granted it (the owner sees them) may hold a key
+    /// that cannot be seen, even when another key of the same schema can. All of those are reported as unverifiable.
+    /// A catalog query that fails for any reason other than the missing privilege makes the check fail: it must never read
+    /// as "no keys". The only answer that lets the DELETE go ahead is a complete one.
+    /// </summary>
+    internal async Task<OracleDeleteCheck> CheckOracleDeleteAsync(DbConnection connection, TableInfo table,
+        IEnumerable<TableInfo>? tablesLoadedLater, string currentUser)
+    {
+        // The cheapest question first: with no rows in the table nothing can cascade, and the catalog query is not worth
+        // running for each of the thousands of freshly created, empty tables of a new migration.
+        if (await OracleTableHasRowsAsync(connection, FormatTableName(DatabaseType.Oracle, table.Schema, table.TableName)) == false)
+            return new OracleDeleteCheck([], [], []);
+
+        string owner = table.Schema.ToUpperInvariant(), tableName = table.TableName.ToUpperInvariant();
+
+        var edges = await ReadOracleDeleteRuleKeysAsync(connection, "dba_constraints");
+        bool seesEveryKey = edges != null;
+        edges ??= await ReadOracleDeleteRuleKeysAsync(connection, "all_constraints") ?? [];
+
+        var loadedLater = new HashSet<(string, string)>(
+            (tablesLoadedLater ?? []).Select(t => (t.Schema.ToUpperInvariant(), t.TableName.ToUpperInvariant())));
+
+        var populated = new List<string>();
+        var unreadable = new List<string>();
+        var affected = DeleteCascadeReach.Affected(owner, tableName, edges).ToList();
+        var rowsOf = new Dictionary<(string, string), bool?>();
+        foreach (var (schema, name) in affected)
+        {
+            // The run loads the upper-case names it writes (loadedLater): a hand-made "Foo" is not that table.
+            if (loadedLater.Contains((schema, name)))
+                continue;
+
+            var hasRows = await OracleTableHasRowsAsync(connection, QuoteOracleName(schema, name));
+            rowsOf[(schema, name)] = hasRows;
+            if (hasRows == null)
+                unreadable.Add($"{schema}.{name}"); // the cascade runs whatever the user may read: this cannot be proved empty
+            else if (hasRows.Value)
+                populated.Add($"{schema}.{name}");
+        }
+
+        var unverifiable = new List<string>();
+        var notOwned = new List<string>();
+        if (!seesEveryKey)
+        {
+            Log("[MigrateTableAsync] The migration user cannot read DBA_CONSTRAINTS: foreign keys owned by schemas it cannot access " +
+                "are not checked (grant SELECT_CATALOG_ROLE to check them)");
+
+            // The grants of a table are visible to its owner, the grantor and the grantee only, so they can be read for the tables
+            // of the migration user's own schema. The tables that lose their rows through the cascade count as much as the one
+            // being emptied: a schema granted REFERENCES on such a child can own a table that cascades from it, whether or not
+            // this run loads that child later. A table of another schema cannot be asked at all. A table that only has a column
+            // nulled (SET NULL) passes nothing on, and an empty one has nothing to pass on.
+            var cascadeTables = new List<(string Schema, string Name, bool Root)> { (owner, tableName, true) };
+            cascadeTables.AddRange(DeleteCascadeReach.Deleted(owner, tableName, edges).Select(t => (t.Schema, t.Table, false)));
+            foreach (var (schema, name, isRoot) in cascadeTables)
+            {
+                if (!isRoot)
+                {
+                    if (!rowsOf.TryGetValue((schema, name), out var rows))
+                        rows = await OracleTableHasRowsAsync(connection, QuoteOracleName(schema, name)); // one that is loaded later
+                    if (rows == false)
+                        continue;
+                }
+
+                if (!string.Equals(schema, currentUser, StringComparison.OrdinalIgnoreCase))
+                {
+                    notOwned.Add($"{schema}.{name}");
+                    continue;
+                }
+
+                foreach (var grantee in await ReadReferencesGranteesAsync(connection, schema, name))
+                {
+                    string entry = $"{grantee} su {schema}.{name}";
+                    if (!unverifiable.Contains(entry, StringComparer.OrdinalIgnoreCase))
+                        unverifiable.Add(entry);
+                }
+            }
+        }
+
+        return new OracleDeleteCheck(populated, unreadable, unverifiable, notOwned);
+    }
+
+    /// <summary>
+    /// The enabled ON DELETE CASCADE / SET NULL keys visible through <paramref name="view"/>; null when the view cannot be
+    /// queried (DBA_CONSTRAINTS without the privilege raises ORA-00942).
+    /// </summary>
+    private async Task<List<DeleteRuleEdge>?> ReadOracleDeleteRuleKeysAsync(DbConnection connection, string view)
+    {
+        // The keys are the same for every table of a run and cost a scan of the dictionary view joined to itself: read once and
+        // kept for a short while (a run creates no key), not once per table.
+        string cacheKey = connection.ConnectionString + "|" + view;
+        lock (_oracleKeyCacheLock)
+        {
+            if (_oracleKeyCache is { } cached && cached.Key == cacheKey && Clock.GetUtcNow().UtcDateTime - cached.ReadAt < OracleKeyCacheLifetime)
+                return cached.Edges;
+        }
+
+        try
+        {
+            var edges = new List<DeleteRuleEdge>();
+            using var command = connection.CreateCommand();
+            command.CommandTimeout = _commandTimeoutSeconds;
+            command.CommandText = $@"
+                SELECT c.owner, c.table_name, p.owner, p.table_name, CASE c.delete_rule WHEN 'CASCADE' THEN 1 ELSE 0 END
+                FROM {view} c
+                JOIN {view} p ON p.owner = c.r_owner AND p.constraint_name = c.r_constraint_name
+                WHERE c.constraint_type = 'R' AND c.status = 'ENABLED' AND c.delete_rule IN ('CASCADE', 'SET NULL')";
+
+            using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.FindDeleteRuleKeys");
+            while (await reader.ReadAsync())
+                edges.Add(new DeleteRuleEdge(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                    Convert.ToInt32(reader.GetValue(4)) == 1));
+            lock (_oracleKeyCacheLock)
+                _oracleKeyCache = (cacheKey, Clock.GetUtcNow().UtcDateTime, edges);
+            return edges;
+        }
+        catch (OracleException ex) when (ex.Number == 942)
+        {
+            // ORA-00942: the view does not exist for this user, i.e. no access to the DBA_ views. Any other error is not an answer.
+            Log($"[MigrateTableAsync] No access to {view}: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>Forgets the keys and the grants read so far (the next check reads them again).</summary>
+    internal void ResetOracleCaches()
+    {
+        lock (_oracleKeyCacheLock)
+        {
+            _oracleKeyCache = null;
+            _oracleGrantsCache.Clear();
+        }
+    }
+
+    /// <summary>The clock the key cache measures its lifetime with (a test replaces it).</summary>
+    internal TimeProvider Clock { get; set; } = TimeProvider.System;
+
+    private readonly object _oracleKeyCacheLock = new();
+    private (string Key, DateTime ReadAt, List<DeleteRuleEdge> Edges)? _oracleKeyCache;
+    private static readonly TimeSpan OracleKeyCacheLifetime = TimeSpan.FromSeconds(30);
+
+    /// <summary>The catalog's own spelling, quoted: a table created as "MixedCase" is not found as MIXEDCASE.</summary>
+    private string QuoteOracleName(string schema, string name)
+    {
+        char quote = (char)34;
+        return quote + EscapeOracleIdentifier(schema) + quote + "." + quote + EscapeOracleIdentifier(name) + quote;
+    }
+
+    private readonly Dictionary<string, (DateTime ReadAt, List<string> Grantees)> _oracleGrantsCache = new();
+
+    /// <summary>
+    /// The schemas holding REFERENCES on a table, as a whole or on some columns only (the latter is recorded in ALL_COL_PRIVS, not in
+    /// ALL_TAB_PRIVS). Kept for as long as the keys are: the same table is reached from every root above it.
+    /// </summary>
+    private async Task<List<string>> ReadReferencesGranteesAsync(DbConnection connection, string schema, string name)
+    {
+        string cacheKey = connection.ConnectionString + "|" + schema + "|" + name;
+        var now = Clock.GetUtcNow().UtcDateTime;
+        lock (_oracleKeyCacheLock)
+        {
+            if (_oracleGrantsCache.TryGetValue(cacheKey, out var cached) && now - cached.ReadAt < OracleKeyCacheLifetime)
+                return cached.Grantees;
+        }
+
+        // Bind variables: a distinct literal per table would be hard-parsed by the server every time.
+        var grantees = await ReadOracleNamesAsync(connection,
+            "SELECT grantee FROM all_tab_privs WHERE table_schema = :owner AND table_name = :tab AND privilege = 'REFERENCES' AND grantee <> :owner " +
+            "UNION SELECT grantee FROM all_col_privs WHERE table_schema = :owner AND table_name = :tab AND privilege = 'REFERENCES' AND grantee <> :owner",
+            ("owner", schema), ("tab", name));
+        lock (_oracleKeyCacheLock)
+        {
+            foreach (var expired in _oracleGrantsCache.Where(e => now - e.Value.ReadAt >= OracleKeyCacheLifetime).Select(e => e.Key).ToList())
+                _oracleGrantsCache.Remove(expired);
+            _oracleGrantsCache[cacheKey] = (now, grantees);
+        }
+
+        return grantees;
+    }
+
+    /// <summary>The first column of a query as strings. A query that cannot be run is an error, not an empty answer.</summary>
+    private async Task<List<string>> ReadOracleNamesAsync(DbConnection connection, string sql, params (string Name, string Value)[] binds)
+    {
+        var names = new List<string>();
+        using var command = connection.CreateCommand();
+        command.CommandTimeout = _commandTimeoutSeconds;
+        command.CommandText = sql;
+        if (command is OracleCommand oracleCommand)
+            oracleCommand.BindByName = true;
+        foreach (var (name, value) in binds)
+        {
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = name;
+            parameter.Value = value;
+            command.Parameters.Add(parameter);
+        }
+
+        using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.ReadOracleNames");
+        while (await reader.ReadAsync())
+            names.Add(reader.GetString(0));
+        return names;
+    }
+
+    /// <summary>
+    /// Whether the Oracle table has any row; null when it cannot be queried (missing table or no privilege).
+    /// <paramref name="qualifiedName"/> is used as it is: the caller decides how it is spelled and quoted.
+    /// </summary>
+    private async Task<bool?> OracleTableHasRowsAsync(DbConnection connection, string qualifiedName)
+    {
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandTimeout = _commandTimeoutSeconds;
+            command.CommandText = $"SELECT 1 FROM {qualifiedName} WHERE ROWNUM = 1";
+            return await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "MigrateTableAsync.ProbeOracleTableRows") != null;
+        }
+        catch (OracleException ex)
+        {
+            Log($"[MigrateTableAsync] Could not query {qualifiedName}: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>What <see cref="CheckOracleDeleteAsync"/> learned about a DELETE of every row of a table.</summary>
+    internal sealed record OracleDeleteCheck(List<string> Populated, List<string> Unreadable, List<string> UnverifiableSchemas,
+        List<string>? NotOwned = null);
+
+    /// <summary>What <see cref="CheckPostgresCascadeAsync"/> learned: whether the table has rows, and what else a cascade would lose.</summary>
+    private sealed record CascadeCheck(bool? TableHasRows, List<string> PopulatedElsewhere);
+
+    /// <summary>
+    /// PostgreSQL only. Whether the table has rows (null when the role cannot tell) and which other target tables
+    /// TRUNCATE ... CASCADE on it would empty although they hold rows and this migration does not load them later:
+    /// emptying those would lose data the user did not ask to replace ("schema.table" names).
+    /// TRUNCATE empties the table together with all its inheritance descendants, then every table that references one of
+    /// those; of such a referencing table only its partitions go with it, not its ordinary inheritance children. A
+    /// partition is part of its parent, so it is safe whenever the parent is. Nothing else is probed once the table
+    /// itself is known to be empty, because then no TRUNCATE is run.
+    /// </summary>
+    private async Task<CascadeCheck> CheckPostgresCascadeAsync(DbConnection connection, DbTransaction? transaction,
+        TableInfo table, IEnumerable<TableInfo>? tablesLoadedLater)
+    {
+        var affected = new List<(long Oid, string Schema, string Name, bool IsPartition, long[] Parents, bool CanRead)>();
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandTimeout = _commandTimeoutSeconds;
+            // Each recursive CTE refers to itself once, which is all PostgreSQL allows; "affected" therefore walks one edge relation.
+            // can_read is by OID, never by name: naming a table in a schema the role cannot use would itself fail and abort
+            // the transaction. Row-level security makes SELECT unreliable unless the role bypasses it (TRUNCATE ignores it).
+            command.CommandText = @"
+                WITH RECURSIVE root AS (
+                    SELECT p.oid FROM pg_class p JOIN pg_namespace pn ON pn.oid = p.relnamespace
+                    WHERE pn.nspname = @schema AND p.relname = @tableName),
+                family(oid) AS (
+                    SELECT oid FROM root
+                    UNION
+                    SELECT i.inhrelid FROM pg_inherits i JOIN family f ON i.inhparent = f.oid),
+                edge AS (
+                    SELECT i.inhparent AS source, i.inhrelid AS target
+                    FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid WHERE c.relispartition
+                    UNION
+                    SELECT confrelid, conrelid FROM pg_constraint WHERE contype = 'f'),
+                affected(oid) AS (
+                    SELECT oid FROM family
+                    UNION
+                    SELECT e.target FROM edge e JOIN affected a ON e.source = a.oid)
+                SELECT t.oid::bigint, n.nspname, t.relname, t.relispartition,
+                       COALESCE((SELECT array_agg(i.inhparent::bigint) FROM pg_inherits i WHERE i.inhrelid = t.oid), ARRAY[]::bigint[]),
+                       COALESCE(has_table_privilege(t.oid, 'SELECT') AND has_schema_privilege(n.oid, 'USAGE')
+                                AND (NOT t.relrowsecurity
+                                     OR (SELECT r.rolsuper OR r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user)),
+                                false)
+                FROM affected a
+                JOIN pg_class t ON t.oid = a.oid
+                JOIN pg_namespace n ON n.oid = t.relnamespace";
+
+            // FormatTableName lower-cases both parts for PostgreSQL, so that is how the table exists on the target.
+            foreach (var (name, value) in new[] { ("@schema", table.Schema), ("@tableName", table.TableName) })
+            {
+                var parameter = command.CreateParameter();
+                parameter.ParameterName = name;
+                parameter.Value = value.ToLowerInvariant();
+                command.Parameters.Add(parameter);
+            }
+
+            using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.FindCascadeTargets");
+            while (await reader.ReadAsync())
+                affected.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetBoolean(3),
+                    reader.GetFieldValue<long[]>(4), reader.GetBoolean(5)));
+        }
+
+        var byOid = affected.ToDictionary(row => row.Oid);
+        var loadedLater = new HashSet<(string, string)>(
+            (tablesLoadedLater ?? []).Select(t => (t.Schema.ToLowerInvariant(), t.TableName.ToLowerInvariant())));
+        var root = (table.Schema.ToLowerInvariant(), table.TableName.ToLowerInvariant());
+
+        var rootRows = affected.Where(row => (row.Schema, row.Name) == root).ToList();
+        bool? tableHasRows = rootRows.Count == 1 && rootRows[0].CanRead
+            ? await PostgresTableHasRowsAsync(connection, transaction, root.Item1, root.Item2, includeDescendants: true)
+            : null;
+        if (tableHasRows == false)
+            return new CascadeCheck(false, []);
+
+        bool IsReplacedByThisMigration(long oid) =>
+            byOid.TryGetValue(oid, out var row) &&
+            ((row.Schema, row.Name) == root || loadedLater.Contains((row.Schema, row.Name)) ||
+             (row.IsPartition && row.Parents.Any(IsReplacedByThisMigration)));
+
+        var populated = new List<string>();
+        foreach (var row in affected.Where(row => !IsReplacedByThisMigration(row.Oid)))
+        {
+            if (!row.CanRead)
+            {
+                Log($"[MigrateTableAsync] Cannot check whether {row.Schema}.{row.Name} holds rows (no SELECT privilege, no USAGE on its " +
+                    $"schema or row-level security); TRUNCATE ... CASCADE on {table.Schema}.{table.TableName} will empty it if it does");
+                continue;
+            }
+
+            if (await PostgresTableHasRowsAsync(connection, transaction, row.Schema, row.Name, includeDescendants: false))
+                populated.Add($"{row.Schema}.{row.Name}");
+        }
+
+        return new CascadeCheck(tableHasRows, populated);
+    }
+
+    /// <summary>
+    /// Whether the table has any row. The caller must know the role can read it: a denied query would abort the open
+    /// transaction. <paramref name="includeDescendants"/> false means the table's own rows only (ONLY).
+    /// </summary>
+    private async Task<bool> PostgresTableHasRowsAsync(DbConnection connection, DbTransaction? transaction, string schema, string name,
+        bool includeDescendants)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandTimeout = _commandTimeoutSeconds;
+        command.CommandText = $"SELECT EXISTS (SELECT 1 FROM {(includeDescendants ? "" : "ONLY ")}" +
+                              $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(name)}\")";
+        return Convert.ToBoolean(await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "MigrateTableAsync.ProbeTableRows"));
+    }
+
+    public async Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, TableInfo table, IProgress<int> progress,
+        IEnumerable<TableInfo>? tablesLoadedLater = null)
     {
         using (var sourceConn = CreateConnection(source))
         using (var targetConn = CreateConnection(target))
         {
             await ExecuteWithRetryAsync(() => sourceConn.OpenAsync(), "MigrateTableAsync.SourceOpen");
             await ExecuteWithRetryAsync(() => targetConn.OpenAsync(), "MigrateTableAsync.TargetOpen");
+
+            // The user the Oracle session really runs as (not the text typed in the user box: a stray space or another spelling).
+            string? oracleSessionUser = null;
 
             // Diagnostica: logga lo schema e l'utente per Oracle
             if (target.DatabaseType == DatabaseType.Oracle && targetConn is OracleConnection oracleConn)
@@ -470,6 +851,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                     {
                         diagCmd.CommandText = "SELECT USER FROM DUAL";
                         var currentUser = await ExecuteWithRetryAsync(() => diagCmd.ExecuteScalarAsync(), "MigrateTableAsync.OracleCurrentUser");
+                        oracleSessionUser = Convert.ToString(currentUser);
                         Log($"[MigrateTableAsync] Oracle current user: {currentUser}");
                     }
                 }
@@ -530,25 +912,108 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 Log($"[MigrateTableAsync] Truncating table {table.Schema}.{table.TableName} in target...");
                 try
                 {
-                    string truncateQuery = target.DatabaseType switch
+                    // PostgreSQL refuses a plain TRUNCATE on a referenced table, and CASCADE empties every table that
+                    // references it, selected or not. An empty table needs no TRUNCATE at all (which also keeps a table
+                    // loaded earlier in a foreign-key cycle safe); otherwise let the user decide instead of silently
+                    // wiping data they did not ask to replace.
+                    bool nothingToTruncate = false;
+                    if (target.DatabaseType == DatabaseType.PostgreSQL)
                     {
-                        DatabaseType.SqlServer => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
-                        DatabaseType.PostgreSQL => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)} CASCADE",
-                        // Oracle: TRUNCATE is DDL and causes an implicit COMMIT, making rollback impossible.
-                        // Use DELETE FROM instead: it is DML and participates in the manual COMMIT/ROLLBACK flow.
-                        DatabaseType.Oracle => $"DELETE FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
-                        _ => throw new NotSupportedException()
-                    };
-                    
-                    using (var truncateCommand = targetConn.CreateCommand())
-                    {
-                        truncateCommand.CommandText = truncateQuery;
-                        if (transaction != null)
-                            truncateCommand.Transaction = transaction;
-                        truncateCommand.CommandTimeout = _commandTimeoutSeconds;
-                        await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.Truncate");
+                        var cascade = await CheckPostgresCascadeAsync(targetConn, transaction, table, tablesLoadedLater);
+                        nothingToTruncate = cascade.TableHasRows == false;
+                        var wiped = cascade.PopulatedElsewhere;
+                        if (wiped.Count > 0)
+                        {
+                            throw new InvalidOperationException(
+                                $"TRUNCATE di {table.Schema}.{table.TableName} svuoterebbe anche tabelle con dati che questa migrazione non carica dopo di essa: {ListNames(wiped)}. " +
+                                "Selezionale per la migrazione oppure svuotale tu. Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
+                        }
                     }
-                    Log($"[MigrateTableAsync] Table truncated successfully");
+                    else if (target.DatabaseType == DatabaseType.Oracle)
+                    {
+                        // Oracle empties the table with DELETE, which an enabled ON DELETE CASCADE / SET NULL key spreads to
+                        // the tables that reference it, selected or not.
+                        var check = await CheckOracleDeleteAsync(targetConn, table, tablesLoadedLater,
+                            oracleSessionUser ?? target.Username.Trim());
+                        if (check.Populated.Count > 0)
+                        {
+                            throw new InvalidOperationException(
+                                $"DELETE FROM {table.Schema}.{table.TableName} cancellerebbe o modificherebbe anche righe di tabelle con dati che questa migrazione non carica dopo di essa (chiavi esterne ON DELETE CASCADE / SET NULL): {ListNames(check.Populated)}. " +
+                                "Selezionale per la migrazione oppure svuotale tu. Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
+                        }
+
+                        if (check.Unreadable.Count > 0)
+                        {
+                            throw new InvalidOperationException(
+                                $"DELETE FROM {table.Schema}.{table.TableName} cancellerebbe o modificherebbe anche righe di tabelle che l'utente di migrazione non può leggere (chiavi esterne ON DELETE CASCADE / SET NULL): {ListNames(check.Unreadable)}. " +
+                                "Non si può sapere se contengono dati: concedi SELECT su quelle tabelle, oppure selezionale per la migrazione o svuotale tu. " +
+                                "Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
+                        }
+
+                        if (check.NotOwned is { Count: > 0 })
+                        {
+                            // A role is active only in sessions opened after it was granted: drop the pooled ones so that a retry
+                            // right after the DBA's GRANT sees it, without restarting the application.
+                            OracleConnection.ClearAllPools();
+                            throw new InvalidOperationException(
+                                $"L'utente di migrazione non è il proprietario di {ListNames(check.NotOwned)} e non può leggere tutte le chiavi esterne che le riferiscono: " +
+                                "potrebbero esserci tabelle con dati e ON DELETE CASCADE / SET NULL che il DELETE svuoterebbe. Concedi il ruolo SELECT_CATALOG_ROLE all'utente di migrazione per verificarlo, oppure svuota la tabella tu. " +
+                                "Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
+                        }
+
+                        if (check.UnverifiableSchemas.Count > 0)
+                        {
+                            OracleConnection.ClearAllPools(); // see above
+                            throw new InvalidOperationException(
+                                $"Questi schemi hanno il privilegio REFERENCES su tabelle toccate dal DELETE di {table.Schema}.{table.TableName} e le loro chiavi esterne non sono visibili all'utente di migrazione: {ListNames(check.UnverifiableSchemas)}. " +
+                                "Potrebbero avere tabelle con dati e ON DELETE CASCADE / SET NULL che il DELETE svuoterebbe. Concedi il ruolo SELECT_CATALOG_ROLE all'utente di migrazione per verificarlo, oppure svuota la tabella tu. " +
+                                "Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
+                        }
+                    }
+
+                    if (nothingToTruncate)
+                    {
+                        Log($"[MigrateTableAsync] Table {table.Schema}.{table.TableName} is already empty in target: nothing to truncate");
+                    }
+                    else
+                    {
+                        string truncateQuery = target.DatabaseType switch
+                        {
+                            DatabaseType.SqlServer => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
+                            DatabaseType.PostgreSQL => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)} CASCADE",
+                            // Oracle: TRUNCATE is DDL and causes an implicit COMMIT, so DELETE FROM is used. No OracleTransaction is
+                            // opened for Oracle (transaction stays null) and ODP.NET commits each DML statement: the DELETE, and rows
+                            // loaded before a later failure, are NOT rolled back. Known limitation, unlike SQL Server and PostgreSQL.
+                            DatabaseType.Oracle => $"DELETE FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
+                            _ => throw new NotSupportedException()
+                        };
+
+                        using (var truncateCommand = targetConn.CreateCommand())
+                        {
+                            truncateCommand.CommandText = truncateQuery;
+                            if (transaction != null)
+                                truncateCommand.Transaction = transaction;
+                            truncateCommand.CommandTimeout = _commandTimeoutSeconds;
+                            try
+                            {
+                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.Truncate");
+                            }
+                            catch (SqlException ex) when (target.DatabaseType == DatabaseType.SqlServer && ex.Number == 4712)
+                            {
+                                // SQL Server refuses TRUNCATE on any table a FOREIGN KEY points at, even when that key is
+                                // disabled or the referencing table is empty. DELETE is allowed once the keys are off, but
+                                // an ENABLED key with ON DELETE CASCADE / SET NULL / SET DEFAULT would silently wipe or alter
+                                // rows in a referencing table, which may not be one the user selected. Let the user decide.
+                                if (await HasEnabledCascadingReferenceAsync(targetConn, transaction, table.Schema, table.TableName))
+                                    throw;
+
+                                Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} is referenced by a foreign key: using DELETE instead of TRUNCATE");
+                                truncateCommand.CommandText = $"DELETE FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}";
+                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.DeleteInsteadOfTruncate");
+                            }
+                        }
+                        Log($"[MigrateTableAsync] Table truncated successfully");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -563,7 +1028,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                         if (!shouldContinue)
                         {
                             throw new InvalidOperationException(
-                                $"TRUNCATE fallito per {table.Schema}.{table.TableName} e migrazione annullata dall'utente.",
+                                $"Svuotamento di {table.Schema}.{table.TableName} fallito o rifiutato e migrazione annullata dall'utente.",
                                 ex);
                         }
                     }
@@ -647,6 +1112,17 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                     }
                                 }
 
+                                // SQL Server drops an xml column's declaration but refuses a Unicode literal that has one with an encoding.
+                                // What decides is the TARGET column: it is removed wherever that is xml, whatever the source type is (an
+                                // XMLTYPE, or a text column holding a document), and nowhere else: a text column of a table that already
+                                // existed gets the document as the source returned it.
+                                int[] xmlColumns = [];
+                                if (target.DatabaseType == DatabaseType.SqlServer)
+                                {
+                                    var targetXml = await GetSqlServerXmlColumnsAsync(targetConn, table.Schema, table.TableName, transaction);
+                                    if (targetXml.Count > 0)
+                                        xmlColumns = Enumerable.Range(0, reader.FieldCount).Where(i => targetXml.Contains(reader.GetName(i))).ToArray();
+                                }
                                 var batchRows = new List<object?[]>(_batchSize);
                                 while (await reader.ReadAsync())
                                 {
@@ -671,6 +1147,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                     {
                                         reader.GetValues(rowValues);
                                     }
+                                    StripXmlDeclarations(rowValues, xmlColumns);
                                     batchRows.Add(rowValues);
 
                                     if (batchRows.Count >= _batchSize)
@@ -809,6 +1286,36 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         {
             Log($"[FinalizeTransactionAsync] Error finalizing transaction: {ex.Message}");
         }
+    }
+
+    /// <summary>The names of the xml columns of a SQL Server table or view (case-insensitive).</summary>
+    private async Task<HashSet<string>> GetSqlServerXmlColumnsAsync(DbConnection connection, string schema, string tableName, DbTransaction? transaction)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var command = connection.CreateCommand();
+        // INFORMATION_SCHEMA lists views as well as tables: a load into a view over an xml column needs the strip too.
+        command.CommandText = @"
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = @Schema AND TABLE_NAME = @TableName AND DATA_TYPE = 'xml'";
+        command.CommandTimeout = _commandTimeoutSeconds;
+        if (transaction != null)
+            command.Transaction = transaction;
+
+        var schemaParam = command.CreateParameter();
+        schemaParam.ParameterName = "@Schema";
+        schemaParam.Value = schema;
+        command.Parameters.Add(schemaParam);
+
+        var tableParam = command.CreateParameter();
+        tableParam.ParameterName = "@TableName";
+        tableParam.Value = tableName;
+        command.Parameters.Add(tableParam);
+
+        using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.FindXmlColumns");
+        while (await reader.ReadAsync())
+            names.Add(reader.GetString(0));
+        return names;
     }
 
     /// <summary>
@@ -1009,7 +1516,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         return ComputeColumnsMissingOnTarget(targetCols, sourceColumnNames);
     }
 
-    private string BuildInsertQuery(
+    internal string BuildInsertQuery(
         DatabaseType dbType,
         string schema,
         string tableName,
@@ -1044,7 +1551,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 for (int colIdx = 0; colIdx < columns.Count; colIdx++)
                 {
                     var value = rows[rowIdx][colIdx];
-                    values.Add(FormatSqlValue(dbType, value));
+                    values.Add(FormatSqlValue(dbType, value, unicodeStringLiterals: true));
                 }
                 queries.Add($"INSERT INTO {tableRef} ({string.Join(", ", columnNames)}) VALUES ({string.Join(", ", values)})");
             }
@@ -1064,7 +1571,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 for (int colIdx = 0; colIdx < columns.Count; colIdx++)
                 {
                     var value = rows[rowIdx][colIdx];
-                    values.Add(FormatSqlValue(dbType, value));
+                    values.Add(FormatSqlValue(dbType, value, unicodeStringLiterals: true));
                 }
                 valueSets.Add($"({string.Join(", ", values)})");
             }
@@ -1079,9 +1586,13 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     /// <summary>
     /// Formatta un valore .NET come letterale SQL per il dialetto indicato.
     /// Quando <paramref name="unicodeStringLiterals"/> è true e il dialetto è SQL Server,
-    /// i letterali stringa vengono prefissati con N per preservare l'Unicode negli script su file.
+    /// i letterali stringa vengono prefissati con N per preservare l'Unicode (negli script su file e nei caricamenti diretti).
+    /// Quando <paramref name="oracleLineBreaksAsChr"/> è true e il dialetto è Oracle, CR e LF dentro una stringa diventano
+    /// <c>||CHR(13)||</c> / <c>||CHR(10)||</c>: SQL*Plus chiude lo statement a una riga "/" (e, se non impostato, a una riga vuota)
+    /// anche dentro un letterale, quindi un a-capo grezzo spezzerebbe l'INSERT di uno script.
     /// </summary>
-    internal string FormatSqlValue(DatabaseType dbType, object? value, bool unicodeStringLiterals = false)
+    internal string FormatSqlValue(DatabaseType dbType, object? value, bool unicodeStringLiterals = false,
+        bool oracleLineBreaksAsChr = false)
     {
         if (value == null || value is DBNull)
             return "NULL";
@@ -1090,7 +1601,10 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         {
             string s => unicodeStringLiterals && dbType == DatabaseType.SqlServer
                 ? $"N'{EscapeSqlString(s)}'"
-                : $"'{EscapeSqlString(s)}'",
+                : oracleLineBreaksAsChr && dbType == DatabaseType.Oracle
+                    && (s.Length > OracleScriptPiece || s.IndexOfAny(LineBreakChars) >= 0)
+                    ? OracleScriptLiteral(s)
+                    : $"'{EscapeSqlString(s)}'",
             bool b => dbType switch
             {
                 DatabaseType.PostgreSQL => b ? "TRUE" : "FALSE",
@@ -1162,6 +1676,100 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     private string EscapeSqlString(string value)
     {
         return value.Replace("'", "''");
+    }
+
+    private static readonly char[] LineBreakChars = ['\r', '\n'];
+
+    private static readonly System.Text.RegularExpressions.Regex XmlDeclaration =
+        new(@"^\s*<\?xml\s[^>]*?\?>\s*", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Removes a leading XML declaration (&lt;?xml version="1.0" encoding="UTF-8"?&gt;). Oracle returns an XMLTYPE with one, and
+    /// SQL Server, which drops it anyway when it stores an xml value, refuses a Unicode literal (N'...') whose declaration names
+    /// an encoding: "unable to switch the encoding".
+    /// </summary>
+    internal static string StripXmlDeclaration(string value) => XmlDeclaration.Replace(value, "", 1);
+
+    /// <summary>The columns of a reader that hold XML (xml, XMLTYPE), judged by the source column type.</summary>
+    internal static int[] XmlColumnIndexes(System.Data.Common.DbDataReader reader) =>
+        Enumerable.Range(0, reader.FieldCount)
+            .Where(i => reader.GetDataTypeName(i).Contains("xml", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+    /// <summary>Applies <see cref="StripXmlDeclaration"/> to the XML columns of one row (in place).</summary>
+    internal static void StripXmlDeclarations(object?[] row, int[] xmlColumns)
+    {
+        foreach (int col in xmlColumns)
+        {
+            if (row[col] is string xml)
+                row[col] = StripXmlDeclaration(xml);
+        }
+    }
+
+    /// <summary>Characters of text in one quoted piece of a long Oracle script literal (at most 4 bytes each in UTF-8).</summary>
+    private const int OracleScriptPiece = 400;
+
+    /// <summary>UTF-8 bytes after which a long Oracle script literal goes on to the next physical line.</summary>
+    internal const int OracleScriptLineBudget = 800;
+
+    /// <summary>The size of a text in UTF-8: what SQL*Plus counts against its line limit, not the number of characters.</summary>
+    internal static int Utf8Bytes(string text) => System.Text.Encoding.UTF8.GetByteCount(text);
+
+    /// <summary>
+    /// A string literal for an Oracle script: every CR and LF is written as CHR(13) / CHR(10), the text in pieces of at most
+    /// <see cref="OracleScriptPiece"/> characters, all joined with ||. SQL*Plus ignores a line of more than 4999 bytes (and
+    /// still exits with 0), so after a || the literal goes on to a new physical line once the current one is over
+    /// <see cref="OracleScriptLineBudget"/> bytes: a line break outside the quotes is just white space to Oracle. A value of up to
+    /// <see cref="OracleScriptPiece"/> characters stays one literal, as before.
+    /// </summary>
+    private string OracleScriptLiteral(string value)
+    {
+        var result = new System.Text.StringBuilder();
+        var text = new System.Text.StringBuilder();
+        int lineBytes = 0;
+
+        void Piece(string piece)
+        {
+            int bytes = Utf8Bytes(piece);
+            if (result.Length > 0)
+            {
+                result.Append("||");
+                lineBytes += 2;
+                if (lineBytes + bytes > OracleScriptLineBudget)
+                {
+                    result.Append(Environment.NewLine);
+                    lineBytes = 0;
+                }
+            }
+
+            result.Append(piece);
+            lineBytes += bytes;
+        }
+
+        void FlushText()
+        {
+            if (text.Length == 0) return;
+            Piece($"'{EscapeSqlString(text.ToString())}'");
+            text.Clear();
+        }
+
+        foreach (char c in value)
+        {
+            if (c == '\r' || c == '\n')
+            {
+                FlushText();
+                Piece(c == '\r' ? "CHR(13)" : "CHR(10)");
+                continue;
+            }
+
+            // A character outside the BMP is two UTF-16 units: never cut between them.
+            if (text.Length >= OracleScriptPiece && !char.IsHighSurrogate(text[^1]))
+                FlushText();
+            text.Append(c);
+        }
+
+        FlushText();
+        return result.ToString();
     }
 
     /// <summary>

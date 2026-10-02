@@ -20,6 +20,7 @@ public class MainWindowViewModel : ViewModelBase
 {
     private readonly IDatabaseService _databaseService;
     private readonly SchemaMigrationService _schemaMigrationService;
+    private readonly ForeignKeyService _foreignKeyService;
 
     private static void Log(string message) => LoggerService.Log(message);
 
@@ -163,7 +164,13 @@ public class MainWindowViewModel : ViewModelBase
     public MigrationMode SelectedMigrationMode
     {
         get => _selectedMigrationMode;
-        set => this.RaiseAndSetIfChanged(ref _selectedMigrationMode, value);
+        // A running migration reads the mode at every step: changing it mid-run would add or skip steps (say, load and
+        // TRUNCATE every selected table in a run started as schema only). The radio buttons are disabled meanwhile too.
+        set
+        {
+            if (!IsMigrating)
+                this.RaiseAndSetIfChanged(ref _selectedMigrationMode, value);
+        }
     }
 
     public IObservable<bool> CanStartMigrationObservable { get; }
@@ -229,10 +236,12 @@ public class MainWindowViewModel : ViewModelBase
     {
     }
 
-    public MainWindowViewModel(IDatabaseService? databaseService, SchemaMigrationService? schemaMigrationService)
+    public MainWindowViewModel(IDatabaseService? databaseService, SchemaMigrationService? schemaMigrationService,
+        ForeignKeyService? foreignKeyService = null)
     {
         _databaseService = databaseService ?? new DatabaseService();
         _schemaMigrationService = schemaMigrationService ?? new SchemaMigrationService();
+        _foreignKeyService = foreignKeyService ?? new ForeignKeyService();
 
         // Wire TRUNCATE-failed prompt handler into the concrete database service (if applicable).
         if (_databaseService is DatabaseService dbService)
@@ -286,10 +295,18 @@ public class MainWindowViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Optional handler that shows a UI confirmation when TRUNCATE TABLE fails.
+    /// Optional handler that shows a UI confirmation when emptying a target table fails or is refused (TRUNCATE / DELETE, or
+    /// the PostgreSQL / Oracle pre-check that it would also empty populated tables the run does not load).
     /// Returns true to continue inserting, false to abort migration.
     /// </summary>
     public Func<TruncateFailureContext, Task<bool>>? TruncateFailedPromptHandlerAsync { get; set; }
+
+    /// <summary>
+    /// Optional handler asked before a migration starts when some selected tables are hidden by the search filter.
+    /// Receives (selected tables, how many of them are hidden, whether their data in the target will be replaced)
+    /// and returns true to go ahead or false to cancel.
+    /// </summary>
+    public Func<int, int, bool, Task<bool>>? ConfirmHiddenTablesAsync { get; set; }
 
     private void OnLogMessageReceived(LogEntry entry)
     {
@@ -366,8 +383,6 @@ public class MainWindowViewModel : ViewModelBase
         _tableSubscriptions.Clear();
     }
 
-    private static string BuildTableKey(string schema, string tableName) => $"{schema}.{tableName}";
-
     private void RecomputeTableViews(bool force = false)
     {
         if (!Dispatcher.UIThread.CheckAccess())
@@ -385,28 +400,24 @@ public class MainWindowViewModel : ViewModelBase
         TotalRowsToMigrate = selectedTables.Sum(t => t.RowCount);
         SelectedTablesForMigration = new ObservableCollection<TableInfo>(selectedTables);
 
-        IEnumerable<TableInfo> filteredSource = Tables;
-        if (!string.IsNullOrWhiteSpace(TableSearchFilter))
-        {
-            var filter = TableSearchFilter.ToLowerInvariant();
-            filteredSource = Tables.Where(t => MatchesFilter(t, filter));
-        }
-
-        var filteredList = filteredSource.ToList();
+        var filteredList = TableSelection.Visible(Tables, TableSearchFilter);
         FilteredTables = new ObservableCollection<TableInfo>(filteredList);
         FilteredTargetTables = new ObservableCollection<TableInfo>(filteredList.Where(t => t.IsSelected));
 
         Log($"[RecomputeTableViews] Filtered={FilteredTables.Count}, Selected={SelectedTablesCount}, TotalRows={TotalRowsToMigrate}");
     }
 
-    private void ReplaceTablesOnUiThread(IEnumerable<TableInfo> tables, HashSet<string>? selectedTableKeys = null)
+    /// <param name="previousTables">
+    /// The tables currently on screen, whose selection is carried over to <paramref name="tables"/>. Passed as the live
+    /// objects (not as a snapshot of keys) so that anything the user selected while the reload ran is kept.
+    /// </param>
+    private void ReplaceTablesOnUiThread(IEnumerable<TableInfo> tables, IEnumerable<TableInfo>? previousTables = null)
     {
         if (!Dispatcher.UIThread.CheckAccess())
         {
             throw new InvalidOperationException("ReplaceTablesOnUiThread must run on the UI thread.");
         }
 
-        var selectedKeys = selectedTableKeys ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var nextTables = new List<TableInfo>();
 
         _suppressTableSelectionUpdates = true;
@@ -414,14 +425,9 @@ public class MainWindowViewModel : ViewModelBase
         {
             DisposeAllTableSubscriptions();
 
-            foreach (var table in tables)
-            {
-                if (selectedKeys.Contains(BuildTableKey(table.Schema, table.TableName)))
-                {
-                    table.IsSelected = true;
-                }
-                nextTables.Add(table);
-            }
+            nextTables.AddRange(tables);
+            if (previousTables != null)
+                TableSelection.CarryOver(previousTables, nextTables);
 
             Tables = new ObservableCollection<TableInfo>(nextTables);
             foreach (var table in nextTables)
@@ -437,11 +443,35 @@ public class MainWindowViewModel : ViewModelBase
         RecomputeTableViews(force: true);
     }
 
+    /// <summary>What to try when a connection fails because of the certificate or the encryption settings (empty when neither applies).</summary>
+    private static string FailureHint(ConnectionInfo? connection) => connection?.DatabaseType switch
+    {
+        DatabaseType.SqlServer when !connection.TrustServerCertificate =>
+            " Con un certificato autofirmato (ad esempio SQL Server in un container) spunta «Accetta certificato server (SSL)».",
+        DatabaseType.PostgreSQL when connection.RequireEncryption =>
+            " La cifratura TLS è richiesta: il server deve offrirla"
+            + (connection.TrustServerCertificate ? "." : " con un certificato valido, oppure spunta «Accetta certificato server (SSL)»."),
+        // For Oracle that box only skips the check that the certificate's name is the server's: the chain is still verified, so a
+        // self-signed certificate has to be one Windows trusts (or be in the client wallet), whatever the box says.
+        DatabaseType.Oracle when connection.RequireEncryption =>
+            " La cifratura TLS è richiesta: il server deve offrirla (TCPS) con un certificato che Windows considera attendibile. "
+            + "«Accetta certificato server (SSL)» salta solo il controllo del nome del certificato, non quello dell'emittente.",
+        _ => ""
+    };
+
     private async Task ConnectDatabasesAsync()
     {
+        // A migration or a reload is running with these very connections, and the finally below would clear IsMigrating
+        // under it, re-enabling "Avvia Migrazione" while tables are still being emptied and loaded.
+        if (IsMigrating)
+            return;
+
         try
         {
             IsMigrating = true;
+            // The connection fields were just overwritten with settings that are not validated yet. Until the tests below
+            // pass nothing may run with them, so a failed reconnect must not leave the old "connected" state behind.
+            IsConnected = false;
             ErrorMessage = "";
             StatusMessage = "Connessione ai database...";
             ProgressPercentage = 0;
@@ -474,7 +504,8 @@ public class MainWindowViewModel : ViewModelBase
             {
                 SourceStatusText = "● Errore";
                 SourceStatusBrush = new SolidColorBrush(Color.Parse("#ef5350"));
-                ErrorMessage = "Errore: Impossibile connettersi al database sorgente. Verifica server, porta e credenziali.";
+                ErrorMessage = "Errore: Impossibile connettersi al database sorgente. Verifica server, porta e credenziali."
+                    + FailureHint(SourceConnection.ConnectionInfo);
                 StatusMessage = "Connessione sorgente fallita";
                 return;
             }
@@ -493,7 +524,8 @@ public class MainWindowViewModel : ViewModelBase
             {
                 TargetStatusText = "● Errore";
                 TargetStatusBrush = new SolidColorBrush(Color.Parse("#ef5350"));
-                ErrorMessage = "Errore: Impossibile connettersi al database target. Verifica server, porta e credenziali.";
+                ErrorMessage = "Errore: Impossibile connettersi al database target. Verifica server, porta e credenziali."
+                    + FailureHint(TargetConnection.ConnectionInfo);
                 StatusMessage = "Connessione target fallita";
                 return;
             }
@@ -543,10 +575,17 @@ public class MainWindowViewModel : ViewModelBase
         // Track tables created during schema migration for rollback on data migration failure
         var tablesCreatedDuringMigration = new List<TableInfo>();
         var constraintsAddedDuringMigration = new List<ConstraintAddedInfo>();
-        
+        // Foreign-key problems found while closing the data load: shown to the user, not only logged.
+        var foreignKeyWarnings = new List<string>();
+        DataLoadPlan? dataLoadPlan = null;
+
         try
         {
             Log($"[StartMigrationAsync] Starting migration...");
+            // Kept only to put back if the user cancels at the hidden-tables question below: nothing ran in that case.
+            var previousError = ErrorMessage;
+            var previousProgress = ProgressPercentage;
+            var previousProgressText = ProgressText;
             IsMigrating = true;
             ErrorMessage = "";
             ProgressPercentage = 0;
@@ -567,6 +606,24 @@ public class MainWindowViewModel : ViewModelBase
                 ErrorMessage = "Errore: Connessioni non valide";
                 StatusMessage = "Connessioni invalide";
                 return;
+            }
+
+            // A selected table the search filter hides is still migrated, and its data on the target replaced: say so first.
+            int hiddenSelected = TableSelection.CountHidden(Tables, TableSearchFilter);
+            if (hiddenSelected > 0 && ConfirmHiddenTablesAsync is { } confirmHidden)
+            {
+                bool replacesTargetData = SelectedMigrationMode != MigrationMode.SchemaOnly;
+                bool proceed = await Dispatcher.UIThread.InvokeAsync(
+                    () => confirmHidden(tablesToMigrate.Count, hiddenSelected, replacesTargetData));
+                if (!proceed)
+                {
+                    Log($"[StartMigrationAsync] Cancelled by the user: {hiddenSelected} selected table(s) are hidden by the filter");
+                    StatusMessage = "Migrazione annullata";
+                    ErrorMessage = previousError;
+                    ProgressPercentage = previousProgress;
+                    ProgressText = previousProgressText;
+                    return;
+                }
             }
 
             // Verifica se database target esiste
@@ -700,6 +757,12 @@ public class MainWindowViewModel : ViewModelBase
                 StatusMessage = "Migrazione dati...";
                 int tablesProcessed = 0;
 
+                // The target may already enforce FOREIGN KEYs: load parents before children and, on SQL Server,
+                // switch the keys off for the load. Walking the tables alphabetically made a real migration fail
+                // (ACT_GE_BYTEARRAY loaded before ACT_RE_DEPLOYMENT it references).
+                dataLoadPlan = await _foreignKeyService.PrepareDataLoadAsync(TargetConnection.ConnectionInfo, tablesToMigrate);
+                tablesToMigrate = dataLoadPlan.OrderedTables.ToList();
+
                 foreach (var table in tablesToMigrate)
                 {
                     Log($"[StartMigrationAsync] Migrating table {table.Schema}.{table.TableName}...");
@@ -724,7 +787,8 @@ public class MainWindowViewModel : ViewModelBase
                         SourceConnection.ConnectionInfo,
                         TargetConnection.ConnectionInfo,
                         table,
-                        progress);
+                        progress,
+                        tablesToMigrate.Skip(tableIdx + 1));
 
                     Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} migration completed");
                     tablesProcessed++;
@@ -732,7 +796,10 @@ public class MainWindowViewModel : ViewModelBase
                     ProgressPercentage = finalPercent;
                     ProgressText = $"{finalPercent}% - {capturedTableName}";
                 }
-                
+
+                // Switch the foreign keys back on (validating the loaded rows); a failure is handled in the catch below.
+                foreignKeyWarnings.AddRange(await dataLoadPlan.CompleteAsync(succeeded: true));
+
                 // Set final progress to 100% with generic text for modes that include data migration
                 ProgressPercentage = 100;
                 ProgressText = "100%";
@@ -747,7 +814,9 @@ public class MainWindowViewModel : ViewModelBase
             constraintsAddedDuringMigration.Clear();
 
             Log($"[StartMigrationAsync] Migration completed successfully!");
-            ErrorMessage = "";
+            ErrorMessage = foreignKeyWarnings.Count == 0
+                ? ""
+                : "Migrazione completata, ma con avvisi sulle chiavi esterne." + DescribeForeignKeyWarnings(foreignKeyWarnings);
             
             string modeDescription = SelectedMigrationMode switch
             {
@@ -761,7 +830,11 @@ public class MainWindowViewModel : ViewModelBase
         {
             Log($"[StartMigrationAsync] ERROR: {ex.Message}");
             Log($"[StartMigrationAsync] Stack trace: {ex.StackTrace}");
-            
+
+            // Never leave the target with its foreign keys switched off. No-op when the load already completed.
+            if (dataLoadPlan != null)
+                foreignKeyWarnings.AddRange(await dataLoadPlan.CompleteAsync(succeeded: false));
+
             // Rollback: drop constraints and/or tables that were created during schema migration if data migration fails.
             // In SchemaAndData mode the schema service can add PK/UNIQUE constraints even when the table already existed.
             if (SelectedMigrationMode == MigrationMode.SchemaAndData && 
@@ -812,7 +885,7 @@ public class MainWindowViewModel : ViewModelBase
                 Log($"[StartMigrationAsync] Rollback completed");
             }
             
-            ErrorMessage = $"Errore migrazione: {ex.Message}";
+            ErrorMessage = $"Errore migrazione: {ex.Message}" + DescribeForeignKeyWarnings(foreignKeyWarnings);
             StatusMessage = "Migration failed";
             ProgressPercentage = 0;
         }
@@ -821,6 +894,12 @@ public class MainWindowViewModel : ViewModelBase
             IsMigrating = false;
         }
     }
+
+    private static string DescribeForeignKeyWarnings(IReadOnlyList<string> warnings) =>
+        warnings.Count == 0
+            ? ""
+            : " Chiavi esterne: " + string.Join(" | ", warnings.Take(3)) +
+              (warnings.Count > 3 ? $" (e altri {warnings.Count - 3} avvisi, vedi il log)" : "");
 
     public void SelectAllTablesDirectly()
     {
@@ -856,32 +935,23 @@ public class MainWindowViewModel : ViewModelBase
             _suppressTableSelectionUpdates = true;
             try
             {
-                foreach (var table in Tables)
-                {
-                    table.IsSelected = isSelected;
-                }
+                // "Select all" acts on what the search box shows, so filtering a schema and pressing it selects that
+                // schema only. "Deselect all" clears everything: a selected table the filter hides would still be
+                // migrated (and emptied on the target) without the user seeing it.
+                if (isSelected)
+                    TableSelection.SelectVisible(Tables, TableSearchFilter);
+                else
+                    TableSelection.DeselectAll(Tables);
             }
             finally
             {
                 _suppressTableSelectionUpdates = false;
             }
 
-            RecomputeTableViews();
+            // Forced: during a reload the normal recompute is skipped, which left the counters stale after this click.
+            RecomputeTableViews(force: true);
             Log($"[{operation}TablesDirectly] Completed. SelectedTablesCount={SelectedTablesCount}");
         });
-    }
-
-    /// <summary>
-    /// Checks if a table matches the given filter string.
-    /// </summary>
-    /// <param name="table">The table to check.</param>
-    /// <param name="filter">The filter string (should be lowercase).</param>
-    /// <returns>True if the table matches the filter, false otherwise.</returns>
-    private bool MatchesFilter(TableInfo table, string filter)
-    {
-        return table.TableName.ToLowerInvariant().Contains(filter) ||
-               table.Schema.ToLowerInvariant().Contains(filter) ||
-               $"{table.Schema}.{table.TableName}".ToLowerInvariant().Contains(filter);
     }
 
     private void UpdateTableStatistics()
@@ -929,24 +999,15 @@ public class MainWindowViewModel : ViewModelBase
                 return;
             }
 
-            // Preserve selected tables before reloading metadata.
-            var selectedTablesCopy = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                foreach (var t in Tables.Where(t => t.IsSelected))
-                {
-                    selectedTablesCopy.Add(BuildTableKey(t.Schema, t.TableName));
-                }
-            });
-            
-            Log($"[RefreshTablesAsync] Preserving {selectedTablesCopy.Count} selected tables");
-
-            // Reload tables from source database.
+            // Reload tables from source database. The selection to keep is read when the tables are replaced, not
+            // before this await: the user can keep selecting while the reload runs, and a snapshot taken up front
+            // would silently undo those clicks when it is applied to the reloaded tables.
             var tables = await _databaseService.GetTablesAsync(SourceConnection.ConnectionInfo);
-            
+
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                ReplaceTablesOnUiThread(tables, selectedTablesCopy);
+                Log($"[RefreshTablesAsync] Preserving {Tables.Count(t => t.IsSelected)} selected tables");
+                ReplaceTablesOnUiThread(tables, previousTables: Tables);
                 StatusMessage = $"Tabelle ricaricate! Trovate {tables.Count} tabelle";
                 ErrorMessage = "";
             });
@@ -965,18 +1026,32 @@ public class MainWindowViewModel : ViewModelBase
         finally
         {
             _isRefreshingTables = false;
-            await Dispatcher.UIThread.InvokeAsync(() => IsMigrating = false);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                IsMigrating = false;
+                // While reloading, RecomputeTableViews does nothing, so a filter typed or a click made in the meantime
+                // (and every failure path, which never replaces the tables) leaves the lists and counters out of date.
+                RecomputeTableViews();
+            });
         }
     }
 
     /// <summary>
     /// Salva la configurazione corrente in un file JSON
     /// </summary>
-    public async Task<bool> SaveConfigurationAsync(string filePath)
+    /// <param name="source">
+    /// The source and target connections to save; when null, the view model's own (those of the last Connect or Load).
+    /// The window passes what its fields show, so that a change made since the last Connect is not left out of the file.
+    /// </param>
+    public async Task<bool> SaveConfigurationAsync(string filePath, ConnectionInfo? source = null, ConnectionInfo? target = null)
     {
         try
         {
-            if (SourceConnection?.ConnectionInfo == null || TargetConnection?.ConnectionInfo == null)
+            source ??= SourceConnection?.ConnectionInfo;
+            target ??= TargetConnection?.ConnectionInfo;
+            if (source == null || target == null ||
+                string.IsNullOrWhiteSpace(source.Server) || string.IsNullOrWhiteSpace(source.Database) ||
+                string.IsNullOrWhiteSpace(target.Server) || string.IsNullOrWhiteSpace(target.Database))
             {
                 ErrorMessage = "Errore: configurazioni di connessione non complete";
                 Log("[SaveConfigurationAsync] Errore: configurazioni incomplete");
@@ -986,8 +1061,8 @@ public class MainWindowViewModel : ViewModelBase
             var config = new ConnectionConfig
             {
                 Name = Path.GetFileNameWithoutExtension(filePath),
-                Source = DatabaseConnectionData.FromConnectionInfo(SourceConnection.ConnectionInfo),
-                Target = DatabaseConnectionData.FromConnectionInfo(TargetConnection.ConnectionInfo),
+                Source = DatabaseConnectionData.FromConnectionInfo(source),
+                Target = DatabaseConnectionData.FromConnectionInfo(target),
                 Timestamp = DateTime.Now
             };
 
@@ -1017,6 +1092,14 @@ public class MainWindowViewModel : ViewModelBase
     /// </summary>
     public async Task<bool> LoadConfigurationAsync(string filePath)
     {
+        // A migration reads SourceConnection/TargetConnection again for every table: swapping them now would send the
+        // remaining tables, and a rollback's DROP TABLE, to another database.
+        if (IsMigrating)
+        {
+            Log("[LoadConfigurationAsync] Ignorato: una migrazione o un aggiornamento è in corso");
+            return false;
+        }
+
         try
         {
             if (!File.Exists(filePath))
@@ -1040,31 +1123,54 @@ public class MainWindowViewModel : ViewModelBase
                 return false;
             }
 
-            // Carica source connection
-            var sourceInfo = config.Source.ToConnectionInfo();
-            SourceConnection = new ConnectionViewModel
+            // The file read above can take seconds (network share, OneDrive placeholder): a migration started meanwhile
+            // must not have its connections swapped. No await between this check and the assignments below.
+            if (IsMigrating)
             {
+                Log("[LoadConfigurationAsync] Ignorato: nel frattempo è partita una migrazione o un aggiornamento");
+                return false;
+            }
+
+            // Both connections are built before either is assigned: a bad target (an unknown database type, a password the
+            // current Windows user cannot decrypt) must not leave the source of the new file next to the old target.
+            var sourceInfo = config.Source.ToConnectionInfo();
+            var targetInfo = config.Target.ToConnectionInfo();
+            // SelectedDatabaseType first: its setter resets Port to the type's default, which would undo the loaded port.
+            var newSource = new ConnectionViewModel
+            {
+                SelectedDatabaseType = sourceInfo.DatabaseType,
                 Server = sourceInfo.Server,
                 Port = sourceInfo.Port,
                 Database = sourceInfo.Database,
                 Username = sourceInfo.Username,
                 Password = sourceInfo.Password,
                 TrustServerCertificate = sourceInfo.TrustServerCertificate,
-                SelectedDatabaseType = sourceInfo.DatabaseType
+                RequireEncryption = sourceInfo.RequireEncryption
             };
-
-            // Carica target connection
-            var targetInfo = config.Target.ToConnectionInfo();
-            TargetConnection = new ConnectionViewModel
+            var newTarget = new ConnectionViewModel
             {
+                SelectedDatabaseType = targetInfo.DatabaseType,
                 Server = targetInfo.Server,
                 Port = targetInfo.Port,
                 Database = targetInfo.Database,
                 Username = targetInfo.Username,
                 Password = targetInfo.Password,
                 TrustServerCertificate = targetInfo.TrustServerCertificate,
-                SelectedDatabaseType = targetInfo.DatabaseType
+                RequireEncryption = targetInfo.RequireEncryption
             };
+
+            // The loaded settings are not validated and the table list still belongs to the previous source: connect again.
+            // Same reset as the start of a Connect, so the Connections tab does not keep saying "Connesso" in green.
+            IsConnected = false;
+            ConnectionSummary = "";
+            SourceStatusText = "";
+            TargetStatusText = "";
+            SourceStatusBrush = Brushes.Transparent;
+            TargetStatusBrush = Brushes.Transparent;
+            ErrorMessage = "";
+            ProgressPercentage = 0;
+            SourceConnection = newSource;
+            TargetConnection = newTarget;
 
             StatusMessage = $"Configurazione caricata: {Path.GetFileName(filePath)}";
             Log($"[LoadConfigurationAsync] Configurazione caricata da {filePath}");

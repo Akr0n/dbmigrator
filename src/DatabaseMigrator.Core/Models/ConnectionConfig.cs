@@ -51,6 +51,9 @@ public class DatabaseConnectionData
     [JsonPropertyName("trustServerCertificate")]
     public bool TrustServerCertificate { get; set; } = RuntimeOptionsProvider.Current.Security.TrustServerCertificateByDefault;
 
+    [JsonPropertyName("requireEncryption")]
+    public bool RequireEncryption { get; set; }
+
     /// <summary>
     /// Converte in ConnectionInfo per l'uso interno
     /// </summary>
@@ -74,7 +77,8 @@ public class DatabaseConnectionData
             Database = Database,
             Username = Username,
             Password = resolvedPassword,
-            TrustServerCertificate = TrustServerCertificate
+            TrustServerCertificate = TrustServerCertificate,
+            RequireEncryption = RequireEncryption
         };
     }
 
@@ -109,7 +113,8 @@ public class DatabaseConnectionData
             Username = info.Username,
             Password = serializedPassword,
             PasswordProtected = passwordProtected,
-            TrustServerCertificate = info.TrustServerCertificate
+            TrustServerCertificate = info.TrustServerCertificate,
+            RequireEncryption = info.RequireEncryption
         };
     }
 }

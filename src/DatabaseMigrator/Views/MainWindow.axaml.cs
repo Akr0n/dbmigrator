@@ -28,6 +28,10 @@ namespace DatabaseMigrator.Views;
     public MainWindow()
     {
         InitializeComponent();
+        // Off unless the runtime settings say otherwise: accepting any certificate switches the verification of the server off.
+        bool trustByDefault = RuntimeOptionsProvider.Current.Security.TrustServerCertificateByDefault;
+        SourceTrustServerCertificateCheckBox.IsChecked = trustByDefault;
+        TargetTrustServerCertificateCheckBox.IsChecked = trustByDefault;
         Loaded += OnWindowLoaded;
     }
 
@@ -66,7 +70,16 @@ namespace DatabaseMigrator.Views;
                 .Subscribe(isMigrating =>
                 {
                     StartMigrationButton.IsEnabled = _vm.IsConnected && !isMigrating;
+                    ConnectButton.IsEnabled = !isMigrating;
+                    LoadConfigMenuItem.IsEnabled = !isMigrating;
+                    ModeSchemaAndData.IsEnabled = ModeSchemaOnly.IsEnabled = ModeDataOnly.IsEnabled = !isMigrating;
                 });
+
+            // Once the connection is gone the tab on screen must be the Connections one: a disabled TabItem does not disable
+            // the content already shown, so the Script tab would keep working on the previous source.
+            _vm.WhenAnyValue(vm => vm.IsConnected)
+                .Where(connected => !connected)
+                .Subscribe(_ => MainTabControl.SelectedIndex = 0);
             
             // Bind Tables Lists - use FilteredTables for search functionality
             SourceTablesListBox.Bind(ItemsControl.ItemsSourceProperty, new Binding("FilteredTables") { Source = _vm });
@@ -115,6 +128,7 @@ namespace DatabaseMigrator.Views;
             ScriptSelectAllButton.Click += (s, e) => _vm?.ScriptGeneration.SelectAll();
             ScriptDeselectAllButton.Click += (s, e) => _vm?.ScriptGeneration.DeselectAll();
             _vm.ScriptGeneration.ConfirmHiddenSelectionAsync = ShowHiddenSelectionConfirmDialogAsync;
+            _vm.ConfirmHiddenTablesAsync = ShowHiddenTablesMigrationConfirmDialogAsync;
             ScriptDialectCombo.SelectionChanged += OnScriptDialectChanged;
             ScriptTypeFilterCombo.SelectionChanged += OnScriptTypeFilterChanged;
 
@@ -375,14 +389,14 @@ namespace DatabaseMigrator.Views;
             return false;
 
         var error = ctx.ErrorMessage ?? "";
-        if (error.Length > 400)
-            error = error.Substring(0, 400) + "...";
+        if (error.Length > 700)
+            error = error.Substring(0, 700) + "...";
 
         var dialog = new Window
         {
-            Title = "⚠️ TRUNCATE fallito",
+            Title = "⚠️ Svuotamento tabella fallito",
             Width = 520,
-            Height = 280,
+            Height = 420,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false,
             ShowInTaskbar = false
@@ -397,9 +411,9 @@ namespace DatabaseMigrator.Views;
 
         var messageText = new TextBlock
         {
-            Text = $"Impossibile eseguire TRUNCATE su {ctx.Schema}.{ctx.TableName}.\n\n" +
+            Text = $"Impossibile svuotare {ctx.Schema}.{ctx.TableName} prima del caricamento.\n\n" +
                    $"Errore: {error}\n\n" +
-                   "Vuoi continuare inserendo comunque i dati?",
+                   "Vuoi continuare inserendo comunque i dati, senza svuotare la tabella?",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap,
             FontSize = 14
         };
@@ -456,13 +470,38 @@ namespace DatabaseMigrator.Views;
 
     // Avviso mostrato prima di generare lo script quando esistono oggetti selezionati NON
     // visibili con il filtro/ricerca corrente. Ritorna true per includerli, false per annullare.
-    private async Task<bool> ShowHiddenSelectionConfirmDialogAsync(int totalSelected, int hiddenSelected)
+    private Task<bool> ShowHiddenSelectionConfirmDialogAsync(int totalSelected, int hiddenSelected) =>
+        ShowConfirmDialogAsync(
+            "⚠️ Oggetti selezionati non visibili",
+            $"Oggetti selezionati: {totalSelected} — di cui {hiddenSelected} non visibili " +
+            "con il filtro/ricerca attuale.\n\n" +
+            "La selezione resta attiva anche sugli oggetti nascosti da un filtro. " +
+            "Vuoi includere nello script anche quelli non visibili?",
+            height: 260, destructive: false);
+
+    // Avviso mostrato prima di avviare una migrazione quando esistono tabelle selezionate NON visibili con il
+    // filtro/ricerca corrente: verrebbero migrate comunque e, se la migrazione include i dati, svuotate sul target.
+    private Task<bool> ShowHiddenTablesMigrationConfirmDialogAsync(int totalSelected, int hiddenSelected, bool replacesTargetData) =>
+        ShowConfirmDialogAsync(
+            "⚠️ Tabelle selezionate non visibili",
+            $"Tabelle selezionate: {totalSelected} — di cui {hiddenSelected} non visibili " +
+            "con il filtro/ricerca attuale.\n\n" +
+            "Le tabelle nascoste da un filtro restano selezionate e verranno migrate anche loro" +
+            (replacesTargetData
+                ? ": i dati che hanno nel database di destinazione verranno sostituiti " +
+                  "(le tabelle vengono svuotate prima del caricamento).\n\n"
+                : ".\n\n") +
+            "Vuoi includerle nella migrazione?",
+            height: 320, destructive: replacesTargetData);
+
+    // Finestra di conferma modale. Se l'azione e' distruttiva il pulsante predefinito (Invio) e' Annulla.
+    private async Task<bool> ShowConfirmDialogAsync(string title, string message, int height, bool destructive)
     {
         var dialog = new Window
         {
-            Title = "⚠️ Oggetti selezionati non visibili",
+            Title = title,
             Width = 520,
-            Height = 260,
+            Height = height,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false,
             ShowInTaskbar = false
@@ -477,10 +516,7 @@ namespace DatabaseMigrator.Views;
 
         var messageText = new TextBlock
         {
-            Text = $"Oggetti selezionati: {totalSelected} — di cui {hiddenSelected} non visibili " +
-                   "con il filtro/ricerca attuale.\n\n" +
-                   "La selezione resta attiva anche sugli oggetti nascosti da un filtro. " +
-                   "Vuoi includere nello script anche quelli non visibili?",
+            Text = message,
             TextWrapping = Avalonia.Media.TextWrapping.Wrap,
             FontSize = 14
         };
@@ -499,10 +535,10 @@ namespace DatabaseMigrator.Views;
             Content = "Includi e continua",
             Width = 160,
             Padding = new Thickness(10, 5),
-            Background = Avalonia.Media.Brushes.DodgerBlue,
+            Background = destructive ? Avalonia.Media.Brushes.Firebrick : Avalonia.Media.Brushes.DodgerBlue,
             Foreground = Avalonia.Media.Brushes.White,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            IsDefault = true
+            IsDefault = !destructive
         };
 
         var cancelButton = new Button
@@ -511,7 +547,8 @@ namespace DatabaseMigrator.Views;
             Width = 140,
             Padding = new Thickness(10, 5),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            IsCancel = true
+            IsCancel = true,
+            IsDefault = destructive
         };
 
         continueButton.Click += (s, e) =>
@@ -647,7 +684,8 @@ namespace DatabaseMigrator.Views;
 
     private void OnConnectClicked(object? sender, RoutedEventArgs e)
     {
-        if (_vm == null) return;
+        // Below this point the connection fields the running migration reads for every table get overwritten.
+        if (_vm == null || _vm.IsMigrating) return;
         
         try
         {
@@ -679,22 +717,9 @@ namespace DatabaseMigrator.Views;
             Log($"[MainWindow] Source Username: {SourceUsernameTextBox.Text}");
             
             // Mapping to enum: 0=SqlServer, 1=Oracle, 2=PostgreSQL
-            _vm.SourceConnection!.SelectedDatabaseType = (DatabaseType)sourceType;
-            _vm.SourceConnection.Server = SourceServerTextBox.Text ?? "";
-            _vm.SourceConnection.Port = int.TryParse(SourcePortTextBox.Text, out int sp) ? sp : 1433;
-            _vm.SourceConnection.Database = SourceDatabaseTextBox.Text ?? "";
-            _vm.SourceConnection.Username = SourceUsernameTextBox.Text ?? "";
-            _vm.SourceConnection.Password = SourcePasswordTextBox.Text ?? "";
-            _vm.SourceConnection.TrustServerCertificate = SourceTrustServerCertificateCheckBox.IsChecked == true;
-            
-            _vm.TargetConnection!.SelectedDatabaseType = (DatabaseType)targetType;
-            _vm.TargetConnection.Server = TargetServerTextBox.Text ?? "";
-            _vm.TargetConnection.Port = int.TryParse(TargetPortTextBox.Text, out int tp) ? tp : 5432;
-            _vm.TargetConnection.Database = TargetDatabaseTextBox.Text ?? "";
-            _vm.TargetConnection.Username = TargetUsernameTextBox.Text ?? "";
-            _vm.TargetConnection.Password = TargetPasswordTextBox.Text ?? "";
-            _vm.TargetConnection.TrustServerCertificate = TargetTrustServerCertificateCheckBox.IsChecked == true;
-            
+            ApplyToViewModel(_vm.SourceConnection!, ReadFields(source: true));
+            ApplyToViewModel(_vm.TargetConnection!, ReadFields(source: false));
+
             Log($"[MainWindow] Executing ConnectDatabasesCommand...");
             _vm.ConnectDatabasesCommand.Execute(Unit.Default);
         }
@@ -704,6 +729,69 @@ namespace DatabaseMigrator.Views;
             ErrorTextBlock.Text = $"Errore: {ex.Message}";
             StatusBarTextBlock.Text = "Errore durante la connessione";
         }
+    }
+
+    /// <summary>The connection a side's fields and boxes describe. Nothing is validated, connected or applied to the view model.</summary>
+    private ConnectionInfo ReadFields(bool source)
+    {
+        var type = (DatabaseType)(source ? SourceTypeCombo : TargetTypeCombo).SelectedIndex;
+        return source
+            ? new ConnectionInfo
+            {
+                DatabaseType = type,
+                Server = SourceServerTextBox.Text ?? "",
+                Port = int.TryParse(SourcePortTextBox.Text, out int sp) ? sp : 1433,
+                Database = SourceDatabaseTextBox.Text ?? "",
+                Username = SourceUsernameTextBox.Text ?? "",
+                Password = SourcePasswordTextBox.Text ?? "",
+                TrustServerCertificate = SourceTrustServerCertificateCheckBox.IsChecked == true,
+                RequireEncryption = SourceRequireEncryptionCheckBox.IsChecked == true
+            }
+            : new ConnectionInfo
+            {
+                DatabaseType = type,
+                Server = TargetServerTextBox.Text ?? "",
+                Port = int.TryParse(TargetPortTextBox.Text, out int tp) ? tp : 5432,
+                Database = TargetDatabaseTextBox.Text ?? "",
+                Username = TargetUsernameTextBox.Text ?? "",
+                Password = TargetPasswordTextBox.Text ?? "",
+                TrustServerCertificate = TargetTrustServerCertificateCheckBox.IsChecked == true,
+                RequireEncryption = TargetRequireEncryptionCheckBox.IsChecked == true
+            };
+    }
+
+    private static void ApplyToViewModel(ConnectionViewModel connection, ConnectionInfo info)
+    {
+        connection.SelectedDatabaseType = info.DatabaseType; // first: its setter resets the port to the type's default
+        connection.Server = info.Server;
+        connection.Port = info.Port;
+        connection.Database = info.Database;
+        connection.Username = info.Username;
+        connection.Password = info.Password;
+        connection.TrustServerCertificate = info.TrustServerCertificate;
+        connection.RequireEncryption = info.RequireEncryption;
+    }
+
+    /// <summary>
+    /// Saves what the fields and boxes show now, not what the last Connect left in the view model: a box ticked after it (a
+    /// request for encryption) would otherwise be silently left out of the file. The live connections are not touched, so a
+    /// save never makes unvalidated settings what Start Migration runs with. During a migration the connections in use are saved.
+    /// </summary>
+    private async Task<bool> SaveConfigurationToAsync(string path)
+    {
+        if (_vm == null) return false;
+        if (_vm.IsMigrating)
+            return await _vm.SaveConfigurationAsync(path);
+
+        int maxType = Enum.GetValues(typeof(DatabaseType)).Length - 1;
+        if (SourceTypeCombo.SelectedIndex < 0 || SourceTypeCombo.SelectedIndex > maxType ||
+            TargetTypeCombo.SelectedIndex < 0 || TargetTypeCombo.SelectedIndex > maxType)
+        {
+            ErrorTextBlock.Text = "Seleziona un tipo di database valido";
+            return false;
+        }
+
+        return await _vm.SaveConfigurationAsync(path, ReadFields(source: true), ReadFields(source: false));
     }
 
     private async void OnSaveConfigurationClicked(object? sender, RoutedEventArgs e)
@@ -746,7 +834,7 @@ namespace DatabaseMigrator.Views;
             {
                 var result = file.Path.LocalPath;
                 Log($"[OnSaveConfigurationClicked] Salvando in {result}");
-                if (await _vm!.SaveConfigurationAsync(result))
+                if (await SaveConfigurationToAsync(result))
                 {
                     Log("[OnSaveConfigurationClicked] Configurazione salvata con successo");
                 }
@@ -792,30 +880,7 @@ namespace DatabaseMigrator.Views;
                 if (await _vm!.LoadConfigurationAsync(filePath))
                 {
                     Log("[OnLoadConfigurationClicked] Configurazione caricata con successo");
-                    
-                    // Popola i campi UI con i dati caricati
-                    if (_vm.SourceConnection?.ConnectionInfo != null)
-                    {
-                        SourceTypeCombo.SelectedIndex = (int)_vm.SourceConnection.ConnectionInfo.DatabaseType;
-                        SourceServerTextBox.Text = _vm.SourceConnection.ConnectionInfo.Server;
-                        SourcePortTextBox.Text = _vm.SourceConnection.ConnectionInfo.Port.ToString();
-                        SourceDatabaseTextBox.Text = _vm.SourceConnection.ConnectionInfo.Database;
-                        SourceUsernameTextBox.Text = _vm.SourceConnection.ConnectionInfo.Username;
-                        SourcePasswordTextBox.Text = _vm.SourceConnection.ConnectionInfo.Password;
-                        SourceTrustServerCertificateCheckBox.IsChecked = _vm.SourceConnection.ConnectionInfo.TrustServerCertificate;
-                    }
-
-                    if (_vm.TargetConnection?.ConnectionInfo != null)
-                    {
-                        TargetTypeCombo.SelectedIndex = (int)_vm.TargetConnection.ConnectionInfo.DatabaseType;
-                        TargetServerTextBox.Text = _vm.TargetConnection.ConnectionInfo.Server;
-                        TargetPortTextBox.Text = _vm.TargetConnection.ConnectionInfo.Port.ToString();
-                        TargetDatabaseTextBox.Text = _vm.TargetConnection.ConnectionInfo.Database;
-                        TargetUsernameTextBox.Text = _vm.TargetConnection.ConnectionInfo.Username;
-                        TargetPasswordTextBox.Text = _vm.TargetConnection.ConnectionInfo.Password;
-                        TargetTrustServerCertificateCheckBox.IsChecked = _vm.TargetConnection.ConnectionInfo.TrustServerCertificate;
-                    }
-
+                    ShowConnectionsInFields();
                     StatusBarTextBlock.Text = "Configurazione caricata";
                 }
             }
@@ -827,11 +892,41 @@ namespace DatabaseMigrator.Views;
         }
     }
 
+    /// <summary>Puts the view model's connections into the fields of the Connections tab, boxes included.</summary>
+    private void ShowConnectionsInFields()
+    {
+        // A box left behind would be read back by the next Connect: "off" over a loaded "encryption required" opens a plaintext
+        // connection. The view model's own properties are read, not its ConnectionInfo (null while a server or database is blank).
+        if (_vm?.SourceConnection is { } source)
+        {
+            SourceTypeCombo.SelectedIndex = (int)source.SelectedDatabaseType;
+            SourceServerTextBox.Text = source.Server;
+            SourcePortTextBox.Text = source.Port.ToString();
+            SourceDatabaseTextBox.Text = source.Database;
+            SourceUsernameTextBox.Text = source.Username;
+            SourcePasswordTextBox.Text = source.Password;
+            SourceTrustServerCertificateCheckBox.IsChecked = source.TrustServerCertificate;
+            SourceRequireEncryptionCheckBox.IsChecked = source.RequireEncryption;
+        }
+
+        if (_vm?.TargetConnection is { } target)
+        {
+            TargetTypeCombo.SelectedIndex = (int)target.SelectedDatabaseType;
+            TargetServerTextBox.Text = target.Server;
+            TargetPortTextBox.Text = target.Port.ToString();
+            TargetDatabaseTextBox.Text = target.Database;
+            TargetUsernameTextBox.Text = target.Username;
+            TargetPasswordTextBox.Text = target.Password;
+            TargetTrustServerCertificateCheckBox.IsChecked = target.TrustServerCertificate;
+            TargetRequireEncryptionCheckBox.IsChecked = target.RequireEncryption;
+        }
+    }
+
     // ── Tab "Genera Script" ──────────────────────────────────────────────
 
     private async void OnScriptLoadObjectsClicked(object? sender, RoutedEventArgs e)
     {
-        if (_vm == null) return;
+        if (_vm == null || !_vm.IsConnected) return;
         try
         {
             await _vm.ScriptGeneration.LoadObjectsAsync();
@@ -844,7 +939,7 @@ namespace DatabaseMigrator.Views;
 
     private async void OnScriptGenerateClicked(object? sender, RoutedEventArgs e)
     {
-        if (_vm == null) return;
+        if (_vm == null || !_vm.IsConnected) return;
         try
         {
             var storageProvider = StorageProvider;

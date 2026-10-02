@@ -13,6 +13,21 @@ public class ConnectionInfo
     public string Password { get; set; } = string.Empty;
     public bool TrustServerCertificate { get; set; } = RuntimeOptionsProvider.Current.Security.TrustServerCertificateByDefault;
 
+    /// <summary>
+    /// PostgreSQL and Oracle only (SQL Server is always encrypted). Off: the driver's own default, which uses TLS when the
+    /// server offers it and otherwise falls back to plaintext without verifying anything. On: the connection is encrypted and
+    /// fails if the server cannot do that; the server certificate is verified unless <see cref="TrustServerCertificate"/> is set.
+    /// </summary>
+    public bool RequireEncryption { get; set; }
+
+    /// <summary>The same connection to another database of the same server (a copy: every setting is kept).</summary>
+    public ConnectionInfo WithDatabase(string database)
+    {
+        var copy = (ConnectionInfo)MemberwiseClone();
+        copy.Database = database;
+        return copy;
+    }
+
     public string GetConnectionString() => DatabaseType switch
     {
         DatabaseType.SqlServer => BuildSqlServerConnectionString(),
@@ -50,6 +65,12 @@ public class ConnectionInfo
             Username = Username,
             Password = Password
         };
+        if (RequireEncryption)
+        {
+            // Require encrypts but verifies nothing (that is what "accept the certificate" asks for); VerifyFull also checks
+            // the certificate chain and that it was issued for this host.
+            builder.SslMode = TrustServerCertificate ? SslMode.Require : SslMode.VerifyFull;
+        }
         System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] PostgreSQL target {Server}:{Port}/{Database} (user={Username})");
         return builder.ConnectionString;
     }
@@ -76,7 +97,11 @@ public class ConnectionInfo
         // Attempting to use SYSDBA with non-SYS users or lacking required privileges will result
         // in ORA-01031 (insufficient privileges) errors during database/user creation operations.
         string escapedPassword = EscapeOraclePassword(Password);
-        var cs = $"Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={Server})(PORT={Port}))(CONNECT_DATA=(SERVICE_NAME={Database})));User Id={Username};Password={escapedPassword};";
+        // TCPS is TCP over TLS. The certificate chain is checked against the Windows trust store / the client wallet; "accept the
+        // certificate" only skips the check that its name is the server's.
+        string protocol = RequireEncryption ? "TCPS" : "TCP";
+        string security = RequireEncryption ? $"(SECURITY=(SSL_SERVER_DN_MATCH={(TrustServerCertificate ? "no" : "yes")}))" : "";
+        var cs = $"Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL={protocol})(HOST={Server})(PORT={Port}))(CONNECT_DATA=(SERVICE_NAME={Database})){security});User Id={Username};Password={escapedPassword};";
         
         // Only add SYSDBA privilege if connecting as SYS user
         // SYSDBA provides full database control and should not be used for regular operations

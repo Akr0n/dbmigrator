@@ -118,7 +118,8 @@ public interface IDatabaseService
     Task<bool> DatabaseExistsAsync(ConnectionInfo connectionInfo);
     Task<string?> CreateDatabaseAsync(ConnectionInfo connectionInfo);
     Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, 
-        TableInfo table, IProgress<int> progress);
+        TableInfo table, IProgress<int> progress,
+        IEnumerable<TableInfo>? tablesLoadedLater = null);
 }
 ```
 
@@ -211,7 +212,10 @@ public class MainWindowViewModel : ViewModelBase
    g. Generate and execute ALTER TABLE ADD CONSTRAINT DDL
    
 4. For each table (data migration):
-   a. Truncate target table (if exists)
+   a. Load tables parents-first following the target's FOREIGN KEYs (`ForeignKeyService`, `TableDependencyOrderer`);
+      then empty the target table: SQL Server `TRUNCATE` (DELETE when a key points at the table; the keys are switched
+      off for the load), PostgreSQL `TRUNCATE ... CASCADE` and Oracle `DELETE FROM`, the last two only after checking
+      that the cascade would not empty populated tables the run does not load later (`DeleteCascadeReach` for Oracle)
    b. Read data from source in batches (1000 rows)
    c. Generate INSERT statements with proper identifier quoting
    d. Execute with transaction support
@@ -283,6 +287,12 @@ The application supports bidirectional mapping between all supported databases:
 | bit | NUMBER(1) |
 | varbinary | BLOB |
 
+**PostgreSQL / Oracle → SQL Server** (text is always Unicode, whatever the source type):
+| Source | SQL Server |
+|--------|------------|
+| varchar(n) / VARCHAR2(n) / NVARCHAR2(n), char(n) / CHAR(n) / NCHAR(n), n <= 4000 | nvarchar(n) |
+| text / CLOB / NCLOB / LONG / JSON / any unknown type, or n > 4000 | nvarchar(max) |
+
 **Same Database Migrations**:
 When source and target are the same database type, original types are preserved with correct sizes, including handling of MAX/unlimited length types.
 
@@ -332,7 +342,8 @@ Data is migrated in batches of 1000 rows to:
 
 - Parameterized queries for table existence checks
 - Identifier escaping for dynamic DDL
-- Schema and table names are validated
+- Schema and table names are escaped per dialect, and names read from a source catalog are never trusted: quotes are
+  doubled inside literals and identifiers, and line breaks are removed from `--` comments in generated scripts
 
 ### Oracle Privileges
 
@@ -350,7 +361,7 @@ For Oracle target databases, the connecting user needs:
 
 ### Migration Errors
 - Automatic rollback of created tables on failure
-- Transaction rollback for data operations
+- Transaction rollback for data operations on SQL Server and PostgreSQL (Oracle commits each statement; see README, Known limitations)
 - Detailed logging with stack traces
 
 ### Validation

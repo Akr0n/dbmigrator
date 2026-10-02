@@ -12,5 +12,11 @@ public interface IDatabaseService
     Task<bool> DatabaseExistsAsync(ConnectionInfo connectionInfo);
     Task<string?> CreateDatabaseAsync(ConnectionInfo connectionInfo);
     Task<string> GetTableSchemaAsync(ConnectionInfo connectionInfo, string tableName, string schema);
-    Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, TableInfo table, IProgress<int> progress);
+    /// <param name="tablesLoadedLater">
+    /// The tables this migration will still load after <paramref name="table"/>. Emptying <paramref name="table"/> on the
+    /// target spreads to other tables (PostgreSQL: TRUNCATE ... CASCADE empties every table that references it; Oracle: DELETE
+    /// follows ON DELETE CASCADE / SET NULL keys); only these, or tables that are already empty, may be touched that way.
+    /// </param>
+    Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, TableInfo table, IProgress<int> progress,
+        IEnumerable<TableInfo>? tablesLoadedLater = null);
 }

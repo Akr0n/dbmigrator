@@ -276,6 +276,18 @@ public class SchemaMigrationService : DatabaseServiceBase
                             constraintExists = true;
                         }
 
+                        // SQL Server names an unnamed UNIQUE UQ__<table>__<hash> and the hash differs in every database,
+                        // so an equivalent UNIQUE already on the target table never matches by name.
+                        if (!constraintExists &&
+                            target.DatabaseType == DatabaseType.SqlServer &&
+                            constraintTypeUpper.Equals("UNIQUE", StringComparison.Ordinal) &&
+                            await SqlServerUniqueConstraintWithSameColumnsExistsAsync(
+                                targetConn, table.Schema, table.TableName, constraint.Columns))
+                        {
+                            Log($"[SchemaMigration] SQL Server: UNIQUE with same column set already exists on {table.Schema}.{table.TableName}, skipping");
+                            constraintExists = true;
+                        }
+
                         if (constraintExists)
                         {
                             Log($"[SchemaMigration] Constraint already exists, skipping: {generatedConstraintName} ({constraintTypeUpper}) on {table.Schema}.{table.TableName}");
@@ -532,6 +544,69 @@ public class SchemaMigrationService : DatabaseServiceBase
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// True if the SQL Server table has a UNIQUE constraint whose column list matches <paramref name="columnsInOrder"/> (case-insensitive).
+    /// </summary>
+    private async Task<bool> SqlServerUniqueConstraintWithSameColumnsExistsAsync(
+        DbConnection connection,
+        string schema,
+        string tableName,
+        IReadOnlyList<string> columnsInOrder)
+    {
+        if (columnsInOrder == null || columnsInOrder.Count == 0)
+            return false;
+
+        var wanted = columnsInOrder.Select(c => c.ToLowerInvariant()).ToList();
+
+        const string query = @"
+            SELECT kc.name, c.name
+            FROM sys.key_constraints kc
+            JOIN sys.tables t ON t.object_id = kc.parent_object_id
+            JOIN sys.schemas s ON s.schema_id = t.schema_id
+            JOIN sys.index_columns ic ON ic.object_id = kc.parent_object_id
+                                     AND ic.index_id = kc.unique_index_id
+                                     AND ic.is_included_column = 0
+            JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+            WHERE kc.type = 'UQ' AND s.name = @schema AND t.name = @tableName
+            ORDER BY kc.name, ic.key_ordinal";
+
+        using var command = connection.CreateCommand();
+        command.CommandText = query;
+        command.CommandTimeout = _commandTimeoutSeconds;
+
+        var schemaParam = command.CreateParameter();
+        schemaParam.ParameterName = "@schema";
+        schemaParam.Value = schema;
+        command.Parameters.Add(schemaParam);
+
+        var tableParam = command.CreateParameter();
+        tableParam.ParameterName = "@tableName";
+        tableParam.Value = tableName;
+        command.Parameters.Add(tableParam);
+
+        var byConstraint = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                string constraintName = reader.GetString(0);
+                string column = reader.GetString(1).ToLowerInvariant();
+                if (!byConstraint.TryGetValue(constraintName, out var columns))
+                {
+                    columns = new List<string>();
+                    byConstraint[constraintName] = columns;
+                }
+
+                columns.Add(column);
+            }
+        }
+
+        // A UNIQUE constraint enforces the same rule whatever the column order, and the two sides do not even list the
+        // columns the same way (the source catalog orders them by name, the target by position in the key): compare as sets.
+        var wantedSet = wanted.ToHashSet(StringComparer.Ordinal);
+        return byConstraint.Values.Any(columns => columns.Count == wanted.Count && wantedSet.SetEquals(columns));
     }
 
     private async Task<bool> ConstraintExistsAsync(
@@ -1146,6 +1221,13 @@ public class SchemaMigrationService : DatabaseServiceBase
         };
     }
 
+    // nvarchar(n) stops at 4000 (the n is in 2-byte units): longer or unbounded text can only be nvarchar(max). Fixed-width
+    // CHAR/NCHAR columns become nvarchar too: a fixed-width nchar(n) is 2n bytes in every row and cannot be moved off the row,
+    // so a table of many CHAR columns that fit SQL Server's 8060-byte row as char(n) could not be created as nchar(n). The
+    // values stay as they are read (padded by the source), the column just is not padded again.
+    private static string UnicodeVarchar(int? maxLength)
+        => maxLength is > 0 and <= 4000 ? $"nvarchar({maxLength})" : "nvarchar(max)";
+
     private string MapDataType(DatabaseType sourceDbType, DatabaseType targetDbType, 
         string sourceDataType, int? maxLength, int? precision, int? scale, int? dateTimePrecision)
     {
@@ -1160,6 +1242,14 @@ public class SchemaMigrationService : DatabaseServiceBase
         {
             return BuildSameDbTypeMapping(sourceDbType, normalized, maxLength, precision, scale, isMaxLength, dateTimePrecision);
         }
+
+        // Oracle reports the precision of a timestamp inside the type name (TIMESTAMP(6) WITH TIME ZONE); the precision travels
+        // separately, and the cases below are the bare names. Left in, the column fell through to the text fallback. Not for
+        // Oracle to Oracle above: there the precision is part of the type. Intervals (INTERVAL DAY(2) TO SECOND(6)) are left
+        // alone on purpose: the data path writes the driver's value (a month count, a TimeSpan) in a form an interval column
+        // refuses, so they stay on the text fallback, which loads.
+        if (sourceDbType == DatabaseType.Oracle && normalized.StartsWith("timestamp", StringComparison.Ordinal))
+            normalized = Regex.Replace(normalized, @"\(\d+\)", "");
 
         // Mapping cross-database
         if (sourceDbType == DatabaseType.SqlServer && targetDbType == DatabaseType.PostgreSQL)
@@ -1282,13 +1372,10 @@ public class SchemaMigrationService : DatabaseServiceBase
                 "double precision" or "float8" => "float",
                 "real" or "float4" => "real",
                 "money" => "decimal(19,4)",
-                "varchar" or "character varying" => maxLength.HasValue && maxLength > 0 
-                    ? $"varchar({maxLength})" 
-                    : "varchar(max)",
-                "text" => "varchar(max)",
-                "char" or "character" => maxLength.HasValue && maxLength > 0
-                    ? $"char({maxLength})" 
-                    : "char(1)",
+                // PostgreSQL stores text in any script; a SQL Server varchar would turn what its code page lacks into '?'.
+                "varchar" or "character varying" => UnicodeVarchar(maxLength),
+                "text" => "nvarchar(max)",
+                "char" or "character" => UnicodeVarchar(maxLength is > 0 ? maxLength : 1),
                 "boolean" or "bool" => "bit",
                 "bytea" => "varbinary(max)",
                 "uuid" => "uniqueidentifier",
@@ -1311,7 +1398,7 @@ public class SchemaMigrationService : DatabaseServiceBase
                 "serial" => "int",  // IDENTITY will be handled separately
                 "bigserial" => "bigint",
                 "smallserial" => "smallint",
-                _ => "varchar(max)"
+                _ => "nvarchar(max)"
             };
         }
 
@@ -1376,22 +1463,11 @@ public class SchemaMigrationService : DatabaseServiceBase
                     : "float",
                 "binary_float" => "real",
                 "binary_double" => "float",
-                "varchar2" => maxLength.HasValue && maxLength > 0 
-                    ? $"varchar({maxLength})" 
-                    : "varchar(max)",
-                "nvarchar2" => maxLength.HasValue && maxLength > 0 
-                    ? $"nvarchar({maxLength})" 
-                    : "nvarchar(max)",
-                "char" => maxLength.HasValue && maxLength > 0
-                    ? $"char({maxLength})" 
-                    : "char(1)",
-                "nchar" => maxLength.HasValue && maxLength > 0
-                    ? $"nchar({maxLength})" 
-                    : "nchar(1)",
-                "clob" => "varchar(max)",
-                "nclob" => "nvarchar(max)",
+                // Oracle databases are usually AL32UTF8: keep the text Unicode on the SQL Server side too.
+                "varchar2" or "nvarchar2" => UnicodeVarchar(maxLength),
+                "char" or "nchar" => UnicodeVarchar(maxLength is > 0 ? maxLength : 1),
+                "clob" or "nclob" or "long" => "nvarchar(max)",
                 "blob" => "varbinary(max)",
-                "long" => "varchar(max)",
                 "long raw" => "varbinary(max)",
                 "date" => "datetime2(0)",  // Oracle DATE has second precision
                 "timestamp" => dateTimePrecision.HasValue 
@@ -1412,7 +1488,7 @@ public class SchemaMigrationService : DatabaseServiceBase
                 "urowid" => "varchar(4000)",
                 "xmltype" => "xml",
                 "bfile" => "varbinary(max)",
-                _ => "varchar(max)"
+                _ => "nvarchar(max)"  // JSON and anything else unknown: text, and text must not lose its non-Latin characters
             };
         }
 

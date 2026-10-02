@@ -424,6 +424,192 @@ public class ScriptGenerationE2ETests
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test — script Oracle: "&", righe vuote e righe "/" dentro un valore restano dati
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task GenerateScript_ForOracle_LoadsValuesWithAmpersandBlankLinesAndSlashLinesIntact()
+    {
+        if (!ShouldRunE2E())
+        {
+            return;
+        }
+
+        // SQL*Plus tratta "&" come variabile di sostituzione, e chiude lo statement a una riga vuota o a una riga "/"
+        // anche dentro un letterale: senza SET DEFINE OFF / SET SQLBLANKLINES ON e senza CHR(10) le righe 1-3 si perdono.
+        string table = $"script_edge_{Guid.NewGuid():N}"[..20];
+        string lf = ((char)10).ToString();
+        var expected = new Dictionary<int, string>
+        {
+            [1] = "AT&T and R&D",
+            [2] = "para one" + lf + lf + "para two",
+            [3] = "a" + lf + "/" + lf + "b",
+            [4] = "plain text",
+        };
+
+        try
+        {
+            await RunSqlAndAssertAsync(DatabaseType.SqlServer, $@"
+                CREATE TABLE migration_test.{table} (id INT NOT NULL PRIMARY KEY, v NVARCHAR(200) NOT NULL);
+                INSERT migration_test.{table} VALUES (1, N'AT&T and R&D'),
+                    (2, N'para one' + CHAR(10) + CHAR(10) + N'para two'),
+                    (3, N'a' + CHAR(10) + N'/' + CHAR(10) + N'b'),
+                    (4, N'plain text');");
+            await RunSqlAndAssertAsync(DatabaseType.Oracle,
+                $"CREATE TABLE {table} (id NUMBER(10) PRIMARY KEY, v VARCHAR2(200) NOT NULL);");
+
+            var source = BuildConnectionInfo(DatabaseType.SqlServer);
+            var service = new ScriptGenerationService();
+            var selected = (await service.GetDatabaseObjectsAsync(source))
+                .Where(o => o.ObjectType == DatabaseObjectType.Table && o.Name.Equals(table, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            Assert.Single(selected);
+
+            var writer = new StringWriter();
+            await service.GenerateScriptAsync(source, selected,
+                new ScriptGenerationOptions { TargetDialect = DatabaseType.Oracle, IncludeSchema = false, IncludeData = true }, writer);
+
+            var (exitCode, output) = await RunViaClientAsync(DatabaseType.Oracle, writer.ToString());
+            Assert.True(exitCode == 0, $"Lo script Oracle non è stato eseguito correttamente (exit code {exitCode}).\n{output}");
+
+            var actual = new Dictionary<int, string>();
+            await using (var connection = new Oracle.ManagedDataAccess.Client.OracleConnection(
+                             BuildConnectionInfo(DatabaseType.Oracle).GetConnectionString()))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = $"SELECT id, v FROM {table} ORDER BY id";
+                await using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    actual[Convert.ToInt32(reader.GetValue(0))] = reader.GetString(1);
+                }
+            }
+
+            Assert.Equal(expected, actual);
+        }
+        finally
+        {
+            try { await RunViaClientAsync(DatabaseType.SqlServer, $"DROP TABLE IF EXISTS migration_test.{table};"); } catch { /* best effort */ }
+            try { await RunViaClientAsync(DatabaseType.Oracle, $"DROP TABLE {table} PURGE;"); } catch { /* best effort */ }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test — script Oracle: righe con testo su molte righe o con molte colonne
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task GenerateScript_ForOracle_LoadsRowsWithLongMultiLineTextAndRowsWithManyColumns()
+    {
+        if (!ShouldRunE2E())
+        {
+            return;
+        }
+
+        // SQL*Plus ignora una riga di piu' di 4999 caratteri ("SP2-0027 ... line ignored") e prosegue con exit code 0: la riga
+        // della INSERT con testo su piu' righe (ogni a-capo diventa CHR(10), 12 caratteri) e quella con molte colonne
+        // finivano su una sola riga, quindi non venivano caricate senza alcun errore.
+        string id = Guid.NewGuid().ToString("N")[..8];
+        string text = $"script_long_{id}", wide = $"script_wide_{id}";
+        string lf = ((char)10).ToString();
+        string Lines(int count, string prefix) => string.Join(lf, Enumerable.Range(0, count).Select(i => $"{prefix} {i:000}"));
+        var longRows = new Dictionary<int, (string A, string B)>
+        {
+            [1] = (Lines(150, "first column line"), Lines(150, "second column line")), // ~ 5400 characters in the one-line form
+            [2] = (Lines(60, "x"), Lines(60, "y")),                                      // each value alone is short, the row is not
+            [3] = ("plain", "plain too"),
+            // 1300 CJK characters are 3900 bytes: under the VARCHAR2(4000) limit, and over what a line of SQL*Plus accepts when
+            // counted in characters (it counts bytes), so each of these two values has to be written over several lines.
+            [4] = (new string((char)0x3042, 1300), new string((char)0x3044, 1300)),
+        };
+        const int columns = 250;
+        string ColumnName(int i) => $"col_{i:000}";
+
+        try
+        {
+            var source = BuildConnectionInfo(DatabaseType.SqlServer);
+            await using (var connection = new Microsoft.Data.SqlClient.SqlConnection(source.GetConnectionString()))
+            {
+                await connection.OpenAsync();
+                async Task Exec(string sql, params (string Name, object Value)[] parameters)
+                {
+                    await using var command = connection.CreateCommand();
+                    command.CommandText = sql;
+                    foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value);
+                    await command.ExecuteNonQueryAsync();
+                }
+
+                await Exec($"CREATE TABLE migration_test.{text} (id INT NOT NULL PRIMARY KEY, a NVARCHAR(4000), b NVARCHAR(4000))");
+                foreach (var (key, (a, b)) in longRows)
+                    await Exec($"INSERT migration_test.{text} VALUES ({key}, @a, @b)", ("@a", a), ("@b", b));
+
+                await Exec($"CREATE TABLE migration_test.{wide} (id INT NOT NULL PRIMARY KEY, "
+                    + string.Join(", ", Enumerable.Range(0, columns).Select(i => $"{ColumnName(i)} NVARCHAR(30)")) + ")");
+                await Exec($"INSERT migration_test.{wide} VALUES (1, "
+                    + string.Join(", ", Enumerable.Range(0, columns).Select(i => $"N'value of column {i:000}'")) + ")");
+            }
+
+            await RunSqlAndAssertAsync(DatabaseType.Oracle,
+                $"CREATE TABLE {text} (id NUMBER(10) PRIMARY KEY, a VARCHAR2(4000), b VARCHAR2(4000));");
+            // One column per line: this statement would itself be a line SQL*Plus ignores.
+            await RunSqlAndAssertAsync(DatabaseType.Oracle,
+                $"CREATE TABLE {wide} (id NUMBER(10) PRIMARY KEY,{lf}"
+                + string.Join($",{lf}", Enumerable.Range(0, columns).Select(i => $"{ColumnName(i)} VARCHAR2(30)")) + ");");
+
+            var service = new ScriptGenerationService();
+            var selected = (await service.GetDatabaseObjectsAsync(source))
+                .Where(o => o.ObjectType == DatabaseObjectType.Table
+                    && (o.Name.Equals(text, StringComparison.OrdinalIgnoreCase) || o.Name.Equals(wide, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            Assert.Equal(2, selected.Count);
+
+            var writer = new StringWriter();
+            await service.GenerateScriptAsync(source, selected,
+                new ScriptGenerationOptions { TargetDialect = DatabaseType.Oracle, IncludeSchema = false, IncludeData = true }, writer);
+
+            // No line of the script is one SQL*Plus would ignore.
+            Assert.All(writer.ToString().Split(lf), line => Assert.True(line.Length < 4999, $"a script line of {line.Length} characters"));
+
+            var (exitCode, output) = await RunViaClientAsync(DatabaseType.Oracle, writer.ToString());
+            Assert.True(exitCode == 0, $"Lo script Oracle non e' stato eseguito correttamente (exit code {exitCode}).{lf}{output}");
+            Assert.DoesNotContain("SP2-0027", output); // "Input is too long": exit code 0 all the same
+
+            await using var oracle = new Oracle.ManagedDataAccess.Client.OracleConnection(BuildConnectionInfo(DatabaseType.Oracle).GetConnectionString());
+            await oracle.OpenAsync();
+            async Task<List<object?[]>> Read(string sql)
+            {
+                await using var command = oracle.CreateCommand();
+                command.CommandText = sql;
+                await using var reader = await command.ExecuteReaderAsync();
+                var rows = new List<object?[]>();
+                while (await reader.ReadAsync())
+                {
+                    var values = new object?[reader.FieldCount];
+                    for (int i = 0; i < values.Length; i++) values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                    rows.Add(values);
+                }
+                return rows;
+            }
+
+            var loaded = (await Read($"SELECT id, a, b FROM {text} ORDER BY id")).ToDictionary(r => Convert.ToInt32(r[0]), r => ((string)r[1]!, (string)r[2]!));
+            Assert.Equal(longRows, loaded);
+
+            var wideRow = (await Read($"SELECT * FROM {wide}")).Single();
+            Assert.Equal(columns + 1, wideRow.Length);
+            for (int i = 0; i < columns; i++)
+                Assert.Equal($"value of column {i:000}", wideRow[i + 1]);
+        }
+        finally
+        {
+            try { await RunViaClientAsync(DatabaseType.SqlServer, $"DROP TABLE IF EXISTS migration_test.{text}; DROP TABLE IF EXISTS migration_test.{wide};"); } catch { /* best effort */ }
+            try { await RunViaClientAsync(DatabaseType.Oracle, $"DROP TABLE {text} PURGE;{lf}DROP TABLE {wide} PURGE;"); } catch { /* best effort */ }
+        }
+    }
+
     private static async Task RunSqlAndAssertAsync(DatabaseType dialect, string sql, bool asSystem = false)
     {
         var (exitCode, output) = await RunViaClientAsync(dialect, sql, asSystem);
