@@ -651,6 +651,9 @@ public class ScriptGenerationService : DatabaseServiceBase
         }
 
         var columnNames = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToList();
+        // SQL Server cannot compile an INSERT with too many values (rows x columns): a wide table gets fewer rows per statement (README).
+        if (dialect == DatabaseType.SqlServer)
+            batchSize = DatabaseService.RowsPerInsertStatement(columnNames.Count, batchSize);
         var formattedColumns = columnNames.Select(c => FormatColumnName(dialect, c)).ToList();
         string columnList = dialect == DatabaseType.Oracle ? JoinForSqlPlus(formattedColumns) : string.Join(", ", formattedColumns);
         string insertHead = $"INSERT INTO {targetTable} ({columnList}) VALUES";

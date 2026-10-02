@@ -17,6 +17,8 @@ public class InsertBatchSizeTests
     [InlineData(2000, 1000, 15)]
     [InlineData(40_000, 1000, 1)]   // never less than one row
     [InlineData(0, 1000, 1000)]     // no columns known: nothing to divide by
+    [InlineData(10, 5000, 1000)]    // SQL Server accepts at most 1000 row constructors in one VALUES list (error 10738), whatever the batch size
+    [InlineData(199, 5000, 150)]
     public void RowsPerInsertStatement_KeepsTheValuesOfOneStatementUnderTheLimit(int columns, int batchSize, int expected)
     {
         Assert.Equal(expected, DatabaseService.RowsPerInsertStatement(columns, batchSize));

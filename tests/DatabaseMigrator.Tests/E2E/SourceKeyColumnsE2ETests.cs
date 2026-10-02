@@ -77,6 +77,22 @@ public class SourceKeyColumnsE2ETests
 
     [Trait("Category", "E2E")]
     [Fact]
+    public async Task Postgres_APartitionedTable_KeepsItsKey()
+    {
+        if (!ShouldRunE2E()) return;
+        // Declarative partitions are recorded in pg_inherits like legacy inheritance, but a primary key on a partitioned table has to
+        // contain the partition key, so it IS unique across the partitions: this table must still be resumable.
+        await using var db = await PostgresScratch.CreateAsync();
+        await db.ExecAsync(@"CREATE TABLE {s}.part (id int, region int, v text, PRIMARY KEY (id, region)) PARTITION BY LIST (region);
+                             CREATE TABLE {s}.part_1 PARTITION OF {s}.part FOR VALUES IN (1);
+                             CREATE TABLE {s}.part_2 PARTITION OF {s}.part FOR VALUES IN (2)");
+
+        Assert.Equal(["id", "region"], await db.KeyColumnsAsync(Postgres, "part"));
+        Assert.Equal(["id", "region"], await db.KeyColumnsAsync(Postgres, "part_1")); // a partition has the key too
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
     public async Task Postgres_ATableWhoseKeyColumnHasMixedCase_IsStillMigrated()
     {
         if (!ShouldRunE2E()) return;

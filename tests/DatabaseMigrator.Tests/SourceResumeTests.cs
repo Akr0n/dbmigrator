@@ -31,6 +31,20 @@ public class SourceResumeTests
         Assert.Equal(expected, SourceResume.OrderedSelect(dialect, Select, ["[a]", "[b]"], 1_146_000));
     }
 
+    // ── which tables are read in key order ───────────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(-1, 100_000, true)]       // the count failed: the size is unknown, and it may be the biggest table of the run
+    [InlineData(0, 100_000, false)]
+    [InlineData(99_999, 100_000, false)]
+    [InlineData(100_000, 100_000, true)]
+    [InlineData(3_312_000, 100_000, true)]
+    [InlineData(0, 0, true)]              // a test (or a user) that wants every table resumable
+    public void ATableIsReadInKeyOrder_WhenItIsBigOrItsSizeIsUnknown(long totalRows, long minRows, bool expected)
+    {
+        Assert.Equal(expected, SourceResume.ShouldOrderRead(totalRows, minRows));
+    }
+
     // ── the key columns are quoted as the SOURCE spells them ─────────────────────────────────────────────────
 
     [Theory]

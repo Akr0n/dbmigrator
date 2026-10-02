@@ -33,6 +33,13 @@ internal static class SourceResume
     }
 
     /// <summary>
+    /// Whether a table is read in key order (and so can resume): when it has at least <paramref name="minRows"/> rows, or when
+    /// its size is not known (<paramref name="totalRows"/> negative: the count failed), which is no reason to give up resuming
+    /// on what may be the biggest table of the run.
+    /// </summary>
+    internal static bool ShouldOrderRead(long totalRows, long minRows) => totalRows < 0 || totalRows >= minRows;
+
+    /// <summary>
     /// A column name quoted as the SOURCE catalog spells it, for the ORDER BY. Not the case folding the migration applies to
     /// names it writes to a target (lower case on PostgreSQL, upper case on Oracle): a quoted mixed-case key column such as
     /// "CustomerID" is found by that exact name only, and folding it would make a read that works today fail.
@@ -66,8 +73,9 @@ internal static class SourceResume
                   AND c.owner = :schema AND c.table_name = :tbl
                 ORDER BY cc.position",
             // The system catalog, not information_schema: that view lists a table only to the roles that own it or hold a privilege
-            // other than SELECT, so a read-only source account found no key at all. A table other tables inherit from has no usable
-            // key either: SELECT * on it also returns their rows, and its key is not unique across them.
+            // other than SELECT, so a read-only source account found no key at all. A table other tables INHERIT from has no usable
+            // key: SELECT * on it also returns their rows, and its key is not unique across them. A PARTITIONED table (relkind 'p') is
+            // recorded in pg_inherits too, but its key has to contain the partition key, so it is unique across the partitions.
             DatabaseType.PostgreSQL => @"SELECT a.attname
                 FROM pg_catalog.pg_constraint c
                 JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
@@ -75,7 +83,7 @@ internal static class SourceResume
                 CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
                 JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
                 WHERE c.contype = 'p' AND n.nspname = @schema AND t.relname = @tbl
-                  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = t.oid)
+                  AND (t.relkind = 'p' OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = t.oid))
                 ORDER BY k.ord",
             _ => @"SELECT kcu.column_name
                 FROM information_schema.table_constraints tc

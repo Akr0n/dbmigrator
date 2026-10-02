@@ -23,6 +23,31 @@ public class FinalizeTransactionTests
     }
 
     [Fact]
+    public async Task AFailedCommit_NamesTheTableAndKeepsTheCause()
+    {
+        using var transaction = new FailingTransaction();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new DatabaseService().FinalizeTransactionAsync(null!, transaction, DatabaseType.SqlServer, commit: true, tableName: "SUM_DATI_GW.SUP_SUPPLIER"));
+
+        Assert.Contains("SUM_DATI_GW.SUP_SUPPLIER", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("COMMIT", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("the commit could not be completed", ex.InnerException?.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OnOracleTheCommitSavesNothingNew_SoItsFailureDoesNotAbortTheRun()
+    {
+        // ODP.NET commits every statement as it runs (README: "On Oracle every statement is committed"): the COMMIT sent at the end of
+        // a table has nothing left to save, and failing the table over it would drop tables whose rows are already in place.
+        using var connection = new ThrowingConnection();
+
+        await new DatabaseService().FinalizeTransactionAsync(connection, null, DatabaseType.Oracle, commit: true, tableName: "APP.T");
+
+        Assert.Equal(1, connection.StatementsRun);
+    }
+
+    [Fact]
     public async Task AFailedRollback_IsOnlyLogged_BecauseTheCallerIsAlreadyHandlingTheError()
     {
         using var transaction = new FailingTransaction();
@@ -40,6 +65,48 @@ public class FinalizeTransactionTests
         await new DatabaseService().FinalizeTransactionAsync(null!, transaction, DatabaseType.PostgreSQL, commit: true);
 
         Assert.Equal(1, transaction.CommitCalls);
+    }
+
+    /// <summary>A connection whose every statement fails, and that counts how many it was asked to run.</summary>
+    private sealed class ThrowingConnection : DbConnection
+    {
+        public int StatementsRun { get; set; }
+
+        [System.Diagnostics.CodeAnalysis.AllowNull]
+        public override string ConnectionString { get; set; } = "stub";
+        public override string Database => "stub";
+        public override string DataSource => "stub";
+        public override string ServerVersion => "stub";
+        public override ConnectionState State => ConnectionState.Open;
+        public override void ChangeDatabase(string databaseName) { }
+        public override void Close() { }
+        public override void Open() { }
+        protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) => throw new NotSupportedException();
+        protected override DbCommand CreateDbCommand() => new ThrowingCommand(this);
+    }
+
+    private sealed class ThrowingCommand(ThrowingConnection owner) : DbCommand
+    {
+        [System.Diagnostics.CodeAnalysis.AllowNull]
+        public override string CommandText { get; set; } = "";
+        public override int CommandTimeout { get; set; }
+        public override CommandType CommandType { get; set; }
+        public override bool DesignTimeVisible { get; set; }
+        public override UpdateRowSource UpdatedRowSource { get; set; }
+        protected override DbConnection? DbConnection { get; set; }
+        protected override DbParameterCollection DbParameterCollection => throw new NotSupportedException();
+        protected override DbTransaction? DbTransaction { get; set; }
+        public override void Cancel() { }
+        public override int ExecuteNonQuery()
+        {
+            owner.StatementsRun++;
+            throw new InvalidOperationException("the server went away");
+        }
+
+        public override object? ExecuteScalar() => throw new NotSupportedException();
+        public override void Prepare() { }
+        protected override DbParameter CreateDbParameter() => throw new NotSupportedException();
+        protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior) => throw new NotSupportedException();
     }
 
     private sealed class FailingTransaction : DbTransaction

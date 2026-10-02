@@ -54,6 +54,39 @@ public class WideTableInsertE2ETests
         }
     }
 
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task AScriptForAWideTable_HoldsNoMoreRowsPerInsertThanTheLimitAllows()
+    {
+        if (!ShouldRunE2E()) return;
+        // "Genera Script" wrote 200 rows per INSERT whatever the width of the table: 200 x 200 values is past the limit the server compiles comfortably.
+        await using var db = await Scratch.CreateAsync();
+        var service = new ScriptGenerationService();
+        var table = (await service.GetDatabaseObjectsAsync(db.Source)).Single(o => o.ObjectType == DatabaseObjectType.Table && o.Name == "wide");
+        var writer = new StringWriter();
+
+        await service.GenerateScriptAsync(db.Source, [table],
+            new ScriptGenerationOptions { TargetDialect = DatabaseType.SqlServer, IncludeSchema = false, IncludeData = true }, writer);
+
+        // Each statement is its INSERT line followed by one "  (...)," line per row, the last one ending with ");".
+        var rowsPerStatement = new List<int>();
+        int rows = 0;
+        foreach (var line in writer.ToString().Split('\n').Select(l => l.TrimEnd('\r')))
+        {
+            if (!line.StartsWith("  (", StringComparison.Ordinal))
+                continue;
+            rows++;
+            if (line.EndsWith(");", StringComparison.Ordinal))
+            {
+                rowsPerStatement.Add(rows);
+                rows = 0;
+            }
+        }
+
+        Assert.Equal(Rows, rowsPerStatement.Sum());
+        Assert.True(rowsPerStatement.Max() <= 150, $"the largest INSERT in the script held {rowsPerStatement.Max()} rows");
+    }
+
     private static ConnectionInfo Fixture(string database) => new()
     {
         // 127.0.0.1, not "localhost": see CrossDatabaseDataMigrationMatrixTests.BuildConnectionInfo.
