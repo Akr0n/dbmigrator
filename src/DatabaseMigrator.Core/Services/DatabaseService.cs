@@ -51,7 +51,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 ResetOracleCaches(); // and what was read about keys and grants: Connect starts from what the catalog says now
             }
 
-            using (var connection = CreateConnection(connectionInfo))
+            using (var connection = ConnectionFactory(connectionInfo))
             {
                 Log("Opening connection...");
                 await ExecuteWithRetryAsync(() => connection.OpenAsync(), "TestConnectionAsync.Open");
@@ -554,7 +554,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                         continue;
                 }
 
-                if (!string.Equals(schema, currentUser, StringComparison.OrdinalIgnoreCase))
+                // Exact: "App" and APP are two users, and the grants of APP's table are not visible to "App".
+                if (!string.Equals(schema, currentUser, StringComparison.Ordinal))
                 {
                     notOwned.Add($"{schema}.{name}");
                     continue;
@@ -626,6 +627,16 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
     /// <summary>The clock the key cache measures its lifetime with (a test replaces it).</summary>
     internal TimeProvider Clock { get; set; } = TimeProvider.System;
+
+    /// <summary>Opens the connection <see cref="TestConnectionAsync"/> tests (a test replaces it, so that no server is needed).</summary>
+    internal Func<ConnectionInfo, DbConnection> ConnectionFactory { get; set; } = CreateConnection;
+
+    /// <summary>
+    /// The user the owner test compares schemas with: the session's own user as the server reports it (SELECT USER), else the
+    /// typed user name as Oracle would log it in, which for an unquoted name means upper-cased.
+    /// </summary>
+    internal static string OracleSessionUser(string? reportedByServer, string typedUserName) =>
+        reportedByServer ?? typedUserName.Trim().ToUpperInvariant();
 
     private readonly object _oracleKeyCacheLock = new();
     private (string Key, DateTime ReadAt, List<DeleteRuleEdge> Edges)? _oracleKeyCache;
@@ -934,7 +945,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                         // Oracle empties the table with DELETE, which an enabled ON DELETE CASCADE / SET NULL key spreads to
                         // the tables that reference it, selected or not.
                         var check = await CheckOracleDeleteAsync(targetConn, table, tablesLoadedLater,
-                            oracleSessionUser ?? target.Username.Trim());
+                            OracleSessionUser(oracleSessionUser, target.Username));
                         if (check.Populated.Count > 0)
                         {
                             throw new InvalidOperationException(

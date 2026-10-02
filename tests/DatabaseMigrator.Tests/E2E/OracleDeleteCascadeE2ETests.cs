@@ -155,7 +155,7 @@ public class OracleDeleteCascadeE2ETests
         }
         finally
         {
-            await db.OracleAsync($"DROP TABLE \"{quoted}\" PURGE");
+            await db.DropQuietlyAsync(quoted);
         }
     }
 
@@ -302,7 +302,7 @@ public class OracleDeleteCascadeE2ETests
         }
         finally
         {
-            await db.OracleAsync($"DROP TABLE \"{twin}\" PURGE");
+            await db.DropQuietlyAsync(twin);
         }
     }
 
@@ -500,6 +500,22 @@ public class OracleDeleteCascadeE2ETests
             {
                 await scratch.DisposeAsync(); // `await using` never sees a Scratch that was not returned
                 throw;
+            }
+        }
+
+        /// <summary>
+        /// Drops a table a test created by its exact (quoted) name, from a `finally`. Best effort: when the setup failed before the
+        /// table existed (ORA-00942) the drop must not replace the real failure.
+        /// </summary>
+        public async Task DropQuietlyAsync(string quotedName)
+        {
+            try
+            {
+                await OracleAsync($"DROP TABLE \"{quotedName}\" PURGE");
+            }
+            catch (OracleException)
+            {
+                // At worst a stray scratch table is left behind (this Scratch does not track quoted names); the test's own result matters more.
             }
         }
 

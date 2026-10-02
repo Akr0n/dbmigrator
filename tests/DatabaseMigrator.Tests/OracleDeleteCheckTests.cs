@@ -154,6 +154,72 @@ public class OracleDeleteCheckTests
     }
 
     [Fact]
+    public async Task PressingConnect_MakesTheNextCheckReadTheKeysAgain()
+    {
+        // The keys are remembered for 30 seconds. A key dropped since the last check must be gone from the next one once the user
+        // presses Connect: TestConnectionAsync is what does it, on the service the application keeps for its whole life.
+        var keys = Keys(("APP", "CHILD", "APP", "HEAD", 1));
+        using var connection = new FakeConnection(
+            command => command.Contains("ROWNUM = 1") ? 1 : null, // every table has rows
+            command => command.Contains("dba_constraints") ? keys.CreateDataReader() : new DataTable().CreateDataReader());
+        var service = new DatabaseService { ConnectionFactory = _ => connection };
+
+        var before = await service.CheckOracleDeleteAsync(connection, Head, [], "APP");
+        keys = Keys(); // the DBA drops the key
+        Assert.True(await service.TestConnectionAsync(new ConnectionInfo { DatabaseType = DatabaseType.Oracle }));
+        var after = await service.CheckOracleDeleteAsync(connection, Head, [], "APP");
+
+        Assert.Equal(["APP.CHILD"], before.Populated);
+        Assert.Empty(after.Populated);
+    }
+
+    [Fact]
+    public async Task AUserWhoseNameDiffersFromTheOwnerOnlyByCase_IsNotTheOwner()
+    {
+        // Oracle keeps the case of a quoted name: "App" and APP are two users. The (unquoted) DELETE targets APP's table, and asked
+        // as "App" the grants of that table are not visible, so "nobody was granted anything" cannot be believed.
+        using var connection = new FakeConnection(
+            command => command.Contains("ROWNUM = 1") ? 1 : null,
+            command => command.Contains("dba_constraints") ? throw OracleError(942) : Keys().CreateDataReader());
+
+        var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [], "App");
+
+        Assert.Equal(["APP.HEAD"], check.NotOwned);
+        Assert.Equal(0, connection.CountOf("all_tab_privs"));
+    }
+
+    [Fact]
+    public async Task ASchemaWrittenInLowerCase_IsStillTheOwnersWhenTheSessionUserIsTheUpperCaseOne()
+    {
+        // The unquoted DELETE writes the upper-case name, so the table of a schema typed as "app" is APP's: the owner is asked.
+        var lower = new TableInfo { Schema = "app", TableName = "head" };
+        using var connection = new FakeConnection(
+            command => command.Contains("ROWNUM = 1") ? 1 : null,
+            command => command.Contains("dba_constraints") ? throw OracleError(942)
+                : command.Contains("all_tab_privs") ? Names().CreateDataReader()
+                : Keys().CreateDataReader());
+
+        var check = await new DatabaseService().CheckOracleDeleteAsync(connection, lower, [], "APP");
+
+        Assert.Empty(check.NotOwned!);
+        Assert.True(connection.CountOf("all_tab_privs") > 0);
+    }
+
+    [Fact]
+    public void WhenSelectUserCannotBeRead_TheTypedLoginIsUsedUpperCased_BecauseTheOwnerTestIsExact()
+    {
+        // Oracle upper-cases an unquoted login, so a user typed as " etl " logs in as ETL.
+        Assert.Equal("ETL", DatabaseService.OracleSessionUser(null, "  etl "));
+    }
+
+    [Fact]
+    public void TheSessionUserTheServerReports_IsUsedAsItIs()
+    {
+        // "Etl" (quoted, mixed case) is what SELECT USER answers for that user: it is neither trimmed nor upper-cased.
+        Assert.Equal("Etl", DatabaseService.OracleSessionUser("Etl", "someone else"));
+    }
+
+    [Fact]
     public async Task ASetNullChildWithAGrant_IsNotRefused_BecauseNothingBelowItIsDeleted()
     {
         // HEAD -> C1 is SET NULL: C1 only has a column nulled, so whatever references C1 loses nothing. Asking about C1's grants

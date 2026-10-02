@@ -699,6 +699,8 @@ public class ScriptGenerationService : DatabaseServiceBase
 
         bool isSqlServerReader = reader is Microsoft.Data.SqlClient.SqlDataReader;
         // A SQL Server script is read by a server that refuses a Unicode literal whose XML declaration names an encoding.
+        // The script has no target to ask, so this judges by the source column type: right when the script creates the tables
+        // (xml maps to xml, text to text), but in a data-only script an existing column of the other kind gets it wrong (README, Known limitations).
         int[] xmlColumns = dialect == DatabaseType.SqlServer ? DatabaseService.XmlColumnIndexes(reader) : [];
         try
         {
