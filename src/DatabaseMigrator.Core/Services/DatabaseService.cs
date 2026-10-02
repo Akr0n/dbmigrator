@@ -487,7 +487,107 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             "MigrateTableAsync.CheckCascadingReferences")) > 0;
     }
 
-    public async Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, TableInfo table, IProgress<int> progress)
+    /// <summary>
+    /// PostgreSQL only: the target tables that TRUNCATE ... CASCADE on this one would also empty and that hold rows
+    /// without being loaded later in this migration. Emptying those would lose data the user did not ask to replace.
+    /// A table is emptied along with its partitions and inheritance children, and with every table that references any
+    /// of them; a table that is itself, or is a partition/child of, one this migration still loads is not a loss.
+    /// Names are returned as "schema.table".
+    /// </summary>
+    private async Task<List<string>> FindPopulatedTablesCascadeWouldEmptyAsync(DbConnection connection, DbTransaction? transaction,
+        TableInfo table, IEnumerable<TableInfo>? tablesLoadedLater)
+    {
+        var affected = new List<(long Oid, string Schema, string Name, long[] Parents)>();
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandTimeout = _commandTimeoutSeconds;
+            // One recursive term over a single edge relation: PostgreSQL allows only one reference to the recursive CTE.
+            command.CommandText = @"
+                WITH RECURSIVE root AS (
+                    SELECT p.oid FROM pg_class p JOIN pg_namespace pn ON pn.oid = p.relnamespace
+                    WHERE pn.nspname = @schema AND p.relname = @tableName),
+                edge AS (
+                    SELECT inhparent AS source, inhrelid AS target FROM pg_inherits
+                    UNION
+                    SELECT confrelid, conrelid FROM pg_constraint WHERE contype = 'f'),
+                affected(oid) AS (
+                    SELECT oid FROM root
+                    UNION
+                    SELECT e.target FROM edge e JOIN affected a ON e.source = a.oid)
+                SELECT t.oid::bigint, n.nspname, t.relname,
+                       COALESCE((SELECT array_agg(i.inhparent::bigint) FROM pg_inherits i WHERE i.inhrelid = t.oid), ARRAY[]::bigint[])
+                FROM affected a
+                JOIN pg_class t ON t.oid = a.oid
+                JOIN pg_namespace n ON n.oid = t.relnamespace";
+
+            // FormatTableName lower-cases both parts for PostgreSQL, so that is how the table exists on the target.
+            foreach (var (name, value) in new[] { ("@schema", table.Schema), ("@tableName", table.TableName) })
+            {
+                var parameter = command.CreateParameter();
+                parameter.ParameterName = name;
+                parameter.Value = value.ToLowerInvariant();
+                command.Parameters.Add(parameter);
+            }
+
+            using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.FindCascadeTargets");
+            while (await reader.ReadAsync())
+                affected.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetFieldValue<long[]>(3)));
+        }
+
+        var byOid = affected.ToDictionary(row => row.Oid);
+        var loadedLater = new HashSet<(string, string)>(
+            (tablesLoadedLater ?? []).Select(t => (t.Schema.ToLowerInvariant(), t.TableName.ToLowerInvariant())));
+        var root = (table.Schema.ToLowerInvariant(), table.TableName.ToLowerInvariant());
+
+        bool IsReplacedByThisMigration(long oid) =>
+            byOid.TryGetValue(oid, out var row) &&
+            ((row.Schema, row.Name) == root || loadedLater.Contains((row.Schema, row.Name)) || row.Parents.Any(IsReplacedByThisMigration));
+
+        var populated = new List<string>();
+        foreach (var row in affected.Where(row => !IsReplacedByThisMigration(row.Oid)))
+        {
+            var hasRows = await PostgresTableHasRowsAsync(connection, transaction, row.Schema, row.Name);
+            if (hasRows == null)
+                Log($"[MigrateTableAsync] Cannot check whether {row.Schema}.{row.Name} holds rows (no SELECT privilege); " +
+                    $"TRUNCATE ... CASCADE on {table.Schema}.{table.TableName} will empty it if it does");
+            else if (hasRows.Value)
+                populated.Add($"{row.Schema}.{row.Name}");
+        }
+
+        return populated;
+    }
+
+    /// <summary>
+    /// Whether the table has any row; null when the connected role may not SELECT from it. TRUNCATE needs no SELECT
+    /// privilege, and a denied query would abort the open transaction, so the privilege is checked first.
+    /// </summary>
+    private async Task<bool?> PostgresTableHasRowsAsync(DbConnection connection, DbTransaction? transaction, string schema, string name)
+    {
+        string qualified = $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(name)}\"";
+
+        using (var privilege = connection.CreateCommand())
+        {
+            privilege.Transaction = transaction;
+            privilege.CommandTimeout = _commandTimeoutSeconds;
+            privilege.CommandText = "SELECT has_table_privilege(@table, 'SELECT')";
+            var parameter = privilege.CreateParameter();
+            parameter.ParameterName = "@table";
+            parameter.Value = qualified;
+            privilege.Parameters.Add(parameter);
+            if (!Convert.ToBoolean(await ExecuteWithRetryAsync(() => privilege.ExecuteScalarAsync(), "MigrateTableAsync.ProbeTablePrivilege")))
+                return null;
+        }
+
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandTimeout = _commandTimeoutSeconds;
+        command.CommandText = $"SELECT EXISTS (SELECT 1 FROM {qualified})";
+        return Convert.ToBoolean(await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "MigrateTableAsync.ProbeTableRows"));
+    }
+
+    public async Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, TableInfo table, IProgress<int> progress,
+        IEnumerable<TableInfo>? tablesLoadedLater = null)
     {
         using (var sourceConn = CreateConnection(source))
         using (var targetConn = CreateConnection(target))
@@ -564,41 +664,69 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 Log($"[MigrateTableAsync] Truncating table {table.Schema}.{table.TableName} in target...");
                 try
                 {
-                    string truncateQuery = target.DatabaseType switch
+                    // PostgreSQL refuses a plain TRUNCATE on a referenced table, and CASCADE empties every table that
+                    // references it, selected or not. An empty table needs no TRUNCATE at all (which also keeps a table
+                    // loaded earlier in a foreign-key cycle safe); otherwise let the user decide instead of silently
+                    // wiping data they did not ask to replace.
+                    bool nothingToTruncate = false;
+                    if (target.DatabaseType == DatabaseType.PostgreSQL)
                     {
-                        DatabaseType.SqlServer => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
-                        DatabaseType.PostgreSQL => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)} CASCADE",
-                        // Oracle: TRUNCATE is DDL and causes an implicit COMMIT, making rollback impossible.
-                        // Use DELETE FROM instead: it is DML and participates in the manual COMMIT/ROLLBACK flow.
-                        DatabaseType.Oracle => $"DELETE FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
-                        _ => throw new NotSupportedException()
-                    };
-                    
-                    using (var truncateCommand = targetConn.CreateCommand())
-                    {
-                        truncateCommand.CommandText = truncateQuery;
-                        if (transaction != null)
-                            truncateCommand.Transaction = transaction;
-                        truncateCommand.CommandTimeout = _commandTimeoutSeconds;
-                        try
+                        nothingToTruncate = await PostgresTableHasRowsAsync(targetConn, transaction,
+                            table.Schema.ToLowerInvariant(), table.TableName.ToLowerInvariant()) == false;
+                        var wiped = nothingToTruncate
+                            ? new List<string>()
+                            : await FindPopulatedTablesCascadeWouldEmptyAsync(targetConn, transaction, table, tablesLoadedLater);
+                        if (wiped.Count > 0)
                         {
-                            await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.Truncate");
-                        }
-                        catch (SqlException ex) when (target.DatabaseType == DatabaseType.SqlServer && ex.Number == 4712)
-                        {
-                            // SQL Server refuses TRUNCATE on any table a FOREIGN KEY points at, even when that key is
-                            // disabled or the referencing table is empty. DELETE is allowed once the keys are off, but
-                            // an ENABLED key with ON DELETE CASCADE / SET NULL / SET DEFAULT would silently wipe or alter
-                            // rows in a referencing table, which may not be one the user selected. Let the user decide.
-                            if (await HasEnabledCascadingReferenceAsync(targetConn, transaction, table.Schema, table.TableName))
-                                throw;
-
-                            Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} is referenced by a foreign key: using DELETE instead of TRUNCATE");
-                            truncateCommand.CommandText = $"DELETE FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}";
-                            await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.DeleteInsteadOfTruncate");
+                            string list = string.Join(", ", wiped.Take(3)) + (wiped.Count > 3 ? $" e altre {wiped.Count - 3}" : "");
+                            throw new InvalidOperationException(
+                                $"TRUNCATE di {table.Schema}.{table.TableName} svuoterebbe anche tabelle con dati che questa migrazione non carica dopo di essa: {list}. " +
+                                "Selezionale per la migrazione oppure svuotale tu. Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
                         }
                     }
-                    Log($"[MigrateTableAsync] Table truncated successfully");
+
+                    if (nothingToTruncate)
+                    {
+                        Log($"[MigrateTableAsync] Table {table.Schema}.{table.TableName} is already empty in target: nothing to truncate");
+                    }
+                    else
+                    {
+                        string truncateQuery = target.DatabaseType switch
+                        {
+                            DatabaseType.SqlServer => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
+                            DatabaseType.PostgreSQL => $"TRUNCATE TABLE {FormatTableName(target.DatabaseType, table.Schema, table.TableName)} CASCADE",
+                            // Oracle: TRUNCATE is DDL and causes an implicit COMMIT, making rollback impossible.
+                            // Use DELETE FROM instead: it is DML and participates in the manual COMMIT/ROLLBACK flow.
+                            DatabaseType.Oracle => $"DELETE FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}",
+                            _ => throw new NotSupportedException()
+                        };
+
+                        using (var truncateCommand = targetConn.CreateCommand())
+                        {
+                            truncateCommand.CommandText = truncateQuery;
+                            if (transaction != null)
+                                truncateCommand.Transaction = transaction;
+                            truncateCommand.CommandTimeout = _commandTimeoutSeconds;
+                            try
+                            {
+                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.Truncate");
+                            }
+                            catch (SqlException ex) when (target.DatabaseType == DatabaseType.SqlServer && ex.Number == 4712)
+                            {
+                                // SQL Server refuses TRUNCATE on any table a FOREIGN KEY points at, even when that key is
+                                // disabled or the referencing table is empty. DELETE is allowed once the keys are off, but
+                                // an ENABLED key with ON DELETE CASCADE / SET NULL / SET DEFAULT would silently wipe or alter
+                                // rows in a referencing table, which may not be one the user selected. Let the user decide.
+                                if (await HasEnabledCascadingReferenceAsync(targetConn, transaction, table.Schema, table.TableName))
+                                    throw;
+
+                                Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} is referenced by a foreign key: using DELETE instead of TRUNCATE");
+                                truncateCommand.CommandText = $"DELETE FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}";
+                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.DeleteInsteadOfTruncate");
+                            }
+                        }
+                        Log($"[MigrateTableAsync] Table truncated successfully");
+                    }
                 }
                 catch (Exception ex)
                 {

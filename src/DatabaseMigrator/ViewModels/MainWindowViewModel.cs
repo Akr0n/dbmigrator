@@ -438,6 +438,11 @@ public class MainWindowViewModel : ViewModelBase
 
     private async Task ConnectDatabasesAsync()
     {
+        // A migration or a reload is running with these very connections, and the finally below would clear IsMigrating
+        // under it, re-enabling "Avvia Migrazione" while tables are still being emptied and loaded.
+        if (IsMigrating)
+            return;
+
         try
         {
             IsMigrating = true;
@@ -754,7 +759,8 @@ public class MainWindowViewModel : ViewModelBase
                         SourceConnection.ConnectionInfo,
                         TargetConnection.ConnectionInfo,
                         table,
-                        progress);
+                        progress,
+                        tablesToMigrate.Skip(tableIdx + 1));
 
                     Log($"[StartMigrationAsync] Table {table.Schema}.{table.TableName} migration completed");
                     tablesProcessed++;
@@ -1050,6 +1056,14 @@ public class MainWindowViewModel : ViewModelBase
     /// </summary>
     public async Task<bool> LoadConfigurationAsync(string filePath)
     {
+        // A migration reads SourceConnection/TargetConnection again for every table: swapping them now would send the
+        // remaining tables, and a rollback's DROP TABLE, to another database.
+        if (IsMigrating)
+        {
+            Log("[LoadConfigurationAsync] Ignorato: una migrazione o un aggiornamento è in corso");
+            return false;
+        }
+
         try
         {
             if (!File.Exists(filePath))

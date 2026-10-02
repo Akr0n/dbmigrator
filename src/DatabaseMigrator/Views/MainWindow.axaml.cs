@@ -66,6 +66,8 @@ namespace DatabaseMigrator.Views;
                 .Subscribe(isMigrating =>
                 {
                     StartMigrationButton.IsEnabled = _vm.IsConnected && !isMigrating;
+                    ConnectButton.IsEnabled = !isMigrating;
+                    LoadConfigMenuItem.IsEnabled = !isMigrating;
                 });
             
             // Bind Tables Lists - use FilteredTables for search functionality
@@ -671,7 +673,8 @@ namespace DatabaseMigrator.Views;
 
     private void OnConnectClicked(object? sender, RoutedEventArgs e)
     {
-        if (_vm == null) return;
+        // Below this point the connection fields the running migration reads for every table get overwritten.
+        if (_vm == null || _vm.IsMigrating) return;
         
         try
         {
