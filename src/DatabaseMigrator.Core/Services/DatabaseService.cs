@@ -1067,7 +1067,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                     {
                         keyColumns = (await SourceResume.GetKeyColumnsAsync(sourceConn, source.DatabaseType, table.Schema,
                                 table.TableName, _commandTimeoutSeconds))
-                            .Select(column => FormatColumnName(source.DatabaseType, column)).ToList();
+                            .Select(column => SourceResume.QuoteColumn(source.DatabaseType, column)).ToList();
                     }
                     catch (Exception ex)
                     {

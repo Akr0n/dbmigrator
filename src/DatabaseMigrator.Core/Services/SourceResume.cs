@@ -33,6 +33,15 @@ internal static class SourceResume
     }
 
     /// <summary>
+    /// A column name quoted as the SOURCE catalog spells it, for the ORDER BY. Not the case folding the migration applies to
+    /// names it writes to a target (lower case on PostgreSQL, upper case on Oracle): a quoted mixed-case key column such as
+    /// "CustomerID" is found by that exact name only, and folding it would make a read that works today fail.
+    /// </summary>
+    internal static string QuoteColumn(DatabaseType dialect, string column) => dialect == DatabaseType.SqlServer
+        ? $"[{column.Replace("]", "]]")}]"
+        : $"\"{column.Replace("\"", "\"\"")}\"";
+
+    /// <summary>
     /// Whether <paramref name="exception"/>, raised while reading on <paramref name="connection"/>, is the connection having
     /// gone away (the driver itself reports it no longer open) and not a problem with the data or the code, which reading
     /// again would only repeat.

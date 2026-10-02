@@ -31,6 +31,20 @@ public class SourceResumeTests
         Assert.Equal(expected, SourceResume.OrderedSelect(dialect, Select, ["[a]", "[b]"], 1_146_000));
     }
 
+    // ── the key columns are quoted as the SOURCE spells them ─────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(DatabaseType.SqlServer, "Id", "[Id]")]
+    [InlineData(DatabaseType.SqlServer, "we]ird", "[we]]ird]")]
+    [InlineData(DatabaseType.PostgreSQL, "CustomerID", "\"CustomerID\"")] // not lower-cased: that is how the target spells it, not the source
+    [InlineData(DatabaseType.PostgreSQL, "we\"ird", "\"we\"\"ird\"")]
+    [InlineData(DatabaseType.Oracle, "Id", "\"Id\"")]                     // exact case, quoted: a quoted mixed-case column is found by that name only
+    [InlineData(DatabaseType.Oracle, "ID", "\"ID\"")]
+    public void AKeyColumnIsQuotedWithTheSpellingTheSourceCatalogGives(DatabaseType dialect, string column, string expected)
+    {
+        Assert.Equal(expected, SourceResume.QuoteColumn(dialect, column));
+    }
+
     // ── what counts as a lost connection ─────────────────────────────────────────────────────────────────────
 
     [Theory]
