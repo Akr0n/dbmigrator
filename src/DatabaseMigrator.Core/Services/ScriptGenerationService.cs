@@ -651,7 +651,8 @@ public class ScriptGenerationService : DatabaseServiceBase
         }
 
         var columnNames = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToList();
-        string columnList = string.Join(", ", columnNames.Select(c => FormatColumnName(dialect, c)));
+        var formattedColumns = columnNames.Select(c => FormatColumnName(dialect, c)).ToList();
+        string columnList = dialect == DatabaseType.Oracle ? JoinForSqlPlus(formattedColumns) : string.Join(", ", formattedColumns);
         string insertHead = $"INSERT INTO {targetTable} ({columnList}) VALUES";
 
         var batch = new List<string>(batchSize);
@@ -697,6 +698,8 @@ public class ScriptGenerationService : DatabaseServiceBase
         }
 
         bool isSqlServerReader = reader is Microsoft.Data.SqlClient.SqlDataReader;
+        // A SQL Server script is read by a server that refuses a Unicode literal whose XML declaration names an encoding.
+        int[] xmlColumns = dialect == DatabaseType.SqlServer ? DatabaseService.XmlColumnIndexes(reader) : [];
         try
         {
             while (await reader.ReadAsync(ct))
@@ -720,9 +723,11 @@ public class ScriptGenerationService : DatabaseServiceBase
                 {
                     reader.GetValues(values);
                 }
+                DatabaseService.StripXmlDeclarations(values, xmlColumns);
 
-                string formatted = string.Join(", ",
-                    values.Select(v => _databaseService.FormatSqlValue(dialect, v, unicodeStringLiterals: true, oracleLineBreaksAsChr: true)));
+                var formattedValues = values.Select(v =>
+                    _databaseService.FormatSqlValue(dialect, v, unicodeStringLiterals: true, oracleLineBreaksAsChr: true)).ToList();
+                string formatted = dialect == DatabaseType.Oracle ? JoinForSqlPlus(formattedValues) : string.Join(", ", formattedValues);
                 batch.Add(formatted);
                 rowsForTable++;
                 state.RowsWritten++;
@@ -1144,6 +1149,41 @@ public class ScriptGenerationService : DatabaseServiceBase
 
     // The statement sits inside a PL/SQL string literal, so every single quote in the names (they come from the source
     // catalog) must be doubled or it would end the literal and the rest of the name would run as PL/SQL.
+    /// <summary>
+    /// Items separated by commas, going on to a new physical line whenever the current one would pass
+    /// <see cref="DatabaseService.OracleScriptLineBudget"/>: SQL*Plus ignores a line of more than 4999 characters (and still
+    /// exits with 0), which a table with many columns or one with long text would otherwise reach. An item that has line
+    /// breaks of its own (a long text value) counts from its last one.
+    /// </summary>
+    internal static string JoinForSqlPlus(IEnumerable<string> items)
+    {
+        var sb = new System.Text.StringBuilder();
+        int lineStart = 0;
+        foreach (string item in items)
+        {
+            if (sb.Length > 0)
+            {
+                sb.Append(',');
+                if (sb.Length - lineStart + item.Length > DatabaseService.OracleScriptLineBudget)
+                {
+                    sb.Append(Environment.NewLine);
+                    lineStart = sb.Length;
+                }
+                else
+                {
+                    sb.Append(' ');
+                }
+            }
+
+            sb.Append(item);
+            int lastBreak = item.LastIndexOf('\n');
+            if (lastBreak >= 0)
+                lineStart = sb.Length - (item.Length - lastBreak - 1);
+        }
+
+        return sb.ToString();
+    }
+
     internal static string BuildOracleDropConstraintBlock(string tableRef, string name) =>
         "BEGIN" + Environment.NewLine +
         $"  EXECUTE IMMEDIATE '{$"ALTER TABLE {tableRef} DROP CONSTRAINT {name}".Replace("'", "''")}';" + Environment.NewLine +

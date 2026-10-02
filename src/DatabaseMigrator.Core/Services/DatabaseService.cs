@@ -988,6 +988,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                     }
                                 }
 
+                                // SQL Server drops an xml column's declaration but refuses a Unicode literal that has one with an encoding.
+                                int[] xmlColumns = target.DatabaseType == DatabaseType.SqlServer ? XmlColumnIndexes(reader) : [];
                                 var batchRows = new List<object?[]>(_batchSize);
                                 while (await reader.ReadAsync())
                                 {
@@ -1012,6 +1014,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                     {
                                         reader.GetValues(rowValues);
                                     }
+                                    StripXmlDeclarations(rowValues, xmlColumns);
                                     batchRows.Add(rowValues);
 
                                     if (batchRows.Count >= _batchSize)
@@ -1435,8 +1438,9 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         {
             string s => unicodeStringLiterals && dbType == DatabaseType.SqlServer
                 ? $"N'{EscapeSqlString(s)}'"
-                : oracleLineBreaksAsChr && dbType == DatabaseType.Oracle && s.IndexOfAny(LineBreakChars) >= 0
-                    ? OracleLiteralWithLineBreaks(s)
+                : oracleLineBreaksAsChr && dbType == DatabaseType.Oracle
+                    && (s.Length > OracleScriptPiece || s.IndexOfAny(LineBreakChars) >= 0)
+                    ? OracleScriptLiteral(s)
                     : $"'{EscapeSqlString(s)}'",
             bool b => dbType switch
             {
@@ -1513,32 +1517,90 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
     private static readonly char[] LineBreakChars = ['\r', '\n'];
 
-    /// <summary>A string literal in which every CR and LF is written as CHR(13) / CHR(10) joined with ||.</summary>
-    private string OracleLiteralWithLineBreaks(string value)
+    private static readonly System.Text.RegularExpressions.Regex XmlDeclaration =
+        new(@"^\s*<\?xml\s[^>]*?\?>\s*", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Removes a leading XML declaration (&lt;?xml version="1.0" encoding="UTF-8"?&gt;). Oracle returns an XMLTYPE with one, and
+    /// SQL Server, which drops it anyway when it stores an xml value, refuses a Unicode literal (N'...') whose declaration names
+    /// an encoding: "unable to switch the encoding".
+    /// </summary>
+    internal static string StripXmlDeclaration(string value) => XmlDeclaration.Replace(value, "", 1);
+
+    /// <summary>The columns of a reader that hold XML (xml, XMLTYPE), judged by the source column type.</summary>
+    internal static int[] XmlColumnIndexes(System.Data.Common.DbDataReader reader) =>
+        Enumerable.Range(0, reader.FieldCount)
+            .Where(i => reader.GetDataTypeName(i).Contains("xml", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+    /// <summary>Applies <see cref="StripXmlDeclaration"/> to the XML columns of one row (in place).</summary>
+    internal static void StripXmlDeclarations(object?[] row, int[] xmlColumns)
     {
-        var parts = new List<string>();
+        foreach (int col in xmlColumns)
+        {
+            if (row[col] is string xml)
+                row[col] = StripXmlDeclaration(xml);
+        }
+    }
+
+    /// <summary>Characters of text in one quoted piece of a long Oracle script literal.</summary>
+    private const int OracleScriptPiece = 500;
+
+    /// <summary>Characters after which a long Oracle script literal goes on to the next physical line.</summary>
+    internal const int OracleScriptLineBudget = 1200;
+
+    /// <summary>
+    /// A string literal for an Oracle script: every CR and LF is written as CHR(13) / CHR(10), the text in pieces of at most
+    /// <see cref="OracleScriptPiece"/> characters, all joined with ||. SQL*Plus ignores a line of more than 4999 characters
+    /// (and still exits with 0), so after a || the literal goes on to a new physical line once the current one is over
+    /// <see cref="OracleScriptLineBudget"/>: a line break outside the quotes is just white space to Oracle. A short value
+    /// stays on one line, exactly as before.
+    /// </summary>
+    private string OracleScriptLiteral(string value)
+    {
+        var result = new System.Text.StringBuilder();
         var text = new System.Text.StringBuilder();
+        int lineStart = 0;
+
+        void Piece(string piece)
+        {
+            if (result.Length > 0)
+            {
+                result.Append("||");
+                if (result.Length - lineStart + piece.Length > OracleScriptLineBudget)
+                {
+                    result.Append(Environment.NewLine);
+                    lineStart = result.Length;
+                }
+            }
+
+            result.Append(piece);
+        }
+
+        void FlushText()
+        {
+            if (text.Length == 0) return;
+            Piece($"'{EscapeSqlString(text.ToString())}'");
+            text.Clear();
+        }
+
         foreach (char c in value)
         {
-            if (c != '\r' && c != '\n')
+            if (c == '\r' || c == '\n')
             {
-                text.Append(c);
+                FlushText();
+                Piece(c == '\r' ? "CHR(13)" : "CHR(10)");
                 continue;
             }
 
-            if (text.Length > 0)
-            {
-                parts.Add($"'{EscapeSqlString(text.ToString())}'");
-                text.Clear();
-            }
-
-            parts.Add(c == '\r' ? "CHR(13)" : "CHR(10)");
+            // A character outside the BMP is two UTF-16 units: never cut between them.
+            if (text.Length >= OracleScriptPiece && !char.IsHighSurrogate(text[^1]))
+                FlushText();
+            text.Append(c);
         }
 
-        if (text.Length > 0)
-            parts.Add($"'{EscapeSqlString(text.ToString())}'");
-
-        return string.Join("||", parts);
+        FlushText();
+        return result.ToString();
     }
 
     /// <summary>
