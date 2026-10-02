@@ -206,11 +206,135 @@ public class PostgresTruncateCascadeE2ETests
 
     [Trait("Category", "E2E")]
     [Fact]
+    public async Task AnOrdinaryInheritanceChildOfTheTable_IsNotTheSameTableAsItsParent()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(
+            extraSource: "CREATE TABLE iroot (id INT, name TEXT);",
+            extraTarget: @"
+                CREATE TABLE iroot (id INT PRIMARY KEY, name TEXT NOT NULL);
+                CREATE TABLE ichild () INHERITS (iroot);
+                INSERT INTO ichild VALUES (1, 'old');");
+        var asked = new List<string>();
+        var service = new DatabaseService { TruncateFailedHandlerAsync = ctx => { asked.Add(ctx.ErrorMessage ?? ""); return Task.FromResult(false); } };
+
+        // Unlike a partition, ichild is a table of its own that the user may or may not have selected; TRUNCATE iroot empties it.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.MigrateTableAsync(db.Source, db.Target, db.Table("iroot"), new Progress<int>(), tablesLoadedLater: []));
+
+        Assert.Contains("ichild", asked.Single());
+        Assert.Equal(1, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM ichild"));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task InheritanceChildrenOfAReferencingTable_AreNotCountedAsEmptiedByTheCascade()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(
+            extraTarget: @"
+                CREATE TABLE ref (id INT PRIMARY KEY, head_id INT NOT NULL REFERENCES head(id));
+                CREATE TABLE refchild () INHERITS (ref);
+                INSERT INTO head VALUES (1, 'old');
+                INSERT INTO refchild VALUES (1, 1);");
+        var asked = 0;
+        var service = new DatabaseService { TruncateFailedHandlerAsync = _ => { asked++; return Task.FromResult(false); } };
+
+        // TRUNCATE head CASCADE empties ref only, not the children ref has through INHERITS.
+        await service.MigrateTableAsync(db.Source, db.Target, db.Table("head"), new Progress<int>(), tablesLoadedLater: []);
+
+        Assert.Equal(0, asked);
+        Assert.Equal(1, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM refchild"));
+        Assert.Equal(3, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM head WHERE name = 'new'"));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task NamesInTheCaseOfAnotherDialect_AreMatchedAgainstTheLowerCasedTarget()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync();
+        await db.ExecAsync(db.Target, @"
+            INSERT INTO head VALUES (1, 'old');
+            INSERT INTO child VALUES (1, 1, 'old');");
+        var asked = new List<string>();
+        var service = new DatabaseService { TruncateFailedHandlerAsync = ctx => { asked.Add(ctx.ErrorMessage ?? ""); return Task.FromResult(false); } };
+
+        // A SQL Server or Oracle source lists PUBLIC.HEAD; on PostgreSQL the table is public.head.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.MigrateTableAsync(db.Source, db.Target, new TableInfo { Schema = "PUBLIC", TableName = "HEAD" },
+                new Progress<int>(), tablesLoadedLater: []));
+
+        Assert.Contains("child", asked.Single());
+        Assert.Equal(1, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM child"));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task ARoleWithoutSelectPrivilege_StillReplacesAPopulatedTable()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync();
+        await db.ExecAsync(db.Target, "INSERT INTO head VALUES (1, 'old'), (2, 'old');");
+        var limited = await db.CreateTargetUserAsync("INSERT, TRUNCATE");
+
+        // The role cannot see whether head holds rows, so it must not be taken for empty: head is still truncated.
+        await new DatabaseService().MigrateTableAsync(db.Source, limited, db.Table("head"), new Progress<int>(), tablesLoadedLater: []);
+
+        Assert.Equal(3, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM head WHERE name = 'new'"));
+        Assert.Equal(0, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM head WHERE name = 'old'"));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task ARoleWithoutUsageOnTheSchemaOfAReferencingTable_StillMigrates()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(
+            extraTarget: @"
+                CREATE SCHEMA other;
+                CREATE TABLE other.refs (id INT PRIMARY KEY, head_id INT NOT NULL REFERENCES public.head(id));
+                INSERT INTO head VALUES (1, 'old');
+                INSERT INTO other.refs VALUES (1, 1);");
+        var limited = await db.CreateTargetUserAsync("SELECT, INSERT, TRUNCATE", "GRANT SELECT, TRUNCATE ON other.refs TO {role};");
+        var asked = 0;
+        var service = new DatabaseService { TruncateFailedHandlerAsync = _ => { asked++; return Task.FromResult(false); } };
+
+        // Naming other.refs would fail with "permission denied for schema other" and abort the transaction;
+        // TRUNCATE ... CASCADE reaches it by OID and needs no USAGE on its schema.
+        await service.MigrateTableAsync(db.Source, limited, db.Table("head"), new Progress<int>(), tablesLoadedLater: []);
+
+        Assert.Equal(0, asked);
+        Assert.Equal(3, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM head WHERE name = 'new'"));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task RowLevelSecurityHidingTheRows_DoesNotMakeATableLookEmpty()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(
+            extraTarget: @"
+                INSERT INTO head VALUES (1, 'old'), (2, 'old');
+                ALTER TABLE head ENABLE ROW LEVEL SECURITY;
+                CREATE POLICY see_nothing ON head FOR SELECT USING (false);
+                CREATE POLICY add_any ON head FOR INSERT WITH CHECK (true);");
+        var limited = await db.CreateTargetUserAsync("SELECT, INSERT, TRUNCATE");
+
+        // The role sees no rows through the policy, but TRUNCATE ignores it: head must still be truncated, not skipped.
+        await new DatabaseService().MigrateTableAsync(db.Source, limited, db.Table("head"), new Progress<int>(), tablesLoadedLater: []);
+
+        Assert.Equal(3, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM head WHERE name = 'new'"));
+        Assert.Equal(0, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM head WHERE name = 'old'"));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
     public async Task ARoleWithoutSelectPrivilege_StillMigrates()
     {
         if (!ShouldRunE2E()) return;
         await using var db = await Scratch.CreateAsync();
-        var limited = await db.CreateTruncateOnlyTargetUserAsync();
+        var limited = await db.CreateTargetUserAsync("INSERT, TRUNCATE");
         var asked = 0;
         var service = new DatabaseService { TruncateFailedHandlerAsync = _ => { asked++; return Task.FromResult(false); } };
 
@@ -245,15 +369,19 @@ public class PostgresTruncateCascadeE2ETests
 
         private string? _role;
 
-        /// <summary>A role on the target that may INSERT into and TRUNCATE the tables but has no SELECT privilege on any.</summary>
-        public async Task<ConnectionInfo> CreateTruncateOnlyTargetUserAsync()
+        /// <summary>
+        /// A non-owner role on the target with <paramref name="headPrivileges"/> on head, TRUNCATE (and nothing else) on
+        /// child and leaf, plus <paramref name="extraGrants"/> in which "{role}" stands for the role name.
+        /// </summary>
+        public async Task<ConnectionInfo> CreateTargetUserAsync(string headPrivileges, string extraGrants = "")
         {
-            _role = $"trunc_only_{Target.Database[^8..]}";
+            _role = $"trunc_user_{Target.Database[^8..]}";
             await ExecAsync(_admin, $"CREATE ROLE {_role} LOGIN PASSWORD 'rolepass'");
             await ExecAsync(Target, $@"
                 GRANT USAGE ON SCHEMA public TO {_role};
-                GRANT INSERT, TRUNCATE ON head TO {_role};
-                GRANT TRUNCATE ON child, leaf TO {_role};");
+                GRANT {headPrivileges} ON head TO {_role};
+                GRANT TRUNCATE ON child, leaf TO {_role};
+                {extraGrants.Replace("{role}", _role)}");
             var limited = Connection(Target.Database);
             limited.Username = _role;
             limited.Password = "rolepass";
@@ -264,20 +392,28 @@ public class PostgresTruncateCascadeE2ETests
         {
             string id = Guid.NewGuid().ToString("N")[..8];
             var scratch = new Scratch(Connection($"trunc_src_{id}"), Connection($"trunc_tgt_{id}"));
-            await scratch.ExecAsync(scratch._admin, $"CREATE DATABASE {scratch.Source.Database}");
-            await scratch.ExecAsync(scratch._admin, $"CREATE DATABASE {scratch.Target.Database}");
+            try
+            {
+                await scratch.ExecAsync(scratch._admin, $"CREATE DATABASE {scratch.Source.Database}");
+                await scratch.ExecAsync(scratch._admin, $"CREATE DATABASE {scratch.Target.Database}");
 
-            const string tables = @"
-                CREATE TABLE head (id INT PRIMARY KEY, name TEXT NOT NULL);
-                CREATE TABLE child (id INT PRIMARY KEY, head_id INT NOT NULL, name TEXT NOT NULL);
-                CREATE TABLE leaf (id INT PRIMARY KEY, child_id INT NOT NULL, name TEXT NOT NULL);";
-            await scratch.ExecAsync(scratch.Source, tables + @"
-                INSERT INTO head VALUES (1, 'new'), (2, 'new'), (3, 'new');
-                INSERT INTO child VALUES (1, 1, 'new'), (2, 2, 'new');" + extraSource);
-            await scratch.ExecAsync(scratch.Target, tables + @"
-                ALTER TABLE child ADD CONSTRAINT fk_child_head FOREIGN KEY (head_id) REFERENCES head(id);
-                ALTER TABLE leaf ADD CONSTRAINT fk_leaf_child FOREIGN KEY (child_id) REFERENCES child(id);" + extraTarget);
-            return scratch;
+                const string tables = @"
+                    CREATE TABLE head (id INT PRIMARY KEY, name TEXT NOT NULL);
+                    CREATE TABLE child (id INT PRIMARY KEY, head_id INT NOT NULL, name TEXT NOT NULL);
+                    CREATE TABLE leaf (id INT PRIMARY KEY, child_id INT NOT NULL, name TEXT NOT NULL);";
+                await scratch.ExecAsync(scratch.Source, tables + @"
+                    INSERT INTO head VALUES (1, 'new'), (2, 'new'), (3, 'new');
+                    INSERT INTO child VALUES (1, 1, 'new'), (2, 2, 'new');" + extraSource);
+                await scratch.ExecAsync(scratch.Target, tables + @"
+                    ALTER TABLE child ADD CONSTRAINT fk_child_head FOREIGN KEY (head_id) REFERENCES head(id);
+                    ALTER TABLE leaf ADD CONSTRAINT fk_leaf_child FOREIGN KEY (child_id) REFERENCES child(id);" + extraTarget);
+                return scratch;
+            }
+            catch
+            {
+                await scratch.DisposeAsync(); // `await using` never sees a Scratch that was not returned
+                throw;
+            }
         }
 
         public async Task ExecAsync(ConnectionInfo database, string sql)

@@ -1087,6 +1087,14 @@ public class MainWindowViewModel : ViewModelBase
                 return false;
             }
 
+            // The file read above can take seconds (network share, OneDrive placeholder): a migration started meanwhile
+            // must not have its connections swapped. No await between this check and the assignments below.
+            if (IsMigrating)
+            {
+                Log("[LoadConfigurationAsync] Ignorato: nel frattempo è partita una migrazione o un aggiornamento");
+                return false;
+            }
+
             // Carica source connection
             var sourceInfo = config.Source.ToConnectionInfo();
             SourceConnection = new ConnectionViewModel

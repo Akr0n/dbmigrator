@@ -487,36 +487,52 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             "MigrateTableAsync.CheckCascadingReferences")) > 0;
     }
 
+    /// <summary>What <see cref="CheckPostgresCascadeAsync"/> learned: whether the table has rows, and what else a cascade would lose.</summary>
+    private sealed record CascadeCheck(bool? TableHasRows, List<string> PopulatedElsewhere);
+
     /// <summary>
-    /// PostgreSQL only: the target tables that TRUNCATE ... CASCADE on this one would also empty and that hold rows
-    /// without being loaded later in this migration. Emptying those would lose data the user did not ask to replace.
-    /// A table is emptied along with its partitions and inheritance children, and with every table that references any
-    /// of them; a table that is itself, or is a partition/child of, one this migration still loads is not a loss.
-    /// Names are returned as "schema.table".
+    /// PostgreSQL only. Whether the table has rows (null when the role cannot tell) and which other target tables
+    /// TRUNCATE ... CASCADE on it would empty although they hold rows and this migration does not load them later:
+    /// emptying those would lose data the user did not ask to replace ("schema.table" names).
+    /// TRUNCATE empties the table together with all its inheritance descendants, then every table that references one of
+    /// those; of such a referencing table only its partitions go with it, not its ordinary inheritance children. A
+    /// partition is part of its parent, so it is safe whenever the parent is. Nothing else is probed once the table
+    /// itself is known to be empty, because then no TRUNCATE is run.
     /// </summary>
-    private async Task<List<string>> FindPopulatedTablesCascadeWouldEmptyAsync(DbConnection connection, DbTransaction? transaction,
+    private async Task<CascadeCheck> CheckPostgresCascadeAsync(DbConnection connection, DbTransaction? transaction,
         TableInfo table, IEnumerable<TableInfo>? tablesLoadedLater)
     {
-        var affected = new List<(long Oid, string Schema, string Name, long[] Parents)>();
+        var affected = new List<(long Oid, string Schema, string Name, bool IsPartition, long[] Parents, bool CanRead)>();
         using (var command = connection.CreateCommand())
         {
             command.Transaction = transaction;
             command.CommandTimeout = _commandTimeoutSeconds;
-            // One recursive term over a single edge relation: PostgreSQL allows only one reference to the recursive CTE.
+            // Each recursive CTE refers to itself once, which is all PostgreSQL allows; "affected" therefore walks one edge relation.
+            // can_read is by OID, never by name: naming a table in a schema the role cannot use would itself fail and abort
+            // the transaction. Row-level security makes SELECT unreliable unless the role bypasses it (TRUNCATE ignores it).
             command.CommandText = @"
                 WITH RECURSIVE root AS (
                     SELECT p.oid FROM pg_class p JOIN pg_namespace pn ON pn.oid = p.relnamespace
                     WHERE pn.nspname = @schema AND p.relname = @tableName),
+                family(oid) AS (
+                    SELECT oid FROM root
+                    UNION
+                    SELECT i.inhrelid FROM pg_inherits i JOIN family f ON i.inhparent = f.oid),
                 edge AS (
-                    SELECT inhparent AS source, inhrelid AS target FROM pg_inherits
+                    SELECT i.inhparent AS source, i.inhrelid AS target
+                    FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid WHERE c.relispartition
                     UNION
                     SELECT confrelid, conrelid FROM pg_constraint WHERE contype = 'f'),
                 affected(oid) AS (
-                    SELECT oid FROM root
+                    SELECT oid FROM family
                     UNION
                     SELECT e.target FROM edge e JOIN affected a ON e.source = a.oid)
-                SELECT t.oid::bigint, n.nspname, t.relname,
-                       COALESCE((SELECT array_agg(i.inhparent::bigint) FROM pg_inherits i WHERE i.inhrelid = t.oid), ARRAY[]::bigint[])
+                SELECT t.oid::bigint, n.nspname, t.relname, t.relispartition,
+                       COALESCE((SELECT array_agg(i.inhparent::bigint) FROM pg_inherits i WHERE i.inhrelid = t.oid), ARRAY[]::bigint[]),
+                       COALESCE(has_table_privilege(t.oid, 'SELECT') AND has_schema_privilege(n.oid, 'USAGE')
+                                AND (NOT t.relrowsecurity
+                                     OR (SELECT r.rolsuper OR r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user)),
+                                false)
                 FROM affected a
                 JOIN pg_class t ON t.oid = a.oid
                 JOIN pg_namespace n ON n.oid = t.relnamespace";
@@ -532,7 +548,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
             using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.FindCascadeTargets");
             while (await reader.ReadAsync())
-                affected.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetFieldValue<long[]>(3)));
+                affected.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetBoolean(3),
+                    reader.GetFieldValue<long[]>(4), reader.GetBoolean(5)));
         }
 
         var byOid = affected.ToDictionary(row => row.Oid);
@@ -540,49 +557,47 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             (tablesLoadedLater ?? []).Select(t => (t.Schema.ToLowerInvariant(), t.TableName.ToLowerInvariant())));
         var root = (table.Schema.ToLowerInvariant(), table.TableName.ToLowerInvariant());
 
+        var rootRows = affected.Where(row => (row.Schema, row.Name) == root).ToList();
+        bool? tableHasRows = rootRows.Count == 1 && rootRows[0].CanRead
+            ? await PostgresTableHasRowsAsync(connection, transaction, root.Item1, root.Item2, includeDescendants: true)
+            : null;
+        if (tableHasRows == false)
+            return new CascadeCheck(false, []);
+
         bool IsReplacedByThisMigration(long oid) =>
             byOid.TryGetValue(oid, out var row) &&
-            ((row.Schema, row.Name) == root || loadedLater.Contains((row.Schema, row.Name)) || row.Parents.Any(IsReplacedByThisMigration));
+            ((row.Schema, row.Name) == root || loadedLater.Contains((row.Schema, row.Name)) ||
+             (row.IsPartition && row.Parents.Any(IsReplacedByThisMigration)));
 
         var populated = new List<string>();
         foreach (var row in affected.Where(row => !IsReplacedByThisMigration(row.Oid)))
         {
-            var hasRows = await PostgresTableHasRowsAsync(connection, transaction, row.Schema, row.Name);
-            if (hasRows == null)
-                Log($"[MigrateTableAsync] Cannot check whether {row.Schema}.{row.Name} holds rows (no SELECT privilege); " +
-                    $"TRUNCATE ... CASCADE on {table.Schema}.{table.TableName} will empty it if it does");
-            else if (hasRows.Value)
+            if (!row.CanRead)
+            {
+                Log($"[MigrateTableAsync] Cannot check whether {row.Schema}.{row.Name} holds rows (no SELECT privilege, no USAGE on its " +
+                    $"schema or row-level security); TRUNCATE ... CASCADE on {table.Schema}.{table.TableName} will empty it if it does");
+                continue;
+            }
+
+            if (await PostgresTableHasRowsAsync(connection, transaction, row.Schema, row.Name, includeDescendants: false))
                 populated.Add($"{row.Schema}.{row.Name}");
         }
 
-        return populated;
+        return new CascadeCheck(tableHasRows, populated);
     }
 
     /// <summary>
-    /// Whether the table has any row; null when the connected role may not SELECT from it. TRUNCATE needs no SELECT
-    /// privilege, and a denied query would abort the open transaction, so the privilege is checked first.
+    /// Whether the table has any row. The caller must know the role can read it: a denied query would abort the open
+    /// transaction. <paramref name="includeDescendants"/> false means the table's own rows only (ONLY).
     /// </summary>
-    private async Task<bool?> PostgresTableHasRowsAsync(DbConnection connection, DbTransaction? transaction, string schema, string name)
+    private async Task<bool> PostgresTableHasRowsAsync(DbConnection connection, DbTransaction? transaction, string schema, string name,
+        bool includeDescendants)
     {
-        string qualified = $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(name)}\"";
-
-        using (var privilege = connection.CreateCommand())
-        {
-            privilege.Transaction = transaction;
-            privilege.CommandTimeout = _commandTimeoutSeconds;
-            privilege.CommandText = "SELECT has_table_privilege(@table, 'SELECT')";
-            var parameter = privilege.CreateParameter();
-            parameter.ParameterName = "@table";
-            parameter.Value = qualified;
-            privilege.Parameters.Add(parameter);
-            if (!Convert.ToBoolean(await ExecuteWithRetryAsync(() => privilege.ExecuteScalarAsync(), "MigrateTableAsync.ProbeTablePrivilege")))
-                return null;
-        }
-
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandTimeout = _commandTimeoutSeconds;
-        command.CommandText = $"SELECT EXISTS (SELECT 1 FROM {qualified})";
+        command.CommandText = $"SELECT EXISTS (SELECT 1 FROM {(includeDescendants ? "" : "ONLY ")}" +
+                              $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(name)}\")";
         return Convert.ToBoolean(await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "MigrateTableAsync.ProbeTableRows"));
     }
 
@@ -671,11 +686,9 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                     bool nothingToTruncate = false;
                     if (target.DatabaseType == DatabaseType.PostgreSQL)
                     {
-                        nothingToTruncate = await PostgresTableHasRowsAsync(targetConn, transaction,
-                            table.Schema.ToLowerInvariant(), table.TableName.ToLowerInvariant()) == false;
-                        var wiped = nothingToTruncate
-                            ? new List<string>()
-                            : await FindPopulatedTablesCascadeWouldEmptyAsync(targetConn, transaction, table, tablesLoadedLater);
+                        var cascade = await CheckPostgresCascadeAsync(targetConn, transaction, table, tablesLoadedLater);
+                        nothingToTruncate = cascade.TableHasRows == false;
+                        var wiped = cascade.PopulatedElsewhere;
                         if (wiped.Count > 0)
                         {
                             string list = string.Join(", ", wiped.Take(3)) + (wiped.Count > 3 ? $" e altre {wiped.Count - 3}" : "");
