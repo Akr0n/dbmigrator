@@ -1221,6 +1221,18 @@ public class SchemaMigrationService : DatabaseServiceBase
         };
     }
 
+    // nvarchar(n)/nchar(n) stop at 4000 (the n is in 2-byte units): longer or unbounded text can only be nvarchar(max).
+    private static string UnicodeVarchar(int? maxLength)
+        => maxLength is > 0 and <= 4000 ? $"nvarchar({maxLength})" : "nvarchar(max)";
+
+    private static string UnicodeChar(int? maxLength)
+        => maxLength switch
+        {
+            null or <= 0 => "nchar(1)",
+            <= 4000 => $"nchar({maxLength})",
+            _ => "nvarchar(max)"
+        };
+
     private string MapDataType(DatabaseType sourceDbType, DatabaseType targetDbType, 
         string sourceDataType, int? maxLength, int? precision, int? scale, int? dateTimePrecision)
     {
@@ -1357,13 +1369,10 @@ public class SchemaMigrationService : DatabaseServiceBase
                 "double precision" or "float8" => "float",
                 "real" or "float4" => "real",
                 "money" => "decimal(19,4)",
-                "varchar" or "character varying" => maxLength.HasValue && maxLength > 0 
-                    ? $"varchar({maxLength})" 
-                    : "varchar(max)",
-                "text" => "varchar(max)",
-                "char" or "character" => maxLength.HasValue && maxLength > 0
-                    ? $"char({maxLength})" 
-                    : "char(1)",
+                // PostgreSQL stores text in any script; a SQL Server varchar would turn what its code page lacks into '?'.
+                "varchar" or "character varying" => UnicodeVarchar(maxLength),
+                "text" => "nvarchar(max)",
+                "char" or "character" => UnicodeChar(maxLength),
                 "boolean" or "bool" => "bit",
                 "bytea" => "varbinary(max)",
                 "uuid" => "uniqueidentifier",
@@ -1386,7 +1395,7 @@ public class SchemaMigrationService : DatabaseServiceBase
                 "serial" => "int",  // IDENTITY will be handled separately
                 "bigserial" => "bigint",
                 "smallserial" => "smallint",
-                _ => "varchar(max)"
+                _ => "nvarchar(max)"
             };
         }
 
@@ -1451,22 +1460,11 @@ public class SchemaMigrationService : DatabaseServiceBase
                     : "float",
                 "binary_float" => "real",
                 "binary_double" => "float",
-                "varchar2" => maxLength.HasValue && maxLength > 0 
-                    ? $"varchar({maxLength})" 
-                    : "varchar(max)",
-                "nvarchar2" => maxLength.HasValue && maxLength > 0 
-                    ? $"nvarchar({maxLength})" 
-                    : "nvarchar(max)",
-                "char" => maxLength.HasValue && maxLength > 0
-                    ? $"char({maxLength})" 
-                    : "char(1)",
-                "nchar" => maxLength.HasValue && maxLength > 0
-                    ? $"nchar({maxLength})" 
-                    : "nchar(1)",
-                "clob" => "varchar(max)",
-                "nclob" => "nvarchar(max)",
+                // Oracle databases are usually AL32UTF8: keep the text Unicode on the SQL Server side too.
+                "varchar2" or "nvarchar2" => UnicodeVarchar(maxLength),
+                "char" or "nchar" => UnicodeChar(maxLength),
+                "clob" or "nclob" or "long" => "nvarchar(max)",
                 "blob" => "varbinary(max)",
-                "long" => "varchar(max)",
                 "long raw" => "varbinary(max)",
                 "date" => "datetime2(0)",  // Oracle DATE has second precision
                 "timestamp" => dateTimePrecision.HasValue 

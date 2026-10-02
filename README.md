@@ -170,7 +170,7 @@ Log files are automatically rotated and retained according to runtime settings.
 
 ## Known limitations
 
-- **Text from PostgreSQL and Oracle into SQL Server.** `varchar`, `text`, `VARCHAR2` and `CLOB` columns are created as `varchar` on a SQL Server target (`NVARCHAR2` becomes `nvarchar`), so characters outside the target database's code page (Japanese, Cyrillic, Greek, many accented letters) become `?`. SQL Server to SQL Server keeps `nvarchar` data intact. For such data create the target columns as `nvarchar` yourself and use Data Only.
+- **Text from PostgreSQL and Oracle into SQL Server is created as Unicode** (`nvarchar`/`nchar`, `nvarchar(max)` above 4000 characters), so Japanese, Cyrillic or Greek text survives a database with a Latin code page. Oracle reports column sizes in bytes, so a multi-byte `CHAR(n CHAR)` or `NCHAR(n)` becomes a wider `nchar` and its values are blank-padded. Tables that already exist on the target keep their own column types: if one is `varchar`, text outside its code page still turns into `?`.
 - **The target schema must already exist.** Schema + Data creates the tables but not their schema, and PostgreSQL's `public` schema cannot be created on SQL Server.
 - **Each table is committed on its own.** If table N fails, tables 1 to N-1 stay replaced. On Oracle every statement is committed, so the failed table is not rolled back either: the rows already deleted and inserted stay.
 - **Oracle checks before emptying a table** read `DBA_CONSTRAINTS` when the migration user may (DBA or `SELECT_CATALOG_ROLE`). Without that right, tables in schemas it cannot see are reported as not verifiable and the migration stops and asks.
