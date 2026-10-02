@@ -632,6 +632,12 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     internal Func<ConnectionInfo, DbConnection> ConnectionFactory { get; set; } = CreateConnection;
 
     /// <summary>
+    /// How often and how long a lost connection to the source is retried while a table is being read (a test replaces it with
+    /// short waits): up to 5 times in a row without a new row, 2 seconds the first time, doubling up to 30.
+    /// </summary>
+    internal Func<ResumePolicy> NewResumePolicy { get; set; } = () => new ResumePolicy(5, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(30));
+
+    /// <summary>
     /// The user the owner test compares schemas with: the session's own user as the server reports it (SELECT USER), else the
     /// typed user name as Oracle would log it in, which for an unquoted name means upper-cased.
     /// </summary>
@@ -1051,13 +1057,44 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 long totalRows = await GetTableRowCountAsync(source, table.Schema, table.TableName);
                 long migratedRows = 0;
 
+                // A table is read in one stream that can last tens of minutes, and the connection to the source can be cut in the
+                // middle of it. Reading in primary key order from the first row on lets the read start again after the last row
+                // received (SourceResume); the target transaction stays open meanwhile. No key, no order: no resume.
+                var keyColumns = new List<string>();
+                if (_enableTransientRetries)
+                {
+                    try
+                    {
+                        keyColumns = (await SourceResume.GetKeyColumnsAsync(sourceConn, source.DatabaseType, table.Schema,
+                                table.TableName, _commandTimeoutSeconds))
+                            .Select(column => FormatColumnName(source.DatabaseType, column)).ToList();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"[MigrateTableAsync] Could not read the primary key of {table.Schema}.{table.TableName}: {ex.Message}");
+                    }
+
+                    if (keyColumns.Count == 0)
+                        Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} has no usable primary key: if the connection to the source is lost while it is read, the table starts over");
+                }
+
+                string dataQuery = keyColumns.Count > 0
+                    ? SourceResume.OrderedSelect(source.DatabaseType, sourceQuery, keyColumns, 0)
+                    : sourceQuery;
+
                 using (var sourceCommand = sourceConn.CreateCommand())
                 {
-                    sourceCommand.CommandText = sourceQuery;
+                    sourceCommand.CommandText = dataQuery;
                     sourceCommand.CommandTimeout = _commandTimeoutSeconds;
 
-                    using (var reader = await ExecuteWithRetryAsync(() => sourceCommand.ExecuteReaderAsync(), "MigrateTableAsync.SourceReader"))
+                    using var resumedRead = new ResumedRead(); // what a resume opens: closed when the table is done, however it ends
+                    using (var initialReader = await ExecuteWithRetryAsync(() => sourceCommand.ExecuteReaderAsync(), "MigrateTableAsync.SourceReader"))
                     {
+                        // The reader the rows come from: the first one, and a new one after each loss of the connection to the source.
+                        DbDataReader reader = initialReader;
+                        DbConnection readConnection = sourceConn;
+                        var resumePolicy = NewResumePolicy();
+                        int resumes = 0;
                         // For SQL Server: check if table has IDENTITY column and enable IDENTITY_INSERT
                         bool hasIdentity = false;
                         string formattedTableName = FormatTableName(target.DatabaseType, table.Schema, table.TableName);
@@ -1135,7 +1172,70 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                         xmlColumns = Enumerable.Range(0, reader.FieldCount).Where(i => targetXml.Contains(reader.GetName(i))).ToArray();
                                 }
                                 var batchRows = new List<object?[]>(_batchSize);
-                                while (await reader.ReadAsync())
+
+                                // The next row of the source. When the connection to it is lost, a new one is opened and the read goes
+                                // on from the row after the last one received (already inserted, or waiting in batchRows).
+                                async Task<bool> ReadRowAsync()
+                                {
+                                    while (true)
+                                    {
+                                        try
+                                        {
+                                            return await reader.ReadAsync();
+                                        }
+                                        catch (Exception lost) when (keyColumns.Count > 0 && SourceResume.IsConnectionLoss(lost, readConnection))
+                                        {
+                                            await ResumeReadAsync(lost, migratedRows + batchRows.Count);
+                                        }
+                                    }
+                                }
+
+                                async Task ResumeReadAsync(Exception lost, long consumed)
+                                {
+                                    while (true)
+                                    {
+                                        var wait = resumePolicy.OnFailure(consumed);
+                                        if (wait == null)
+                                        {
+                                            throw new InvalidOperationException(
+                                                $"La connessione alla sorgente si è interrotta dopo {consumed} righe di {table.Schema}.{table.TableName} " +
+                                                $"e non è stato possibile riprendere la lettura: {lost.Message}", lost);
+                                        }
+
+                                        Log($"[MigrateTableAsync] Connection to the source lost after {consumed} rows of {table.Schema}.{table.TableName} " +
+                                            $"({lost.Message}); resuming in {wait.Value.TotalSeconds:0.#} s");
+                                        await Task.Delay(wait.Value);
+                                        try
+                                        {
+                                            try { reader.Dispose(); } catch { /* the connection it belonged to is gone */ }
+                                            resumedRead.Dispose();
+                                            resumedRead.Connection = CreateConnection(source);
+                                            await resumedRead.Connection.OpenAsync();
+                                            readConnection = resumedRead.Connection;
+                                            resumedRead.Command = resumedRead.Connection.CreateCommand();
+                                            resumedRead.Command.CommandText =
+                                                SourceResume.OrderedSelect(source.DatabaseType, sourceQuery, keyColumns, consumed);
+                                            resumedRead.Command.CommandTimeout = _commandTimeoutSeconds;
+                                            resumedRead.Reader = await resumedRead.Command.ExecuteReaderAsync();
+                                            reader = resumedRead.Reader;
+                                            resumes++;
+                                            Log($"[MigrateTableAsync] Resumed reading {table.Schema}.{table.TableName} from row {consumed + 1}");
+                                            return;
+                                        }
+                                        catch (Exception again) when (IsTransient(again) || resumedRead.Connection is not { State: ConnectionState.Open })
+                                        {
+                                            lost = again; // still down: wait again, or give up when nothing new has arrived for too long
+                                        }
+                                        catch (Exception other)
+                                        {
+                                            // Not the network (a server that does not know OFFSET, say): reading again would not help.
+                                            throw new InvalidOperationException(
+                                                $"La ripresa della lettura di {table.Schema}.{table.TableName} dalla riga {consumed + 1} non è riuscita: {other.Message}", other);
+                                        }
+                                    }
+                                }
+
+                                while (await ReadRowAsync())
                                 {
                                     var rowValues = new object[reader.FieldCount];
                                     if (reader is Microsoft.Data.SqlClient.SqlDataReader sqlReader)
@@ -1181,6 +1281,13 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                         ? (int)((migratedRows / (double)totalRows) * 100)
                                         : 100;
                                     progress?.Report(Math.Min(percentage, 100));
+                                }
+
+                                if (resumes > 0 && totalRows > 0 && migratedRows != totalRows)
+                                {
+                                    // After a resume the read relies on the source not having changed: say so if the numbers disagree.
+                                    Log($"[MigrateTableAsync] Warning: {migratedRows} rows were read from {table.Schema}.{table.TableName} after " +
+                                        $"{resumes} resume(s), but {totalRows} were counted before the read: the source may have changed while it was being read");
                                 }
 
                                 if (migratedRows == 0)

@@ -18,7 +18,7 @@ public abstract class DatabaseServiceBase
     protected readonly int _commandTimeoutSeconds;
     private readonly int _retryCount;
     private readonly int _retryInitialDelayMilliseconds;
-    private readonly bool _enableTransientRetries;
+    protected readonly bool _enableTransientRetries;
 
     protected static void Log(string message) => LoggerService.Log(message);
 
