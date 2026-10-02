@@ -32,6 +32,10 @@ namespace DatabaseMigrator.Tests;
 ///   TC-040  TRUNCATE fallito — dialog di conferma
 ///   TC-041  Avvia Migrazione disabilitato senza tabelle selezionate
 ///   TC-042  DB target non raggiungibile a metà migrazione
+///
+/// Aggiornamento: TC-031 (Seleziona/Deseleziona Tutto), TC-032 (filtro), TC-033 (Aggiorna), TC-038 (salva e ricarica
+/// configurazione) e TC-040 (finestra di conferma) sono ora verificati senza schermo dal progetto
+/// tests/DatabaseMigrator.UiTests, che esegue la MainWindow e il MainWindowViewModel reali (Avalonia.Headless).
 /// </summary>
 [Trait("Category", "E2E")]
 public class DocumentedTestCasesTests

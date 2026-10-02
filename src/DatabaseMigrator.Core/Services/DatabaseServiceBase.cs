@@ -135,8 +135,9 @@ public abstract class DatabaseServiceBase
             // (is_called), so the next nextval() returns MAX(col)+increment. pg_get_serial_sequence resolves the
             // sequence behind a GENERATED ... AS IDENTITY column (PostgreSQL 10+); its 2nd arg is case-sensitive
             // and must match the stored name, which FormatColumnName lower-cases at creation — so lower-case here too.
+            // Both literals hold names read from the source catalog: a single quote in either would end the literal.
             DatabaseType.PostgreSQL =>
-                $"SELECT setval(pg_get_serial_sequence('{table}', '{columnName.ToLowerInvariant()}'), (SELECT MAX({column}) FROM {table}));",
+                $"SELECT setval(pg_get_serial_sequence('{table.Replace("'", "''")}', '{columnName.ToLowerInvariant().Replace("'", "''")}'), (SELECT MAX({column}) FROM {table}));",
             // Oracle 12c+: START WITH LIMIT VALUE tells the engine to reseed the identity from the column's current
             // maximum (ascending) or minimum (descending) value. It is valid ONLY inside ALTER TABLE ... MODIFY.
             DatabaseType.Oracle =>

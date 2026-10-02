@@ -331,7 +331,7 @@ public class ScriptGenerationService : DatabaseServiceBase
                         connection, source.DatabaseType, table.Schema, table.Name);
                     if (columns.Count == 0)
                     {
-                        await output.WriteLineAsync($"-- ATTENZIONE: nessuna colonna trovata per {table.QualifiedName}");
+                        await output.WriteLineAsync($"-- ATTENZIONE: nessuna colonna trovata per {SingleLine(table.QualifiedName)}");
                         await output.WriteLineAsync();
                         continue;
                     }
@@ -405,7 +405,7 @@ public class ScriptGenerationService : DatabaseServiceBase
                         var def = await GetIndexDefAsync(connection, source.DatabaseType, index);
                         if (def == null)
                         {
-                            await output.WriteLineAsync($"-- Indice {index.QualifiedName} ignorato (nessuna colonna semplice).");
+                            await output.WriteLineAsync($"-- Indice {SingleLine(index.QualifiedName)} ignorato (nessuna colonna semplice).");
                             await output.WriteLineAsync();
                             continue;
                         }
@@ -479,7 +479,7 @@ public class ScriptGenerationService : DatabaseServiceBase
                 if (crossDialect)
                 {
                     await output.WriteLineAsync(
-                        $"-- ┌─ ATTENZIONE: {obj.DisplayType} \"{obj.QualifiedName}\" ───────────────");
+                        $"-- ┌─ ATTENZIONE: {obj.DisplayType} \"{SingleLine(obj.QualifiedName)}\" ───────────────");
                     await output.WriteLineAsync(
                         $"-- │ Definizione estratta nel dialetto di origine ({sourceDbType}).");
                     await output.WriteLineAsync(
@@ -497,7 +497,7 @@ public class ScriptGenerationService : DatabaseServiceBase
                 }
                 catch (Exception ex)
                 {
-                    await output.WriteLineAsync($"-- Impossibile estrarre la definizione: {ex.Message}");
+                    await output.WriteLineAsync($"-- Impossibile estrarre la definizione: {SingleLine(ex.Message)}");
                     await output.WriteLineAsync();
                     continue;
                 }
@@ -551,7 +551,7 @@ public class ScriptGenerationService : DatabaseServiceBase
                     var body = (await cmd.ExecuteScalarAsync())?.ToString();
                     if (!string.IsNullOrWhiteSpace(body))
                     {
-                        results.Add($"CREATE OR REPLACE VIEW \"{obj.Schema}\".\"{obj.Name}\" AS\n{body.Trim()}");
+                        results.Add($"{BuildPostgresViewHeader(obj.Schema, obj.Name)} AS\n{body.Trim()}");
                     }
                 }
                 else if (obj.ObjectType == DatabaseObjectType.Trigger)
@@ -621,7 +621,7 @@ public class ScriptGenerationService : DatabaseServiceBase
         string targetTable = FormatTableName(dialect, table.Schema, table.Name);
         int batchSize = Math.Clamp(options.RowsPerInsertBatch, 1, 1000);
 
-        await output.WriteLineAsync($"-- Dati per {table.QualifiedName}");
+        await output.WriteLineAsync($"-- Dati per {SingleLine(table.QualifiedName)}");
 
         // Identity handling for the migrated rows, which carry EXPLICIT key values. Detected once from the source
         // column metadata (works for any source dialect with a true identity column):
@@ -722,7 +722,7 @@ public class ScriptGenerationService : DatabaseServiceBase
                 }
 
                 string formatted = string.Join(", ",
-                    values.Select(v => _databaseService.FormatSqlValue(dialect, v, unicodeStringLiterals: true)));
+                    values.Select(v => _databaseService.FormatSqlValue(dialect, v, unicodeStringLiterals: true, oracleLineBreaksAsChr: true)));
                 batch.Add(formatted);
                 rowsForTable++;
                 state.RowsWritten++;
@@ -1118,7 +1118,7 @@ public class ScriptGenerationService : DatabaseServiceBase
                 ? $"DROP INDEX IF EXISTS {FormatConstraintName(dialect, obj.Name)} ON " +
                   $"{FormatTableName(dialect, obj.Schema, obj.ParentName)}"
                 : $"DROP INDEX IF EXISTS {FormatTableName(dialect, obj.Schema, obj.Name)}",
-            _ => $"-- DROP non supportato per {obj.QualifiedName}"
+            _ => $"-- DROP non supportato per {SingleLine(obj.QualifiedName)}"
         };
     }
 
@@ -1133,13 +1133,7 @@ public class ScriptGenerationService : DatabaseServiceBase
 
         if (dialect == DatabaseType.Oracle)
         {
-            string sql =
-                "BEGIN" + Environment.NewLine +
-                $"  EXECUTE IMMEDIATE 'ALTER TABLE {tableRef} DROP CONSTRAINT {name}';" + Environment.NewLine +
-                "EXCEPTION WHEN OTHERS THEN" + Environment.NewLine +
-                "  IF SQLCODE NOT IN (-2443, -2431, -942) THEN RAISE; END IF;" + Environment.NewLine +
-                "END;";
-            await WriteStatementAsync(output, dialect, sql, plsqlBlock: true);
+            await WriteStatementAsync(output, dialect, BuildOracleDropConstraintBlock(tableRef, name), plsqlBlock: true);
         }
         else
         {
@@ -1148,11 +1142,32 @@ public class ScriptGenerationService : DatabaseServiceBase
         }
     }
 
-    private static string FormatConstraintName(DatabaseType dialect, string name) => dialect switch
+    // The statement sits inside a PL/SQL string literal, so every single quote in the names (they come from the source
+    // catalog) must be doubled or it would end the literal and the rest of the name would run as PL/SQL.
+    internal static string BuildOracleDropConstraintBlock(string tableRef, string name) =>
+        "BEGIN" + Environment.NewLine +
+        $"  EXECUTE IMMEDIATE '{$"ALTER TABLE {tableRef} DROP CONSTRAINT {name}".Replace("'", "''")}';" + Environment.NewLine +
+        "EXCEPTION WHEN OTHERS THEN" + Environment.NewLine +
+        "  IF SQLCODE NOT IN (-2443, -2431, -942) THEN RAISE; END IF;" + Environment.NewLine +
+        "END;";
+
+    internal static string BuildPostgresViewHeader(string schema, string name) =>
+        $"CREATE OR REPLACE VIEW \"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(name)}\"";
+
+    /// <summary>
+    /// The text on one line, for a "--" comment: a line break (CR, LF, NEL, LS, PS) would end the comment and make the rest
+    /// of a source-supplied name live SQL in the script.
+    /// </summary>
+    internal static string SingleLine(string text) =>
+        text.Replace('\r', ' ').Replace('\n', ' ').Replace('\u0085', ' ').Replace('\u2028', ' ').Replace('\u2029', ' ');
+
+    internal static string FormatConstraintName(DatabaseType dialect, string name) => dialect switch
     {
         DatabaseType.SqlServer => $"[{name.Replace("]", "]]")}]",
         DatabaseType.PostgreSQL => $"\"{name.Replace("\"", "\"\"").ToLowerInvariant()}\"",
-        DatabaseType.Oracle => $"\"{name.Replace("\"", "\"\"").ToUpperInvariant()}\"",
+        // SQL*Plus ends a statement at a "/" or a blank line even inside quotes, so a line break in a name would split the
+        // statement: names are kept on one line.
+        DatabaseType.Oracle => $"\"{SingleLine(name).Replace("\"", "\"\"").ToUpperInvariant()}\"",
         _ => name
     };
 
@@ -1160,19 +1175,27 @@ public class ScriptGenerationService : DatabaseServiceBase
     // Scrittura su file
     // ─────────────────────────────────────────────────────────────────────────
 
-    private static async Task WriteHeaderAsync(TextWriter w, ConnectionInfo source,
+    internal static async Task WriteHeaderAsync(TextWriter w, ConnectionInfo source,
         ScriptGenerationOptions options, int objectCount)
     {
         await w.WriteLineAsync("-- ============================================================");
         await w.WriteLineAsync("-- Script generato da Database Migrator");
         await w.WriteLineAsync($"-- Data:                  {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-        await w.WriteLineAsync($"-- Database di origine:   {source.DatabaseType} @ {source.Server}/{source.Database}");
+        await w.WriteLineAsync($"-- Database di origine:   {source.DatabaseType} @ {SingleLine(source.Server)}/{SingleLine(source.Database)}");
         await w.WriteLineAsync($"-- Dialetto di output:    {options.TargetDialect}");
         await w.WriteLineAsync($"-- Oggetti selezionati:   {objectCount}");
         await w.WriteLineAsync($"-- Includi schema (DDL):  {(options.IncludeSchema ? "sì" : "no")}");
         await w.WriteLineAsync($"-- Includi dati (INSERT): {(options.IncludeData ? "sì" : "no")}");
         await w.WriteLineAsync($"-- Includi DROP:          {(options.IncludeDropStatements ? "sì" : "no")}");
         await w.WriteLineAsync("-- ============================================================");
+        if (options.TargetDialect == DatabaseType.Oracle)
+        {
+            // SQL*Plus: without these, "&" in a value or a name prompts for a substitution value and splices script lines
+            // into the statement, and a blank line inside a statement ends it.
+            await w.WriteLineAsync("SET DEFINE OFF");
+            await w.WriteLineAsync("SET SQLBLANKLINES ON");
+        }
+
         await w.WriteLineAsync();
     }
 
@@ -1203,7 +1226,7 @@ public class ScriptGenerationService : DatabaseServiceBase
             {
                 // In Oracle lo schema coincide con l'utente: la sua creazione richiede privilegi DBA.
                 await output.WriteLineAsync(
-                    $"-- Verificare che lo schema/utente \"{schema.ToUpperInvariant()}\" esista " +
+                    $"-- Verificare che lo schema/utente \"{SingleLine(schema.ToUpperInvariant())}\" esista " +
                     "(CREATE USER richiede privilegi DBA).");
                 await output.WriteLineAsync();
             }
@@ -1214,21 +1237,21 @@ public class ScriptGenerationService : DatabaseServiceBase
         }
     }
 
-    private static string BuildCreateSchema(DatabaseType dialect, string schema) => dialect switch
+    internal static string BuildCreateSchema(DatabaseType dialect, string schema) => dialect switch
     {
         DatabaseType.PostgreSQL =>
             $"CREATE SCHEMA IF NOT EXISTS \"{EscapePostgresIdentifier(schema.ToLowerInvariant())}\"",
         DatabaseType.SqlServer =>
             $"IF SCHEMA_ID(N'{schema.Replace("'", "''")}') IS NULL " +
-            $"EXEC(N'CREATE SCHEMA [{EscapeSqlServerIdentifier(schema)}]')",
+            $"EXEC(N'CREATE SCHEMA [{EscapeSqlServerIdentifier(schema).Replace("'", "''")}]')",
         _ => throw new NotSupportedException()
     };
 
     private static async Task WriteErrorCommentAsync(TextWriter w, string what, Exception ex)
     {
         Log($"[ScriptGeneration] {what}: {ex.Message}");
-        string message = ex.Message.Replace("\r", " ").Replace("\n", " ");
-        await w.WriteLineAsync($"-- !! ERRORE durante l'esportazione di: {what}");
+        string message = SingleLine(ex.Message);
+        await w.WriteLineAsync($"-- !! ERRORE durante l'esportazione di: {SingleLine(what)}");
         await w.WriteLineAsync($"-- !! {message}");
         await w.WriteLineAsync();
     }
