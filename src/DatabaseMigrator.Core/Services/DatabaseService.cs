@@ -638,6 +638,18 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     internal Func<ResumePolicy> NewResumePolicy { get; set; } = () => new ResumePolicy(5, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(30));
 
     /// <summary>
+    /// The most values (rows x columns) one INSERT ... VALUES may hold on a SQL Server target. The query processor compiles every
+    /// value as an expression and the cost grows much faster than their number: 1000 rows of a 199-column table (about 200,000
+    /// values) made it give up after 44 seconds with error 8623 ("ran out of internal resources and could not produce a query
+    /// plan") before loading a row; 150,000 values compiled in 7 seconds on a test server and 300,000 did not in four minutes.
+    /// </summary>
+    internal const int MaxValuesPerSqlServerInsert = 30_000;
+
+    /// <summary>How many rows one INSERT holds: the batch size, or fewer when the table has so many columns that the batch would go over the limit.</summary>
+    internal static int RowsPerInsertStatement(int columnCount, int batchSize) =>
+        columnCount <= 0 ? batchSize : Math.Max(1, Math.Min(batchSize, MaxValuesPerSqlServerInsert / columnCount));
+
+    /// <summary>
     /// The user the owner test compares schemas with: the session's own user as the server reports it (SELECT USER), else the
     /// typed user name as Oracle would log it in, which for an unquoted name means upper-cased.
     /// </summary>
@@ -1171,7 +1183,13 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                     if (targetXml.Count > 0)
                                         xmlColumns = Enumerable.Range(0, reader.FieldCount).Where(i => targetXml.Contains(reader.GetName(i))).ToArray();
                                 }
-                                var batchRows = new List<object?[]>(_batchSize);
+                                // A statement with too many values cannot be compiled by SQL Server: a wide table gets fewer rows per INSERT.
+                                int rowsPerStatement = target.DatabaseType == DatabaseType.SqlServer
+                                    ? RowsPerInsertStatement(columnNames.Count, _batchSize)
+                                    : _batchSize;
+                                if (rowsPerStatement < _batchSize)
+                                    Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} has {columnNames.Count} columns: {rowsPerStatement} rows per INSERT instead of {_batchSize}, so that SQL Server can compile each statement");
+                                var batchRows = new List<object?[]>(rowsPerStatement);
 
                                 // The next row of the source. When the connection to it is lost, a new one is opened and the read goes
                                 // on from the row after the last one received (already inserted, or waiting in batchRows).
@@ -1261,7 +1279,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                     StripXmlDeclarations(rowValues, xmlColumns);
                                     batchRows.Add(rowValues);
 
-                                    if (batchRows.Count >= _batchSize)
+                                    if (batchRows.Count >= rowsPerStatement)
                                     {
                                         await InsertBatchAsync(batchRows);
                                         migratedRows += batchRows.Count;
