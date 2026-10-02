@@ -106,7 +106,7 @@ jobs:
           # push su develop apparterrebbe a un altro commit e il rilascio porterebbe il numero sbagliato.
           $devTags = @(git tag --list "v*-dev" --points-at $env:MERGED_SHA | Sort-Object {[version]($_.TrimStart("v") -replace "-dev","")} -Descending)
           if ($devTags.Count -eq 0) {
-            Write-Error "❌ No -dev tag points at $env:MERGED_SHA: the DEV workflow has not finished for that commit. Re-run this workflow when it has."
+            Write-Error "❌ No -dev tag points at commit ${env:MERGED_SHA}: the DEV workflow has not tagged it. Wait for the DEV run of that commit (re-run it if it failed), then re-run this workflow."
             exit 1
           }
 
@@ -122,12 +122,11 @@ jobs:
           "release_version=$releaseVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
           # Mai pubblicare sopra una release che esiste già: gli asset verrebbero sostituiti con quelli di un altro commit.
+          # Un tag senza release (un tentativo fermato dopo aver creato il tag) non si sistema da solo: si cancella a mano.
           git ls-remote --exit-code --tags origin "refs/tags/$releaseTag" | Out-Null
           if ($LASTEXITCODE -eq 0) {
-            Write-Output "⚠️ Tag $releaseTag already exists: nothing is published."
-            "release_exists=true" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          } else {
-            "release_exists=false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            Write-Error "❌ Tag $releaseTag already exists: nothing is published over it. If an earlier run stopped before the release was created, delete the tag (git push origin :refs/tags/$releaseTag) and re-run this workflow."
+            exit 1
           }
           exit 0
         if: env.MERGE_FROM_DEVELOP == 'true'
@@ -138,7 +137,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git tag ${{ env.release_tag }}
           git push origin ${{ env.release_tag }}
-        if: env.MERGE_FROM_DEVELOP == 'true' && env.release_exists != 'true'
+        if: env.MERGE_FROM_DEVELOP == 'true'
 
       - name: Fetch tag locally and verify
         run: |
@@ -155,14 +154,14 @@ jobs:
 
           echo "All local tags:"
           git tag --list
-        if: env.MERGE_FROM_DEVELOP == 'true' && env.release_exists != 'true'
+        if: env.MERGE_FROM_DEVELOP == 'true'
 
       - name: Generate changelog
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-        if: env.MERGE_FROM_DEVELOP == 'true' && env.release_exists != 'true'
+        if: env.MERGE_FROM_DEVELOP == 'true'
 
       - name: Create Release with changelog and assets
         uses: softprops/action-gh-release@v3
@@ -176,4 +175,4 @@ jobs:
             ./README.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        if: env.MERGE_FROM_DEVELOP == 'true' && env.release_exists != 'true'
+        if: env.MERGE_FROM_DEVELOP == 'true'
