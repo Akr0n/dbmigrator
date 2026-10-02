@@ -128,6 +128,7 @@ public class ConnectionSecurityUiTests
             window.FindControl<TextBox>("TargetServerTextBox")!.Text = "target-host";
             window.FindControl<TextBox>("TargetDatabaseTextBox")!.Text = "target_db";
             window.FindControl<CheckBox>("SourceRequireEncryptionCheckBox")!.IsChecked = true;
+            window.FindControl<CheckBox>("SourceTrustServerCertificateCheckBox")!.IsChecked = false; // whatever the ambient default is
             window.FindControl<CheckBox>("TargetTrustServerCertificateCheckBox")!.IsChecked = true;
             window.FindControl<CheckBox>("TargetRequireEncryptionCheckBox")!.IsChecked = true;
 

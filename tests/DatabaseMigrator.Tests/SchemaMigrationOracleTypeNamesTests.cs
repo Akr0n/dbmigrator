@@ -25,22 +25,37 @@ public class SchemaMigrationOracleTypeNamesTests
     [InlineData("TIMESTAMP(9)", 9, "[c] datetime2(7)")]                  // SQL Server stops at 7
     [InlineData("TIMESTAMP(6) WITH TIME ZONE", 6, "[c] datetimeoffset(6)")]
     [InlineData("TIMESTAMP(6) WITH LOCAL TIME ZONE", 6, "[c] datetimeoffset(6)")]
-    [InlineData("INTERVAL DAY(2) TO SECOND(6)", null, "[c] varchar(50)")]
-    [InlineData("INTERVAL YEAR(2) TO MONTH", null, "[c] varchar(50)")]
-    public void OracleTemporalTypes_BecomeTemporalTypesOnSqlServer(string oracleType, int? precision, string expected)
+    public void OracleTimestamps_BecomeTemporalTypesOnSqlServer(string oracleType, int? precision, string expected)
         => Assert.Contains(expected, Ddl(DatabaseType.SqlServer, oracleType, precision));
 
     [Theory]
     [InlineData("TIMESTAMP(6)", 6, "\"c\" timestamp(6)")]
     [InlineData("TIMESTAMP(6) WITH TIME ZONE", 6, "\"c\" timestamptz(6)")]
-    [InlineData("INTERVAL DAY(2) TO SECOND(6)", null, "\"c\" interval")]
-    public void OracleTemporalTypes_BecomeTemporalTypesOnPostgres(string oracleType, int? precision, string expected)
+    public void OracleTimestamps_BecomeTemporalTypesOnPostgres(string oracleType, int? precision, string expected)
         => Assert.Contains(expected, Ddl(DatabaseType.PostgreSQL, oracleType, precision));
 
-    [Fact]
-    public void OracleToOracle_KeepsTheExactType()
+    [Theory]
+    [InlineData("INTERVAL DAY(2) TO SECOND(6)", DatabaseType.SqlServer, "[c] nvarchar(max)")]
+    [InlineData("INTERVAL YEAR(2) TO MONTH", DatabaseType.SqlServer, "[c] nvarchar(max)")]
+    [InlineData("INTERVAL DAY(2) TO SECOND(6)", DatabaseType.PostgreSQL, "\"c\" text")]
+    [InlineData("INTERVAL YEAR(2) TO MONTH", DatabaseType.PostgreSQL, "\"c\" text")]
+    public void OracleIntervals_StayText(string oracleType, DatabaseType target, string expected)
     {
-        // The precision is part of the type there: it must not be stripped.
-        Assert.Contains("TIMESTAMP(9)", Ddl(DatabaseType.Oracle, "TIMESTAMP(9)", 9));
+        // The data path writes the driver's value (a month count, a TimeSpan) as a bare number or text that an interval column
+        // refuses: mapping them to a real interval type made such a table fail to load, where text loads. Left on the text
+        // fallback, as they always were.
+        Assert.Contains(expected, Ddl(target, oracleType));
+    }
+
+    [Theory]
+    [InlineData("TIMESTAMP(9)", 9, "TIMESTAMP(9)")]
+    [InlineData("TIMESTAMP(9)", null, "TIMESTAMP(9)")]                             // not "TIMESTAMP(6)": the precision is in the name
+    [InlineData("TIMESTAMP(3) WITH TIME ZONE", 3, "TIMESTAMP(3) WITH TIME ZONE")]
+    [InlineData("INTERVAL DAY(2) TO SECOND(6)", null, "INTERVAL DAY(2) TO SECOND(6)")]
+    public void OracleToOracle_KeepsTheExactType(string oracleType, int? precision, string expected)
+    {
+        // The precision is part of the type there: stripping it from the name (the cross-database step above) would lose it,
+        // and these cases fail if that step is ever applied to a same-database move.
+        Assert.Contains(expected, Ddl(DatabaseType.Oracle, oracleType, precision));
     }
 }

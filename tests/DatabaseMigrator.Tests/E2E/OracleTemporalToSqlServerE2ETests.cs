@@ -29,6 +29,82 @@ public class OracleTemporalToSqlServerE2ETests
         await command.ExecuteNonQueryAsync();
     }
 
+    // Same port override as a local PostgreSQL service on 5432 needs; CI leaves it unset.
+    private static readonly int PgPort =
+        int.TryParse(Environment.GetEnvironmentVariable("DBMIGRATOR_PG_PORT"), out var port) ? port : 5432;
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task OracleIntervals_StillLoadIntoPostgres_AsText()
+    {
+        if (!ShouldRunE2E()) return;
+
+        // Mapping an interval to a PostgreSQL interval column made the load fail: the driver hands the value over as a month count
+        // (YEAR TO MONTH) or as a TimeSpan whose negative form is not valid interval syntax. As text they load, as they always did.
+        string id = Guid.NewGuid().ToString("N")[..8];
+        string table = $"IVL_{id}".ToUpperInvariant();
+        var source = new ConnectionInfo
+        {
+            DatabaseType = DatabaseType.Oracle, Server = "127.0.0.1", Port = 1521, Database = "FREEPDB1",
+            Username = "migration_test", Password = "oraclepass123"
+        };
+        var target = new ConnectionInfo
+        {
+            DatabaseType = DatabaseType.PostgreSQL, Server = "127.0.0.1", Port = PgPort, Database = "testdb",
+            Username = "pguser", Password = "pgpass123"
+        };
+
+        await using var oracle = new OracleConnection(source.GetConnectionString());
+        await oracle.OpenAsync();
+        await using var pg = new Npgsql.NpgsqlConnection(target.GetConnectionString());
+        await pg.OpenAsync();
+        async Task Pg(string sql)
+        {
+            await using var command = new Npgsql.NpgsqlCommand(sql, pg);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            foreach (var statement in new[]
+            {
+                $"CREATE TABLE {table} (id NUMBER(10) PRIMARY KEY, iym INTERVAL YEAR(2) TO MONTH, ids INTERVAL DAY(2) TO SECOND(6))",
+                $"INSERT INTO {table} VALUES (1, INTERVAL '1-2' YEAR TO MONTH, INTERVAL '3 04:05:06.5' DAY TO SECOND)",
+                $"INSERT INTO {table} VALUES (2, INTERVAL '-2-3' YEAR TO MONTH, INTERVAL '-2 03:04:05' DAY TO SECOND)",
+                "COMMIT"
+            })
+            {
+                await using var command = new OracleCommand(statement, oracle);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await Pg("CREATE SCHEMA IF NOT EXISTS migration_test");
+            var info = new TableInfo { Schema = "MIGRATION_TEST", TableName = table };
+            await new SchemaMigrationService().MigrateSchemaAsync(source, target, [info], new List<TableInfo>());
+            await new DatabaseService().MigrateTableAsync(source, target, info, new Progress<int>()); // it used to throw 42804 / 22007
+
+            await using var count = new Npgsql.NpgsqlCommand($"SELECT COUNT(*) FROM migration_test.{table.ToLowerInvariant()}", pg);
+            Assert.Equal(2L, await count.ExecuteScalarAsync());
+            await using var types = new Npgsql.NpgsqlCommand(
+                $"SELECT string_agg(data_type, ',' ORDER BY column_name) FROM information_schema.columns " +
+                $"WHERE table_schema = 'migration_test' AND table_name = '{table.ToLowerInvariant()}' AND column_name IN ('iym','ids')", pg);
+            Assert.Equal("text,text", await types.ExecuteScalarAsync());
+        }
+        finally
+        {
+            try { await Pg($"DROP TABLE IF EXISTS migration_test.{table.ToLowerInvariant()}"); } catch { /* best effort */ }
+            try
+            {
+                await using var drop = new OracleCommand($"DROP TABLE {table} PURGE", oracle);
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch
+            {
+                // Best effort: a leftover scratch table must not mask the real test result.
+            }
+        }
+    }
+
     [Trait("Category", "E2E")]
     [Fact]
     public async Task OracleTimestamps_ArriveAsTemporalColumns_WithTheirValues()
