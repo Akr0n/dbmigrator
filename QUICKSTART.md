@@ -81,13 +81,14 @@ In the **"Table Selection"** tab (enabled after connection):
 - You'll see table name, schema, and row count
 
 ### Option B: Select All
-- Click **"Select All"**
+- Click **"Select All"**: it selects the tables the search filter shows (all of them when the filter is empty), so you can filter one schema and select it, then another
 
 ### Option C: Deselect All
-- Click **"Deselect All"**
+- Click **"Deselect All"**: it clears every selection, including tables the filter hides
 
 ### Search/Filter
-- Use the search box to filter tables by name
+- Use the search box to filter tables by name or schema
+- If you start a migration while selected tables are hidden by the filter, you are asked to confirm
 - The filter applies to table name and schema
 
 ---
@@ -103,6 +104,7 @@ Choose a migration mode before starting:
 | **Data Only** | Migrates data only | Tables already exist in target |
 
 **Important**: 
+- With "Schema + Data" and "Data Only", every selected table is **emptied on the target before it is loaded**: its existing rows are replaced
 - In "Schema + Data" mode, if migration fails, all created tables are automatically dropped (rollback)
 - Primary Keys and UNIQUE constraints are automatically migrated
 - Identifier case is handled automatically (PostgreSQL: lowercase, Oracle: UPPERCASE)

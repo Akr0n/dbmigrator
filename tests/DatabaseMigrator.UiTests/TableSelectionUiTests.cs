@@ -188,13 +188,12 @@ public class TableSelectionUiTests
     }
 
     [AvaloniaFact]
-    public async Task TheFailedEmptyingDialog_OpensWithBothButtons_AndCancelAbortsTheMigration()
+    public async Task TheFailedEmptyingDialog_UsesItsGenericTitle_KeepsBothButtonsVisible_AndCancelAbortsTheMigration()
     {
         var (window, _) = await Ui.OpenWindowAsync();
         try
         {
-            // The longest refusal the pre-checks write: three table names and the advice about what "Continua" does. The headless
-            // fonts are narrower than the real ones, so this cannot prove the text fits (the dialog is 420 px high for that).
+            // The longest refusal the pre-checks write: three table names and the advice about what "Continua" does.
             string message = "DELETE FROM MIGRATION_TEST.ACT_RE_DEPLOYMENT cancellerebbe o modificherebbe anche righe di tabelle con dati " +
                 "che questa migrazione non carica dopo di essa (chiavi esterne ON DELETE CASCADE / SET NULL): " +
                 "ASM_DATI_GW.ACT_GE_BYTEARRAY, ASM_DATI_GW.ACT_HI_ACTINST, ASM_DATI_GW.ACT_HI_PROCINST e altre 7. " +
@@ -204,6 +203,10 @@ public class TableSelectionUiTests
             var answer = (Task<bool>)show.Invoke(window, new object[] { new TruncateFailureContext("MIGRATION_TEST", "ACT_RE_DEPLOYMENT", message) })!;
             var dialog = await Ui.WaitForAsync(() => window.OwnedWindows.FirstOrDefault(), "the dialog");
             dialog.UpdateLayout();
+
+            // It is shown for PostgreSQL and Oracle refusals too, so neither its title nor its text may say TRUNCATE.
+            Assert.Contains("Svuotamento tabella fallito", dialog.Title);
+            Assert.Contains("Impossibile svuotare MIGRATION_TEST.ACT_RE_DEPLOYMENT", ((StackPanel)dialog.Content!).Children.OfType<TextBlock>().Single().Text);
 
             var buttons = dialog.GetVisualDescendants().OfType<Button>().ToList();
             Assert.Equal(2, buttons.Count);

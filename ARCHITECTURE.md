@@ -118,7 +118,8 @@ public interface IDatabaseService
     Task<bool> DatabaseExistsAsync(ConnectionInfo connectionInfo);
     Task<string?> CreateDatabaseAsync(ConnectionInfo connectionInfo);
     Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, 
-        TableInfo table, IProgress<int> progress);
+        TableInfo table, IProgress<int> progress,
+        IEnumerable<TableInfo>? tablesLoadedLater = null);
 }
 ```
 
@@ -354,7 +355,7 @@ For Oracle target databases, the connecting user needs:
 
 ### Migration Errors
 - Automatic rollback of created tables on failure
-- Transaction rollback for data operations
+- Transaction rollback for data operations on SQL Server and PostgreSQL (Oracle commits each statement; see README, Known limitations)
 - Detailed logging with stack traces
 
 ### Validation

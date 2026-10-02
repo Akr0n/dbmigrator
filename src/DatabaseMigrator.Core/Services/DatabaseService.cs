@@ -859,7 +859,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                         if (check.UnverifiableSchemas.Count > 0)
                         {
                             throw new InvalidOperationException(
-                                $"Gli schemi {string.Join(", ", check.UnverifiableSchemas)} hanno il privilegio REFERENCES su {table.Schema}.{table.TableName} e le loro chiavi esterne non sono visibili all'utente di migrazione: " +
+                                $"Gli schemi {ListNames(check.UnverifiableSchemas)} hanno il privilegio REFERENCES su {table.Schema}.{table.TableName} e le loro chiavi esterne non sono visibili all'utente di migrazione: " +
                                 "potrebbero avere tabelle con dati e ON DELETE CASCADE / SET NULL che il DELETE svuoterebbe. Concedi il ruolo SELECT_CATALOG_ROLE all'utente di migrazione per verificarlo, oppure svuota la tabella tu. " +
                                 "Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
                         }
@@ -922,7 +922,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                         if (!shouldContinue)
                         {
                             throw new InvalidOperationException(
-                                $"TRUNCATE fallito per {table.Schema}.{table.TableName} e migrazione annullata dall'utente.",
+                                $"Svuotamento di {table.Schema}.{table.TableName} fallito o rifiutato e migrazione annullata dall'utente.",
                                 ex);
                         }
                     }

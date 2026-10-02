@@ -158,6 +158,32 @@ public class ConnectionGuardTests
     }
 
     [AvaloniaFact]
+    public async Task TheScriptTabButtons_DoNothingWhileTheApplicationIsNotConnected()
+    {
+        var (window, viewModel) = await Ui.OpenWindowAsync();
+        try
+        {
+            var load = window.FindControl<Button>("ScriptLoadObjectsButton")!;
+            string before = viewModel.ScriptGeneration.StatusMessage;
+
+            viewModel.IsConnected = false;
+            Ui.Click(load);
+            await Task.Delay(150); // the click handler is async void
+            Assert.Equal(before, viewModel.ScriptGeneration.StatusMessage); // it used to list the previous source's objects
+
+            // Control: when connected the same click does reach the view model (which has no source connection yet and says so).
+            viewModel.IsConnected = true;
+            Ui.Click(load);
+            await Ui.WaitUntilAsync(() => viewModel.ScriptGeneration.StatusMessage != before, "the script tab to answer");
+            Assert.Equal("Nessuna connessione sorgente disponibile.", viewModel.ScriptGeneration.StatusMessage);
+        }
+        finally
+        {
+            Ui.Reset(window, viewModel);
+        }
+    }
+
+    [AvaloniaFact]
     public void ReconnectingToAnotherSource_DropsTheObjectsListedFromThePreviousOne()
     {
         var viewModel = new ScriptGenerationViewModel();

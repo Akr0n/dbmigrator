@@ -295,7 +295,8 @@ public class MainWindowViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Optional handler that shows a UI confirmation when TRUNCATE TABLE fails.
+    /// Optional handler that shows a UI confirmation when emptying a target table fails or is refused (TRUNCATE / DELETE, or
+    /// the PostgreSQL / Oracle pre-check that it would also empty populated tables the run does not load).
     /// Returns true to continue inserting, false to abort migration.
     /// </summary>
     public Func<TruncateFailureContext, Task<bool>>? TruncateFailedPromptHandlerAsync { get; set; }

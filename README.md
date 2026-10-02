@@ -44,14 +44,6 @@ A Windows tool for migrating data between relational databases (SQL Server, Orac
 # The executable will be in: .\release\DatabaseMigrator.exe
 ```
 
-**Batch/CMD:**
-```cmd
-REM Build and publish for Windows x64
-publish.bat
-
-REM The executable will be in: .\release\DatabaseMigrator.exe
-```
-
 **Manual with dotnet CLI:**
 ```bash
 dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj \
@@ -175,6 +167,13 @@ The application logs all operations to help with troubleshooting:
 - Error details with stack traces
 
 Log files are automatically rotated and retained according to runtime settings.
+
+## Known limitations
+
+- **Text from PostgreSQL and Oracle into SQL Server.** `varchar`, `text`, `VARCHAR2` and `CLOB` columns are created as `varchar` on a SQL Server target (`NVARCHAR2` becomes `nvarchar`), so characters outside the target database's code page (Japanese, Cyrillic, Greek, many accented letters) become `?`. SQL Server to SQL Server keeps `nvarchar` data intact. For such data create the target columns as `nvarchar` yourself and use Data Only.
+- **The target schema must already exist.** Schema + Data creates the tables but not their schema, and PostgreSQL's `public` schema cannot be created on SQL Server.
+- **Each table is committed on its own.** If table N fails, tables 1 to N-1 stay replaced. On Oracle every statement is committed, so the failed table is not rolled back either: the rows already deleted and inserted stay.
+- **Oracle checks before emptying a table** read `DBA_CONSTRAINTS` when the migration user may (DBA or `SELECT_CATALOG_ROLE`). Without that right, tables in schemas it cannot see are reported as not verifiable and the migration stops and asks.
 
 ## Tests
 
