@@ -72,21 +72,23 @@ dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj \
 
 ### Step 2: Select Tables
 1. Select the tables to migrate in the "Table Selection" tab
-2. Use the search box to filter tables by name
-3. Use "Select All" and "Deselect All" buttons for quick management
+2. Use the search box to filter tables by name or schema
+3. "Select All" selects only the tables the filter currently shows, so you can select one schema at a time; "Deselect All" clears every selection, including tables the filter hides. If you start a migration while selected tables are hidden by the filter, you are asked to confirm
 4. Row counts are loaded automatically
 
 ### Step 3: Choose Migration Mode
 Select one of three migration modes:
-- **Schema + Data**: Creates tables and migrates data (with automatic rollback on failure)
+- **Schema + Data**: Creates tables and migrates data (tables created by the run are dropped again if the data load fails)
 - **Schema Only**: Creates only the table structure without data
 - **Data Only**: Migrates data only (tables must already exist in target)
+
+**Data modes empty the target tables first.** With Schema + Data and Data Only, every selected table is emptied on the target before it is loaded (SQL Server `TRUNCATE`, PostgreSQL `TRUNCATE ... CASCADE`, Oracle `DELETE FROM`), so its previous rows are replaced. Tables are loaded parents-first following the target's FOREIGN KEYs; on SQL Server the keys are switched off for the load and re-validated at the end. If emptying a table would also wipe tables you did not select (PostgreSQL `CASCADE`, Oracle `ON DELETE CASCADE` / `SET NULL`) and they hold rows, the migration stops and asks you: select those tables too, or empty them yourself. "Continue" adds the rows without emptying the table.
 
 ### Step 4: Start Migration
 1. Go to the "Migration" tab
 2. Review the status information
 3. Click "Start Migration"
-4. Monitor progress with the progress bar
+4. Monitor progress with the progress bar. While a migration or a reload runs, Connect, Load Configuration and the migration-mode buttons are disabled
 5. The target database will be created automatically if it doesn't exist
 
 ## Connection Configuration
@@ -173,6 +175,11 @@ The application logs all operations to help with troubleshooting:
 - Error details with stack traces
 
 Log files are automatically rotated and retained according to runtime settings.
+
+## Tests
+
+- `dotnet test DatabaseMigrator.sln` runs the unit tests and the headless UI tests (`tests/DatabaseMigrator.UiTests`, Windows only: they drive the real window and view model without a screen).
+- E2E tests (`Category=E2E`) need the database containers; see the matrix below. `FullRunE2ETests`, the SQL Server customer scenario in the UI project, runs with `DBMIGRATOR_RUN_E2E=true dotnet test tests/DatabaseMigrator.UiTests` against the SQL Server container.
 
 ## E2E Matrix
 

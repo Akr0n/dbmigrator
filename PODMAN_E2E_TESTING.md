@@ -80,6 +80,22 @@ All E2E tests carry the `Category=E2E` trait and run only when `DBMIGRATOR_RUN_E
 Migrates a sample table across every source/target database pair and verifies the row
 count round-trips.
 
+### Foreign-key, cascade and encoding tests
+Each creates throw-away databases (SQL Server, PostgreSQL) or tables (Oracle `migration_test` schema, plus temporary users
+created as `SYSTEM`) on the fixture containers and drops them afterwards:
+
+- `ForeignKeyLoadOrderE2ETests` — loading into a target that already enforces FOREIGN KEYs (the customer scenario).
+- `PostgresTruncateCascadeE2ETests` — `TRUNCATE ... CASCADE` must not empty populated tables the run does not load.
+  Set `DBMIGRATOR_PG_PORT` when a local PostgreSQL service owns port 5432 (default 5432).
+- `OracleDeleteCascadeE2ETests` — the same for Oracle `DELETE FROM` with `ON DELETE CASCADE` / `SET NULL` keys.
+- `SqlServerUnicodeDataE2ETests` — non-Latin text reaches a SQL Server target intact.
+- `SqlServerExistingUniqueConstraintE2ETests` — no duplicate UNIQUE constraint on a pre-created target.
+
+### UI tests (`tests/DatabaseMigrator.UiTests`, not part of the matrix)
+Windows only, so the Linux matrix does not build them. `dotnet test DatabaseMigrator.sln` runs them on every build; they drive
+the real window and view model headlessly. `FullRunE2ETests` there needs the SQL Server container:
+`DBMIGRATOR_RUN_E2E=true dotnet test tests/DatabaseMigrator.UiTests`.
+
 ### `ScriptGenerationE2ETests`
 End-to-end tests for the **"Generate Script"** feature (`ScriptGenerationService` — the
 tab that exports DDL + data of selected objects to a `.sql` file).
@@ -205,7 +221,7 @@ podman machine start
   run via the native client after the container is healthy. This avoids the fragility of
   bind-mounting Windows host paths into a rootless Podman/WSL machine.
 - **Binary Data**: test data uses ASCII-encoded mock data for simplicity.
-- **Foreign Keys**: orders reference users and products. Migrate in order: users →
-  products → orders.
+- **Foreign Keys**: orders reference users and products. The tool loads parents before children by itself, reading
+  the target's FOREIGN KEYs.
 - **Schema Names**: PostgreSQL and SQL Server use the `migration_test` schema; Oracle uses
   the `migration_test` user as schema.

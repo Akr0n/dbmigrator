@@ -36,7 +36,6 @@ c:\_repositories\dbmigrator
 ├── 📄 INDEX.md ....................... This file
 │
 ├── 🔨 publish.ps1 .................... Build script (PowerShell)
-├── 🔨 publish.bat .................... Build script (Batch)
 ├── 🧪 scripts/run-e2e-matrix.ps1 ..... Podman E2E orchestration
 ├── 🧪 scripts/container-engine.ps1 ... Container engine resolver
 │

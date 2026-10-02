@@ -211,7 +211,10 @@ public class MainWindowViewModel : ViewModelBase
    g. Generate and execute ALTER TABLE ADD CONSTRAINT DDL
    
 4. For each table (data migration):
-   a. Truncate target table (if exists)
+   a. Load tables parents-first following the target's FOREIGN KEYs (`ForeignKeyService`, `TableDependencyOrderer`);
+      then empty the target table: SQL Server `TRUNCATE` (DELETE when a key points at the table; the keys are switched
+      off for the load), PostgreSQL `TRUNCATE ... CASCADE` and Oracle `DELETE FROM`, the last two only after checking
+      that the cascade would not empty populated tables the run does not load later (`DeleteCascadeReach` for Oracle)
    b. Read data from source in batches (1000 rows)
    c. Generate INSERT statements with proper identifier quoting
    d. Execute with transaction support
@@ -332,7 +335,8 @@ Data is migrated in batches of 1000 rows to:
 
 - Parameterized queries for table existence checks
 - Identifier escaping for dynamic DDL
-- Schema and table names are validated
+- Schema and table names are escaped per dialect, and names read from a source catalog are never trusted: quotes are
+  doubled inside literals and identifiers, and line breaks are removed from `--` comments in generated scripts
 
 ### Oracle Privileges
 
