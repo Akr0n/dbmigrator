@@ -110,15 +110,37 @@ public class ScriptGenerationViewModel : ViewModelBase
         private set => this.RaiseAndSetIfChanged(ref _totalObjectsCount, value);
     }
 
+    // Bumped whenever the source changes: a list that was still loading for the previous source is dropped when it arrives.
+    private int _sourceVersion;
+
     /// <summary>Imposta la connessione sorgente da cui leggere gli oggetti.</summary>
     public void SetSourceConnection(ConnectionInfo? source)
     {
         _sourceConnection = source;
+        _sourceVersion++;
+
+        // The objects listed so far belong to the previous source: left in place, "Genera script" would export them
+        // from a database they are not in and still report success.
+        if (Dispatcher.UIThread.CheckAccess())
+            ClearObjects();
+        else
+            Dispatcher.UIThread.Post(ClearObjects);
+
         if (source != null)
         {
             SelectedDialect = source.DatabaseType;
             StatusMessage = "Premi \"Carica oggetti\" per elencare gli oggetti del database sorgente.";
         }
+    }
+
+    private void ClearObjects()
+    {
+        _selectionSubscriptions.Dispose();
+        _selectionSubscriptions = new CompositeDisposable();
+        _allObjects.Clear();
+        Objects.Clear();
+        TotalObjectsCount = 0;
+        SelectedCount = 0;
     }
 
     /// <summary>Filtro per tipo di oggetto; null mostra tutti i tipi.</summary>
@@ -144,10 +166,14 @@ public class ScriptGenerationViewModel : ViewModelBase
             StatusMessage = "Caricamento oggetti dal database sorgente...";
             LoggerService.Log("[ScriptGeneration] Caricamento oggetti dalla sorgente");
 
+            int sourceVersion = _sourceVersion;
             var objects = await _service.GetDatabaseObjectsAsync(_sourceConnection);
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                if (sourceVersion != _sourceVersion)
+                    return; // the source changed while this list was loading
+
                 _selectionSubscriptions.Dispose();
                 _selectionSubscriptions = new CompositeDisposable();
                 _allObjects.Clear();
@@ -161,6 +187,9 @@ public class ScriptGenerationViewModel : ViewModelBase
                 ApplyFilter();
                 RecomputeSelection();
             });
+
+            if (sourceVersion != _sourceVersion)
+                return; // the list was dropped: the status already tells the user to load the new source's objects
 
             StatusMessage = $"Caricati {_allObjects.Count} oggetti. Seleziona quelli da esportare.";
             LoggerService.Log($"[ScriptGeneration] Caricati {_allObjects.Count} oggetti");

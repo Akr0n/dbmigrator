@@ -68,7 +68,14 @@ namespace DatabaseMigrator.Views;
                     StartMigrationButton.IsEnabled = _vm.IsConnected && !isMigrating;
                     ConnectButton.IsEnabled = !isMigrating;
                     LoadConfigMenuItem.IsEnabled = !isMigrating;
+                    ModeSchemaAndData.IsEnabled = ModeSchemaOnly.IsEnabled = ModeDataOnly.IsEnabled = !isMigrating;
                 });
+
+            // Once the connection is gone the tab on screen must be the Connections one: a disabled TabItem does not disable
+            // the content already shown, so the Script tab would keep working on the previous source.
+            _vm.WhenAnyValue(vm => vm.IsConnected)
+                .Where(connected => !connected)
+                .Subscribe(_ => MainTabControl.SelectedIndex = 0);
             
             // Bind Tables Lists - use FilteredTables for search functionality
             SourceTablesListBox.Bind(ItemsControl.ItemsSourceProperty, new Binding("FilteredTables") { Source = _vm });
@@ -378,14 +385,14 @@ namespace DatabaseMigrator.Views;
             return false;
 
         var error = ctx.ErrorMessage ?? "";
-        if (error.Length > 400)
-            error = error.Substring(0, 400) + "...";
+        if (error.Length > 700)
+            error = error.Substring(0, 700) + "...";
 
         var dialog = new Window
         {
-            Title = "⚠️ TRUNCATE fallito",
+            Title = "⚠️ Svuotamento tabella fallito",
             Width = 520,
-            Height = 280,
+            Height = 420,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false,
             ShowInTaskbar = false
@@ -400,9 +407,9 @@ namespace DatabaseMigrator.Views;
 
         var messageText = new TextBlock
         {
-            Text = $"Impossibile eseguire TRUNCATE su {ctx.Schema}.{ctx.TableName}.\n\n" +
+            Text = $"Impossibile svuotare {ctx.Schema}.{ctx.TableName} prima del caricamento.\n\n" +
                    $"Errore: {error}\n\n" +
-                   "Vuoi continuare inserendo comunque i dati?",
+                   "Vuoi continuare inserendo comunque i dati, senza svuotare la tabella?",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap,
             FontSize = 14
         };
@@ -858,7 +865,7 @@ namespace DatabaseMigrator.Views;
 
     private async void OnScriptLoadObjectsClicked(object? sender, RoutedEventArgs e)
     {
-        if (_vm == null) return;
+        if (_vm == null || !_vm.IsConnected) return;
         try
         {
             await _vm.ScriptGeneration.LoadObjectsAsync();
@@ -871,7 +878,7 @@ namespace DatabaseMigrator.Views;
 
     private async void OnScriptGenerateClicked(object? sender, RoutedEventArgs e)
     {
-        if (_vm == null) return;
+        if (_vm == null || !_vm.IsConnected) return;
         try
         {
             var storageProvider = StorageProvider;

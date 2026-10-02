@@ -164,7 +164,13 @@ public class MainWindowViewModel : ViewModelBase
     public MigrationMode SelectedMigrationMode
     {
         get => _selectedMigrationMode;
-        set => this.RaiseAndSetIfChanged(ref _selectedMigrationMode, value);
+        // A running migration reads the mode at every step: changing it mid-run would add or skip steps (say, load and
+        // TRUNCATE every selected table in a run started as schema only). The radio buttons are disabled meanwhile too.
+        set
+        {
+            if (!IsMigrating)
+                this.RaiseAndSetIfChanged(ref _selectedMigrationMode, value);
+        }
     }
 
     public IObservable<bool> CanStartMigrationObservable { get; }
@@ -446,6 +452,9 @@ public class MainWindowViewModel : ViewModelBase
         try
         {
             IsMigrating = true;
+            // The connection fields were just overwritten with settings that are not validated yet. Until the tests below
+            // pass nothing may run with them, so a failed reconnect must not leave the old "connected" state behind.
+            IsConnected = false;
             ErrorMessage = "";
             StatusMessage = "Connessione ai database...";
             ProgressPercentage = 0;
@@ -1095,31 +1104,44 @@ public class MainWindowViewModel : ViewModelBase
                 return false;
             }
 
-            // Carica source connection
+            // Both connections are built before either is assigned: a bad target (an unknown database type, a password the
+            // current Windows user cannot decrypt) must not leave the source of the new file next to the old target.
             var sourceInfo = config.Source.ToConnectionInfo();
-            SourceConnection = new ConnectionViewModel
+            var targetInfo = config.Target.ToConnectionInfo();
+            // SelectedDatabaseType first: its setter resets Port to the type's default, which would undo the loaded port.
+            var newSource = new ConnectionViewModel
             {
+                SelectedDatabaseType = sourceInfo.DatabaseType,
                 Server = sourceInfo.Server,
                 Port = sourceInfo.Port,
                 Database = sourceInfo.Database,
                 Username = sourceInfo.Username,
                 Password = sourceInfo.Password,
-                TrustServerCertificate = sourceInfo.TrustServerCertificate,
-                SelectedDatabaseType = sourceInfo.DatabaseType
+                TrustServerCertificate = sourceInfo.TrustServerCertificate
             };
-
-            // Carica target connection
-            var targetInfo = config.Target.ToConnectionInfo();
-            TargetConnection = new ConnectionViewModel
+            var newTarget = new ConnectionViewModel
             {
+                SelectedDatabaseType = targetInfo.DatabaseType,
                 Server = targetInfo.Server,
                 Port = targetInfo.Port,
                 Database = targetInfo.Database,
                 Username = targetInfo.Username,
                 Password = targetInfo.Password,
-                TrustServerCertificate = targetInfo.TrustServerCertificate,
-                SelectedDatabaseType = targetInfo.DatabaseType
+                TrustServerCertificate = targetInfo.TrustServerCertificate
             };
+
+            // The loaded settings are not validated and the table list still belongs to the previous source: connect again.
+            // Same reset as the start of a Connect, so the Connections tab does not keep saying "Connesso" in green.
+            IsConnected = false;
+            ConnectionSummary = "";
+            SourceStatusText = "";
+            TargetStatusText = "";
+            SourceStatusBrush = Brushes.Transparent;
+            TargetStatusBrush = Brushes.Transparent;
+            ErrorMessage = "";
+            ProgressPercentage = 0;
+            SourceConnection = newSource;
+            TargetConnection = newTarget;
 
             StatusMessage = $"Configurazione caricata: {Path.GetFileName(filePath)}";
             Log($"[LoadConfigurationAsync] Configurazione caricata da {filePath}");
