@@ -157,23 +157,14 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         try
         {
             // Crea una connessione (per Oracle usa il service name dall'utente: FREEPDB1, XE, ecc.)
-            var connInfo = new ConnectionInfo
+            var connInfo = connectionInfo.WithDatabase(connectionInfo.DatabaseType switch
             {
-                DatabaseType = connectionInfo.DatabaseType,
-                Server = connectionInfo.Server,
-                Port = connectionInfo.Port,
-                Username = connectionInfo.Username,
-                Password = connectionInfo.Password,
-                TrustServerCertificate = connectionInfo.TrustServerCertificate,
-                Database = connectionInfo.DatabaseType switch
-                {
-                    DatabaseType.Oracle => string.IsNullOrWhiteSpace(connectionInfo.Database)
-                        ? "FREEPDB1"
-                        : connectionInfo.Database,
-                    DatabaseType.PostgreSQL => "postgres",
-                    _ => "master"
-                }
-            };
+                DatabaseType.Oracle => string.IsNullOrWhiteSpace(connectionInfo.Database)
+                    ? "FREEPDB1"
+                    : connectionInfo.Database,
+                DatabaseType.PostgreSQL => "postgres",
+                _ => "master"
+            });
 
             using (var connection = CreateConnection(connInfo))
             {
@@ -232,21 +223,12 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             }
 
             // Crea connessione al sistema database (per Oracle usa il service name dall'utente)
-            var systemConnInfo = new ConnectionInfo
+            var systemConnInfo = connectionInfo.WithDatabase(connectionInfo.DatabaseType switch
             {
-                DatabaseType = connectionInfo.DatabaseType,
-                Server = connectionInfo.Server,
-                Port = connectionInfo.Port,
-                Username = connectionInfo.Username,
-                Password = connectionInfo.Password,
-                TrustServerCertificate = connectionInfo.TrustServerCertificate,
-                Database = connectionInfo.DatabaseType switch
-                {
-                    DatabaseType.Oracle => string.IsNullOrWhiteSpace(connectionInfo.Database) ? "FREEPDB1" : connectionInfo.Database,
-                    DatabaseType.PostgreSQL => "postgres",  // PostgreSQL system database
-                    _ => "master"  // SQL Server system database
-                }
-            };
+                DatabaseType.Oracle => string.IsNullOrWhiteSpace(connectionInfo.Database) ? "FREEPDB1" : connectionInfo.Database,
+                DatabaseType.PostgreSQL => "postgres",  // PostgreSQL system database
+                _ => "master"  // SQL Server system database
+            });
 
             using (var connection = CreateConnection(systemConnInfo))
             {

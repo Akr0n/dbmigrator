@@ -443,6 +443,18 @@ public class MainWindowViewModel : ViewModelBase
         RecomputeTableViews(force: true);
     }
 
+    /// <summary>What to try when a connection fails because of the certificate or the encryption settings (empty when neither applies).</summary>
+    private static string FailureHint(ConnectionInfo? connection) => connection?.DatabaseType switch
+    {
+        DatabaseType.SqlServer when !connection.TrustServerCertificate =>
+            " Con un certificato autofirmato (ad esempio SQL Server in un container) spunta «Accetta certificato server (SSL)».",
+        DatabaseType.PostgreSQL or DatabaseType.Oracle when connection.RequireEncryption =>
+            " La cifratura TLS è richiesta: il server deve offrirla"
+            + (connection.TrustServerCertificate ? "." : " con un certificato valido, oppure spunta «Accetta certificato server (SSL)».")
+            ,
+        _ => ""
+    };
+
     private async Task ConnectDatabasesAsync()
     {
         // A migration or a reload is running with these very connections, and the finally below would clear IsMigrating
@@ -488,7 +500,8 @@ public class MainWindowViewModel : ViewModelBase
             {
                 SourceStatusText = "● Errore";
                 SourceStatusBrush = new SolidColorBrush(Color.Parse("#ef5350"));
-                ErrorMessage = "Errore: Impossibile connettersi al database sorgente. Verifica server, porta e credenziali.";
+                ErrorMessage = "Errore: Impossibile connettersi al database sorgente. Verifica server, porta e credenziali."
+                    + FailureHint(SourceConnection.ConnectionInfo);
                 StatusMessage = "Connessione sorgente fallita";
                 return;
             }
@@ -507,7 +520,8 @@ public class MainWindowViewModel : ViewModelBase
             {
                 TargetStatusText = "● Errore";
                 TargetStatusBrush = new SolidColorBrush(Color.Parse("#ef5350"));
-                ErrorMessage = "Errore: Impossibile connettersi al database target. Verifica server, porta e credenziali.";
+                ErrorMessage = "Errore: Impossibile connettersi al database target. Verifica server, porta e credenziali."
+                    + FailureHint(TargetConnection.ConnectionInfo);
                 StatusMessage = "Connessione target fallita";
                 return;
             }
@@ -1118,7 +1132,8 @@ public class MainWindowViewModel : ViewModelBase
                 Database = sourceInfo.Database,
                 Username = sourceInfo.Username,
                 Password = sourceInfo.Password,
-                TrustServerCertificate = sourceInfo.TrustServerCertificate
+                TrustServerCertificate = sourceInfo.TrustServerCertificate,
+                RequireEncryption = sourceInfo.RequireEncryption
             };
             var newTarget = new ConnectionViewModel
             {
@@ -1128,7 +1143,8 @@ public class MainWindowViewModel : ViewModelBase
                 Database = targetInfo.Database,
                 Username = targetInfo.Username,
                 Password = targetInfo.Password,
-                TrustServerCertificate = targetInfo.TrustServerCertificate
+                TrustServerCertificate = targetInfo.TrustServerCertificate,
+                RequireEncryption = targetInfo.RequireEncryption
             };
 
             // The loaded settings are not validated and the table list still belongs to the previous source: connect again.

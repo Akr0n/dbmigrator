@@ -119,6 +119,21 @@ The application supports saving and loading connection configurations:
 Configurations are saved as JSON files and include both source and target connection settings.
 Passwords are protected with Windows DPAPI (`passwordProtected: true`) by default.
 
+## Connection security
+
+- **SQL Server** connections are always encrypted. The server certificate is verified unless **"Accetta certificato server (SSL)"** is
+  ticked. The box starts unticked (set `DBMIGRATOR_TRUST_SERVER_CERTIFICATE=true`, or `TrustServerCertificateByDefault` in
+  `appsettings.json`, to start it ticked): tick it for a SQL Server in a container or with a self-signed certificate. A failed
+  connection says so.
+- **PostgreSQL and Oracle** use the driver's default, which encrypts when the server offers TLS and otherwise falls back to plaintext
+  without verifying the server. Tick **"Richiedi connessione cifrata TLS"** to require it: PostgreSQL then uses `SslMode=VerifyFull`
+  (`Require`, i.e. encrypted but unverified, when "Accetta certificato server" is also ticked) and Oracle connects over TCPS. If the
+  server cannot provide that, the connection fails instead of falling back. For Oracle the certificate chain is checked against the
+  Windows trust store or the client wallet; "Accetta certificato server" only skips the check that its name is the server's.
+- Both choices are saved in the configuration file (`trustServerCertificate`, `requireEncryption`).
+- Verified against real servers: PostgreSQL with and without TLS (self-signed certificate) and an Oracle listener without TLS, which
+  refuses a required-encryption connection. Oracle TCPS against a TLS listener is covered only by a unit test on the connection string.
+
 ## Runtime Settings
 
 Runtime settings can be configured with:

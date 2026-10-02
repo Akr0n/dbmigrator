@@ -47,6 +47,31 @@ public class LoadConfigurationTests : IDisposable
         Assert.False(viewModel.IsConnected);                 // the table list belongs to the previous source
     }
 
+    // Both ways round, so that forgetting either side's setting shows up whichever way the other one is set.
+    [AvaloniaTheory]
+    [InlineData(true, false, false, true)]
+    [InlineData(false, true, true, false)]
+    public async Task ALoadedConfiguration_KeepsItsEncryptionAndCertificateChoices(
+        bool sourceEncrypted, bool sourceTrusted, bool targetEncrypted, bool targetTrusted)
+    {
+        var saved = Vm.Create(new FakeDatabaseService());
+        saved.SourceConnection!.RequireEncryption = sourceEncrypted;
+        saved.SourceConnection.TrustServerCertificate = sourceTrusted;
+        saved.TargetConnection!.RequireEncryption = targetEncrypted;
+        saved.TargetConnection.TrustServerCertificate = targetTrusted;
+        string path = Path.Combine(_directory, "encryption.json");
+        Assert.True(await saved.SaveConfigurationAsync(path));
+
+        var viewModel = Vm.Create(new FakeDatabaseService());
+        Assert.True(await viewModel.LoadConfigurationAsync(path));
+
+        // A request for encryption that the loaded view model forgot would open the next connection in plaintext.
+        Assert.Equal(sourceEncrypted, viewModel.SourceConnection!.RequireEncryption);
+        Assert.Equal(sourceTrusted, viewModel.SourceConnection.TrustServerCertificate);
+        Assert.Equal(targetEncrypted, viewModel.TargetConnection!.RequireEncryption);
+        Assert.Equal(targetTrusted, viewModel.TargetConnection.TrustServerCertificate);
+    }
+
     [AvaloniaFact]
     public async Task AConfigurationWithAGoodSourceAndABadTarget_ChangesNothing_AndStaysConnected()
     {

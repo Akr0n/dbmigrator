@@ -29,6 +29,8 @@ Database:           MySourceDB
 Username:           sa
 Password:           YourPassword123
 ```
+A SQL Server with a self-signed certificate (for example in a container) needs **"Accetta certificato server (SSL)"** ticked;
+the box starts unticked. See "Connection security" in the README for it and for requiring TLS on PostgreSQL and Oracle.
 
 **PostgreSQL Example**:
 ```

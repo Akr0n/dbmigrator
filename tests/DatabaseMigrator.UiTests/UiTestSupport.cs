@@ -88,8 +88,54 @@ internal static class Ui
         window.Show();
         // Generous: a loaded one-core CI runner needs several seconds to start the window.
         var viewModel = await WaitForAsync(() => window.DataContext as MainWindowViewModel, "the window's view model", timeoutMs: 60000);
+        foreach (string name in SecurityCheckBoxes)
+            InitialCheckBoxStates[name] = window.FindControl<CheckBox>(name)!.IsChecked;
+        foreach (string name in FieldBoxes)
+            InitialTexts[name] = window.FindControl<TextBox>(name)!.Text;
+        foreach (string name in TypeCombos)
+            InitialTypes[name] = window.FindControl<ComboBox>(name)!.SelectedIndex;
+        InitialConnections = (Snapshot(viewModel.SourceConnection!), Snapshot(viewModel.TargetConnection!));
         return (window, viewModel);
     }
+
+    private static readonly string[] FieldBoxes =
+    [
+        "SourceServerTextBox", "SourcePortTextBox", "SourceDatabaseTextBox", "SourceUsernameTextBox", "SourcePasswordTextBox",
+        "TargetServerTextBox", "TargetPortTextBox", "TargetDatabaseTextBox", "TargetUsernameTextBox", "TargetPasswordTextBox"
+    ];
+
+    private static readonly string[] TypeCombos = ["SourceTypeCombo", "TargetTypeCombo"];
+    private static readonly Dictionary<string, string?> InitialTexts = new();
+    private static readonly Dictionary<string, int> InitialTypes = new();
+    private static (ConnectionState Source, ConnectionState Target) InitialConnections;
+
+    private sealed record ConnectionState(DatabaseType Type, int Port, string Server, string Database, string Username,
+        string Password, bool Trust, bool RequireEncryption);
+
+    private static ConnectionState Snapshot(ConnectionViewModel c) =>
+        new(c.SelectedDatabaseType, c.Port, c.Server, c.Database, c.Username, c.Password, c.TrustServerCertificate, c.RequireEncryption);
+
+    private static void Restore(ConnectionViewModel c, ConnectionState s)
+    {
+        c.SelectedDatabaseType = s.Type; // first: its setter resets the port to the type's default
+        c.Port = s.Port;
+        c.Server = s.Server;
+        c.Database = s.Database;
+        c.Username = s.Username;
+        c.Password = s.Password;
+        c.TrustServerCertificate = s.Trust;
+        c.RequireEncryption = s.RequireEncryption;
+    }
+
+    /// <summary>The certificate and encryption boxes of the Connections tab, source then target.</summary>
+    public static readonly string[] SecurityCheckBoxes =
+    [
+        "SourceTrustServerCertificateCheckBox", "SourceRequireEncryptionCheckBox",
+        "TargetTrustServerCertificateCheckBox", "TargetRequireEncryptionCheckBox"
+    ];
+
+    /// <summary>How those boxes were when the window opened, before any test touched them (<see cref="Reset"/> clears them).</summary>
+    public static readonly Dictionary<string, bool?> InitialCheckBoxStates = new();
 
     /// <summary>Puts the shared window back as a test found it: no dialog open, idle, disconnected, fields empty.</summary>
     public static void Reset(MainWindow window, MainWindowViewModel viewModel)
@@ -99,9 +145,15 @@ internal static class Ui
 
         viewModel.IsMigrating = false;
         viewModel.IsConnected = false;
-        window.FindControl<TextBox>("SourceServerTextBox")!.Text = "";
-        window.FindControl<ComboBox>("SourceTypeCombo")!.SelectedIndex = 0;
+        foreach (var (name, text) in InitialTexts)
+            window.FindControl<TextBox>(name)!.Text = text;
+        foreach (var (name, index) in InitialTypes)
+            window.FindControl<ComboBox>(name)!.SelectedIndex = index;
+        Restore(viewModel.SourceConnection!, InitialConnections.Source);
+        Restore(viewModel.TargetConnection!, InitialConnections.Target);
         window.FindControl<TextBlock>("ErrorTextBlock")!.Text = "";
+        foreach (var (name, state) in InitialCheckBoxStates)
+            window.FindControl<CheckBox>(name)!.IsChecked = state;
     }
 
     /// <summary>Runs a command the way a click does, and waits for it to finish.</summary>

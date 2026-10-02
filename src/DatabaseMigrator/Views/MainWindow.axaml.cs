@@ -28,6 +28,10 @@ namespace DatabaseMigrator.Views;
     public MainWindow()
     {
         InitializeComponent();
+        // Off unless the runtime settings say otherwise: accepting any certificate switches the verification of the server off.
+        bool trustByDefault = RuntimeOptionsProvider.Current.Security.TrustServerCertificateByDefault;
+        SourceTrustServerCertificateCheckBox.IsChecked = trustByDefault;
+        TargetTrustServerCertificateCheckBox.IsChecked = trustByDefault;
         Loaded += OnWindowLoaded;
     }
 
@@ -720,6 +724,7 @@ namespace DatabaseMigrator.Views;
             _vm.SourceConnection.Username = SourceUsernameTextBox.Text ?? "";
             _vm.SourceConnection.Password = SourcePasswordTextBox.Text ?? "";
             _vm.SourceConnection.TrustServerCertificate = SourceTrustServerCertificateCheckBox.IsChecked == true;
+            _vm.SourceConnection.RequireEncryption = SourceRequireEncryptionCheckBox.IsChecked == true;
             
             _vm.TargetConnection!.SelectedDatabaseType = (DatabaseType)targetType;
             _vm.TargetConnection.Server = TargetServerTextBox.Text ?? "";
@@ -728,6 +733,7 @@ namespace DatabaseMigrator.Views;
             _vm.TargetConnection.Username = TargetUsernameTextBox.Text ?? "";
             _vm.TargetConnection.Password = TargetPasswordTextBox.Text ?? "";
             _vm.TargetConnection.TrustServerCertificate = TargetTrustServerCertificateCheckBox.IsChecked == true;
+            _vm.TargetConnection.RequireEncryption = TargetRequireEncryptionCheckBox.IsChecked == true;
             
             Log($"[MainWindow] Executing ConnectDatabasesCommand...");
             _vm.ConnectDatabasesCommand.Execute(Unit.Default);
@@ -826,30 +832,7 @@ namespace DatabaseMigrator.Views;
                 if (await _vm!.LoadConfigurationAsync(filePath))
                 {
                     Log("[OnLoadConfigurationClicked] Configurazione caricata con successo");
-                    
-                    // Popola i campi UI con i dati caricati
-                    if (_vm.SourceConnection?.ConnectionInfo != null)
-                    {
-                        SourceTypeCombo.SelectedIndex = (int)_vm.SourceConnection.ConnectionInfo.DatabaseType;
-                        SourceServerTextBox.Text = _vm.SourceConnection.ConnectionInfo.Server;
-                        SourcePortTextBox.Text = _vm.SourceConnection.ConnectionInfo.Port.ToString();
-                        SourceDatabaseTextBox.Text = _vm.SourceConnection.ConnectionInfo.Database;
-                        SourceUsernameTextBox.Text = _vm.SourceConnection.ConnectionInfo.Username;
-                        SourcePasswordTextBox.Text = _vm.SourceConnection.ConnectionInfo.Password;
-                        SourceTrustServerCertificateCheckBox.IsChecked = _vm.SourceConnection.ConnectionInfo.TrustServerCertificate;
-                    }
-
-                    if (_vm.TargetConnection?.ConnectionInfo != null)
-                    {
-                        TargetTypeCombo.SelectedIndex = (int)_vm.TargetConnection.ConnectionInfo.DatabaseType;
-                        TargetServerTextBox.Text = _vm.TargetConnection.ConnectionInfo.Server;
-                        TargetPortTextBox.Text = _vm.TargetConnection.ConnectionInfo.Port.ToString();
-                        TargetDatabaseTextBox.Text = _vm.TargetConnection.ConnectionInfo.Database;
-                        TargetUsernameTextBox.Text = _vm.TargetConnection.ConnectionInfo.Username;
-                        TargetPasswordTextBox.Text = _vm.TargetConnection.ConnectionInfo.Password;
-                        TargetTrustServerCertificateCheckBox.IsChecked = _vm.TargetConnection.ConnectionInfo.TrustServerCertificate;
-                    }
-
+                    ShowConnectionsInFields();
                     StatusBarTextBlock.Text = "Configurazione caricata";
                 }
             }
@@ -858,6 +841,35 @@ namespace DatabaseMigrator.Views;
         {
             Log($"[OnLoadConfigurationClicked] Errore: {ex.Message}");
             ErrorTextBlock.Text = $"Errore nel caricamento: {ex.Message}";
+        }
+    }
+
+    /// <summary>Puts the view model's connections into the fields of the Connections tab, boxes included.</summary>
+    private void ShowConnectionsInFields()
+    {
+        // A box left behind would be read back by the next Connect: "off" over a loaded "encryption required" opens a plaintext connection.
+        if (_vm?.SourceConnection?.ConnectionInfo is { } source)
+        {
+            SourceTypeCombo.SelectedIndex = (int)source.DatabaseType;
+            SourceServerTextBox.Text = source.Server;
+            SourcePortTextBox.Text = source.Port.ToString();
+            SourceDatabaseTextBox.Text = source.Database;
+            SourceUsernameTextBox.Text = source.Username;
+            SourcePasswordTextBox.Text = source.Password;
+            SourceTrustServerCertificateCheckBox.IsChecked = source.TrustServerCertificate;
+            SourceRequireEncryptionCheckBox.IsChecked = source.RequireEncryption;
+        }
+
+        if (_vm?.TargetConnection?.ConnectionInfo is { } target)
+        {
+            TargetTypeCombo.SelectedIndex = (int)target.DatabaseType;
+            TargetServerTextBox.Text = target.Server;
+            TargetPortTextBox.Text = target.Port.ToString();
+            TargetDatabaseTextBox.Text = target.Database;
+            TargetUsernameTextBox.Text = target.Username;
+            TargetPasswordTextBox.Text = target.Password;
+            TargetTrustServerCertificateCheckBox.IsChecked = target.TrustServerCertificate;
+            TargetRequireEncryptionCheckBox.IsChecked = target.RequireEncryption;
         }
     }
 
