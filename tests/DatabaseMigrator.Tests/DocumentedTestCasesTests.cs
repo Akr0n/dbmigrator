@@ -38,11 +38,56 @@ namespace DatabaseMigrator.Tests;
 /// tests/DatabaseMigrator.UiTests, che esegue la MainWindow e il MainWindowViewModel reali (Avalonia.Headless).
 /// </summary>
 [Trait("Category", "E2E")]
-public class DocumentedTestCasesTests
+public class DocumentedTestCasesTests : IAsyncLifetime
 {
     private static bool ShouldRunE2E() =>
         string.Equals(Environment.GetEnvironmentVariable("DBMIGRATOR_RUN_E2E"), "true",
             StringComparison.OrdinalIgnoreCase);
+
+    // The tests here drop PostgreSQL fixture tables (DROP ... CASCADE also removes the keys of the tables that referenced them)
+    // and migrate them again, and a schema migration creates a table with its PRIMARY KEY / UNIQUE but not its FOREIGN KEYs.
+    // ForeignKeyLoadOrderE2ETests reads those keys from the same fixture, and which class runs first depends on the order xUnit
+    // picks (it changed when tests were added). So whatever a test rewrote, the keys go back when it is over. Only the missing
+    // ones are added, NOT VALID: a test may have reloaded the parent table with other rows than the ones the child references.
+    private const string RestorePgFixtureForeignKeysSql = @"
+        DO $$
+        DECLARE r record;
+        BEGIN
+            FOR r IN SELECT * FROM (VALUES
+                ('fk_parent', 'grandparent_id', 'fk_grandparent', 'id'),
+                ('fk_child',  'parent_id',      'fk_parent',      'id'),
+                ('orders',    'user_id',        'users',          'id'),
+                ('orders',    'product_id',     'products',       'id'),
+                ('self_ref',  'parent_id',      'self_ref',       'id')) AS v(child, col, parent, parent_col)
+            LOOP
+                IF to_regclass('migration_test.' || r.child) IS NOT NULL
+                   AND to_regclass('migration_test.' || r.parent) IS NOT NULL
+                   AND NOT EXISTS (
+                       SELECT 1 FROM pg_constraint c
+                       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                       WHERE c.contype = 'f'
+                         AND c.conrelid = ('migration_test.' || r.child)::regclass
+                         AND c.confrelid = ('migration_test.' || r.parent)::regclass
+                         AND a.attname = r.col)
+                THEN
+                    EXECUTE format('ALTER TABLE migration_test.%I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES migration_test.%I (%I) NOT VALID',
+                        r.child, r.child || '_' || r.col || '_fkey', r.col, r.parent, r.parent_col);
+                END IF;
+            END LOOP;
+        END $$;";
+
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
+    {
+        if (!ShouldRunE2E()) return;
+
+        await using var conn = new NpgsqlConnection(PgConnStr);
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = RestorePgFixtureForeignKeysSql;
+        await cmd.ExecuteNonQueryAsync();
+    }
 
     private static readonly DatabaseService  DbSvc     = new();
     private static readonly SchemaMigrationService SchemaSvc = new();
