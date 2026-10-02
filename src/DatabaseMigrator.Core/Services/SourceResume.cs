@@ -55,19 +55,36 @@ internal static class SourceResume
     {
         using var command = connection.CreateCommand();
         command.CommandTimeout = commandTimeoutSeconds;
-        command.CommandText = dialect == DatabaseType.Oracle
-            ? @"SELECT cc.column_name
+        command.CommandText = dialect switch
+        {
+            // Only a key that is enforced and checked gives every row a place of its own: a DISABLEd one, or one enabled without
+            // validation (ENABLE NOVALIDATE), lets rows tie, and rows that tie have no fixed order for a resumed read to come back to.
+            DatabaseType.Oracle => @"SELECT cc.column_name
                 FROM all_constraints c
                 JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name
-                WHERE c.constraint_type = 'P' AND c.owner = :schema AND c.table_name = :tbl
-                ORDER BY cc.position"
-            : @"SELECT kcu.column_name
+                WHERE c.constraint_type = 'P' AND c.status = 'ENABLED' AND c.validated = 'VALIDATED'
+                  AND c.owner = :schema AND c.table_name = :tbl
+                ORDER BY cc.position",
+            // The system catalog, not information_schema: that view lists a table only to the roles that own it or hold a privilege
+            // other than SELECT, so a read-only source account found no key at all. A table other tables inherit from has no usable
+            // key either: SELECT * on it also returns their rows, and its key is not unique across them.
+            DatabaseType.PostgreSQL => @"SELECT a.attname
+                FROM pg_catalog.pg_constraint c
+                JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+                JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+                CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+                JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+                WHERE c.contype = 'p' AND n.nspname = @schema AND t.relname = @tbl
+                  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = t.oid)
+                ORDER BY k.ord",
+            _ => @"SELECT kcu.column_name
                 FROM information_schema.table_constraints tc
                 JOIN information_schema.key_column_usage kcu
                   ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name
                  AND kcu.table_schema = tc.table_schema AND kcu.table_name = tc.table_name
                 WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = @schema AND tc.table_name = @tbl
-                ORDER BY kcu.ordinal_position";
+                ORDER BY kcu.ordinal_position"
+        };
         if (command is OracleCommand oracleCommand)
             oracleCommand.BindByName = true;
         foreach (var (name, value) in new[] { ("schema", schema), ("tbl", table) })

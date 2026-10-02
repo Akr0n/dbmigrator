@@ -638,6 +638,13 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     internal Func<ResumePolicy> NewResumePolicy { get; set; } = () => new ResumePolicy(5, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(30));
 
     /// <summary>
+    /// A table with fewer rows than this is read as before: no ordering and no resume. Ordering by the key makes the server sort
+    /// when the key is not the physical order, a cost and a risk worth taking only for a table big enough to lose minutes to a
+    /// cut; a small one just starts over. A test sets it to 0.
+    /// </summary>
+    internal long ResumeMinRows { get; set; } = 100_000;
+
+    /// <summary>
     /// The most values (rows x columns) one INSERT ... VALUES may hold on a SQL Server target. The query processor compiles every
     /// value as an expression and the cost grows much faster than their number: 1000 rows of a 199-column table (about 200,000
     /// values) made it give up after 44 seconds with error 8623 ("ran out of internal resources and could not produce a query
@@ -1073,7 +1080,12 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 // middle of it. Reading in primary key order from the first row on lets the read start again after the last row
                 // received (SourceResume); the target transaction stays open meanwhile. No key, no order: no resume.
                 var keyColumns = new List<string>();
-                if (_enableTransientRetries)
+                if (_enableTransientRetries && totalRows < ResumeMinRows)
+                {
+                    // Small enough to start over in seconds: read as before, with no ORDER BY (which can make the server sort first).
+                    Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} has {totalRows} rows, fewer than {ResumeMinRows}: it is read without ordering, and if the connection to the source is lost it starts over");
+                }
+                else if (_enableTransientRetries)
                 {
                     try
                     {
@@ -1087,7 +1099,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                     }
 
                     if (keyColumns.Count == 0)
-                        Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} has no usable primary key: if the connection to the source is lost while it is read, the table starts over");
+                        Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} has no usable primary key (none, a disabled one, or one this user cannot see): if the connection to the source is lost while it is read, the table starts over");
                 }
 
                 string dataQuery = keyColumns.Count > 0
@@ -1388,7 +1400,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         }
     }
 
-    private async Task FinalizeTransactionAsync(DbConnection connection, DbTransaction? transaction, DatabaseType dbType, bool commit)
+    internal async Task FinalizeTransactionAsync(DbConnection connection, DbTransaction? transaction, DatabaseType dbType, bool commit)
     {
         try
         {
@@ -1421,6 +1433,11 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         catch (Exception ex)
         {
             Log($"[FinalizeTransactionAsync] Error finalizing transaction: {ex.Message}");
+            // A rollback that fails is only logged: the caller is already handling the error that made it roll back (and a rollback
+            // of millions of rows can well time out). A COMMIT that fails is another matter: the rows are not saved, and swallowing
+            // it reported the table as migrated.
+            if (commit)
+                throw;
         }
     }
 

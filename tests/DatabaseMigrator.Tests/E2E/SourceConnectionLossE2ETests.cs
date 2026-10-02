@@ -28,8 +28,9 @@ public class SourceConnectionLossE2ETests
         await using var db = await Scratch.CreateAsync(sourceHasPrimaryKey: true);
         using var proxy = new TcpDropProxy("127.0.0.1", 1433, CutAfterBytes);
 
-        var log = await MigrateCapturingLogAsync(db, proxy);
+        var (log, error) = await MigrateCapturingLogAsync(db, proxy);
 
+        Assert.Null(error);
         Assert.Equal(1, proxy.Drops); // the cut really happened: without it this test proves nothing
         await AssertSameRowsAsync(db);
         Assert.Contains(log, line => line.Contains("Resumed reading", StringComparison.Ordinal));
@@ -43,8 +44,9 @@ public class SourceConnectionLossE2ETests
         await using var db = await Scratch.CreateAsync(sourceHasPrimaryKey: true);
         using var proxy = new TcpDropProxy("127.0.0.1", 1433, CutAfterBytes, maxDrops: 2);
 
-        await MigrateCapturingLogAsync(db, proxy);
+        var (_, error) = await MigrateCapturingLogAsync(db, proxy);
 
+        Assert.Null(error);
         Assert.Equal(2, proxy.Drops);
         await AssertSameRowsAsync(db);
     }
@@ -58,11 +60,31 @@ public class SourceConnectionLossE2ETests
         await using var db = await Scratch.CreateAsync(sourceHasPrimaryKey: false);
         using var proxy = new TcpDropProxy("127.0.0.1", 1433, CutAfterBytes);
 
-        var ex = await Record.ExceptionAsync(() => MigrateCapturingLogAsync(db, proxy));
+        var (log, error) = await MigrateCapturingLogAsync(db, proxy);
 
-        Assert.NotNull(ex);
+        Assert.IsAssignableFrom<SqlException>(error); // the transport error itself, as before
         Assert.Equal(1, proxy.Drops);
         Assert.Equal(0, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM dbo.big_t")); // rolled back
+        Assert.Contains(log, line => line.Contains("has no usable primary key", StringComparison.Ordinal));
+        Assert.DoesNotContain(log, line => line.Contains("resuming in", StringComparison.Ordinal)); // no attempt was made
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task ATableBelowTheResumeThreshold_IsReadAsBefore_SoALossStillFailsIt()
+    {
+        if (!ShouldRunE2E()) return;
+        // Ordering by the key costs a sort where the key is not the physical order, so a small table is not ordered at all: it just starts over.
+        await using var db = await Scratch.CreateAsync(sourceHasPrimaryKey: true);
+        using var proxy = new TcpDropProxy("127.0.0.1", 1433, CutAfterBytes);
+
+        var (log, error) = await MigrateCapturingLogAsync(db, proxy, resumeMinRows: 100_000);
+
+        Assert.IsAssignableFrom<SqlException>(error);
+        Assert.Equal(1, proxy.Drops);
+        Assert.Equal(0, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM dbo.big_t"));
+        Assert.Contains(log, line => line.Contains("fewer than", StringComparison.Ordinal));
+        Assert.DoesNotContain(log, line => line.Contains("resuming in", StringComparison.Ordinal));
     }
 
     [Trait("Category", "E2E")]
@@ -73,17 +95,25 @@ public class SourceConnectionLossE2ETests
         await using var db = await Scratch.CreateAsync(sourceHasPrimaryKey: true);
         using var proxy = new TcpDropProxy("127.0.0.1", 1433, CutAfterBytes, refuseAfterDrop: true); // the network stays down
 
-        var ex = await Record.ExceptionAsync(() => MigrateCapturingLogAsync(db, proxy));
+        var (log, error) = await MigrateCapturingLogAsync(db, proxy);
 
-        Assert.IsType<InvalidOperationException>(ex);
-        Assert.Contains("dbo.big_t", ex.Message, StringComparison.Ordinal);
+        Assert.IsType<InvalidOperationException>(error);
+        Assert.Contains("dbo.big_t", error.Message, StringComparison.Ordinal);
+        Assert.NotNull(error.InnerException); // the failure that ended it is kept
         Assert.Equal(0, await db.ScalarAsync(db.Target, "SELECT COUNT(*) FROM dbo.big_t"));
+        // The quick policy allows 3 attempts in a row without a new row: three waits, then it gives up.
+        Assert.Equal(3, log.Count(line => line.Contains("resuming in", StringComparison.Ordinal)));
+        Assert.DoesNotContain(log, line => line.Contains("Resumed reading", StringComparison.Ordinal));
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────
 
-    /// <summary>Migrates the table with the source reached through the relay; returns what the migration logged.</summary>
-    private static async Task<List<string>> MigrateCapturingLogAsync(Scratch db, TcpDropProxy proxy)
+    /// <summary>
+    /// Migrates the table with the source reached through the relay; returns what the migration logged and the error that ended it
+    /// (null when it finished). The threshold is 0 unless a test says otherwise: the test tables are small.
+    /// </summary>
+    private static async Task<(List<string> Log, Exception? Error)> MigrateCapturingLogAsync(Scratch db, TcpDropProxy proxy,
+        long resumeMinRows = 0)
     {
         var log = new List<string>();
         void Capture(LogEntry entry)
@@ -92,11 +122,16 @@ public class SourceConnectionLossE2ETests
                 log.Add(entry.Message);
         }
 
+        Exception? error = null;
         LoggerService.MessageLogged += Capture;
         try
         {
-            await new DatabaseService { NewResumePolicy = QuickPolicy }
+            await new DatabaseService { NewResumePolicy = QuickPolicy, ResumeMinRows = resumeMinRows }
                 .MigrateTableAsync(db.SourceThrough(proxy.Port), db.Target, db.Table, new Progress<int>());
+        }
+        catch (Exception ex)
+        {
+            error = ex;
         }
         finally
         {
@@ -104,7 +139,7 @@ public class SourceConnectionLossE2ETests
         }
 
         lock (log)
-            return log.ToList();
+            return (log.ToList(), error);
     }
 
     private static async Task AssertSameRowsAsync(Scratch db)
