@@ -81,11 +81,31 @@ public class DeleteCascadeReachTests
     }
 
     [Fact]
-    public void NamesAreMatchedIgnoringCase()
+    public void NamesAreMatchedExactly_BecauseOracleKeepsTheCaseOfAQuotedName()
     {
-        var reached = DeleteCascadeReach.Affected("app", "head", [new DeleteRuleEdge("APP", "CHILD", "APP", "HEAD", true)]);
+        // The root is the upper-case name the DELETE targets, the keys come with the catalog's own spelling: "Head" is another
+        // table than HEAD, and a key to it does not reach HEAD's children.
+        Assert.Empty(DeleteCascadeReach.Affected("app", "head", [new DeleteRuleEdge("APP", "CHILD", "APP", "HEAD", true)]));
+        Assert.Equal([("APP", "CHILD")], DeleteCascadeReach.Affected("APP", "HEAD", [new DeleteRuleEdge("APP", "CHILD", "APP", "HEAD", true)]));
+    }
 
-        Assert.Equal([("APP", "CHILD")], reached);
+    [Fact]
+    public void ATableThatDiffersFromTheRootOnlyByCase_IsADifferentTable_NotTheRoot()
+    {
+        // A quoted "Head" can exist next to HEAD in one schema, and the cascade of HEAD reaches it. It was dropped as "the root".
+        Assert.Equal(["APP.Head"], Reach("HEAD", Cascade("Head", "HEAD")));
+        Assert.Equal(["APP.Head"], Lost("HEAD", Cascade("Head", "HEAD")));
+    }
+
+    [Fact]
+    public void TwoChildrenThatDifferOnlyByCase_AreBothReached()
+    {
+        // Merged by an upper-cased key, whichever the catalog listed first hid the other (and an empty one hid a populated one).
+        var reached = Reach("HEAD", Cascade("Foo", "HEAD"), Cascade("FOO", "HEAD"));
+
+        Assert.Equal(2, reached.Length);
+        Assert.Contains("APP.Foo", reached);
+        Assert.Contains("APP.FOO", reached);
     }
 
     [Fact]

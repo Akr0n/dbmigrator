@@ -46,7 +46,10 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             // A role (SELECT_CATALOG_ROLE, say) is active only in sessions opened after it was granted. Connecting again must
             // not hand back a pooled session from before: the check before an Oracle DELETE asks for exactly that role.
             if (connectionInfo.DatabaseType == DatabaseType.Oracle)
+            {
                 OracleConnection.ClearAllPools();
+                ResetOracleCaches(); // and what was read about keys and grants: Connect starts from what the catalog says now
+            }
 
             using (var connection = CreateConnection(connectionInfo))
             {
@@ -515,11 +518,12 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         var rowsOf = new Dictionary<(string, string), bool?>();
         foreach (var (schema, name) in affected)
         {
-            if (loadedLater.Contains((schema.ToUpperInvariant(), name.ToUpperInvariant())))
+            // The run loads the upper-case names it writes (loadedLater): a hand-made "Foo" is not that table.
+            if (loadedLater.Contains((schema, name)))
                 continue;
 
             var hasRows = await OracleTableHasRowsAsync(connection, QuoteOracleName(schema, name));
-            rowsOf[(schema.ToUpperInvariant(), name.ToUpperInvariant())] = hasRows;
+            rowsOf[(schema, name)] = hasRows;
             if (hasRows == null)
                 unreadable.Add($"{schema}.{name}"); // the cascade runs whatever the user may read: this cannot be proved empty
             else if (hasRows.Value)
@@ -544,7 +548,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             {
                 if (!isRoot)
                 {
-                    if (!rowsOf.TryGetValue((schema.ToUpperInvariant(), name.ToUpperInvariant()), out var rows))
+                    if (!rowsOf.TryGetValue((schema, name), out var rows))
                         rows = await OracleTableHasRowsAsync(connection, QuoteOracleName(schema, name)); // one that is loaded later
                     if (rows == false)
                         continue;
@@ -607,6 +611,16 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             // ORA-00942: the view does not exist for this user, i.e. no access to the DBA_ views. Any other error is not an answer.
             Log($"[MigrateTableAsync] No access to {view}: {ex.Message}");
             return null;
+        }
+    }
+
+    /// <summary>Forgets the keys and the grants read so far (the next check reads them again).</summary>
+    internal void ResetOracleCaches()
+    {
+        lock (_oracleKeyCacheLock)
+        {
+            _oracleKeyCache = null;
+            _oracleGrantsCache.Clear();
         }
     }
 

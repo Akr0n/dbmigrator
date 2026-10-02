@@ -20,7 +20,7 @@ public static class DeleteCascadeReach
     /// <summary>
     /// The tables other than the root that are removed from or updated by deleting all rows of the root. Children reached
     /// by CASCADE lose their rows and so propagate to their own children; a SET NULL child only has a column nulled, which
-    /// propagates nowhere. Self-references are ignored. Names are matched ignoring case.
+    /// propagates nowhere. Self-references are ignored. Names are matched exactly (see <see cref="Walk"/>).
     /// </summary>
     public static List<(string Schema, string Table)> Affected(string rootSchema, string rootTable, IEnumerable<DeleteRuleEdge> edges) =>
         Walk(rootSchema, rootTable, edges).Affected;
@@ -35,7 +35,9 @@ public static class DeleteCascadeReach
     private static (List<(string Schema, string Table)> Affected, List<(string Schema, string Table)> Deleted) Walk(
         string rootSchema, string rootTable, IEnumerable<DeleteRuleEdge> edges)
     {
-        static (string, string) Key(string schema, string table) => (schema.ToUpperInvariant(), table.ToUpperInvariant());
+        // Exact names: Oracle keeps the case of a quoted name, so "Head" and HEAD can be two tables of one schema. The root is
+        // the upper-case name an unquoted DELETE targets; the keys come with the catalog's own spelling.
+        static (string, string) Key(string schema, string table) => (schema, table);
 
         var children = edges
             .Where(edge => Key(edge.ChildSchema, edge.ChildTable) != Key(edge.ParentSchema, edge.ParentTable))

@@ -104,6 +104,56 @@ public class OracleDeleteCheckTests
     }
 
     [Fact]
+    public async Task ATableThatDiffersFromTheRootOnlyByCase_IsCheckedLikeAnyOther()
+    {
+        // "Head" (quoted, mixed case) next to HEAD in the same schema: the DELETE of HEAD cascades into it. It used to be taken for
+        // the root itself and never looked at.
+        var keys = Keys(("APP", "Head", "APP", "HEAD", 1));
+        using var connection = new FakeConnection(
+            command => command.Contains("ROWNUM = 1") ? 1 : null,
+            command => command.Contains("dba_constraints") ? keys.CreateDataReader() : new DataTable().CreateDataReader());
+
+        var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [], "APP");
+
+        Assert.Equal(["APP.Head"], check.Populated);
+    }
+
+    [Fact]
+    public async Task AMixedCaseTableIsNotTheOneTheRunLoadsLater()
+    {
+        // The run loads FOO (the tool writes upper-case names); a hand-made "Foo" is another table and is still asked about.
+        var keys = Keys(("APP", "Foo", "APP", "HEAD", 1));
+        using var connection = new FakeConnection(
+            command => command.Contains("ROWNUM = 1") ? 1 : null,
+            command => command.Contains("dba_constraints") ? keys.CreateDataReader() : new DataTable().CreateDataReader());
+
+        var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [new TableInfo { Schema = "APP", TableName = "FOO" }], "APP");
+
+        Assert.Equal(["APP.Foo"], check.Populated);
+    }
+
+    [Fact]
+    public async Task WhatConnectForgets_IsNotAnsweredFromTheCache()
+    {
+        // A privilege revoked (or granted) since the last attempt must be seen by the next one after Connect, not 30 seconds later.
+        bool granted = true;
+        using var connection = new FakeConnection(
+            command => command.Contains("ROWNUM = 1") ? 1 : null,
+            command => command.Contains("dba_constraints") ? throw OracleError(942)
+                : command.Contains("all_tab_privs") ? Names(granted ? ["G"] : []).CreateDataReader()
+                : Keys().CreateDataReader());
+        var service = new DatabaseService();
+
+        var before = await service.CheckOracleDeleteAsync(connection, Head, [], "APP");
+        granted = false;
+        service.ResetOracleCaches();
+        var after = await service.CheckOracleDeleteAsync(connection, Head, [], "APP");
+
+        Assert.Equal(["G su APP.HEAD"], before.UnverifiableSchemas);
+        Assert.Empty(after.UnverifiableSchemas);
+    }
+
+    [Fact]
     public async Task ASetNullChildWithAGrant_IsNotRefused_BecauseNothingBelowItIsDeleted()
     {
         // HEAD -> C1 is SET NULL: C1 only has a column nulled, so whatever references C1 loses nothing. Asking about C1's grants

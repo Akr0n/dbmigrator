@@ -276,6 +276,64 @@ public class OracleDeleteCascadeE2ETests
 
     [Trait("Category", "E2E")]
     [Fact]
+    public async Task AChildWhoseNameDiffersFromTheRootOnlyByCase_IsProtectedToo()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(childRule: "ON DELETE CASCADE");
+        // Oracle keeps the case of a quoted name: "Ocas_head_..." is a table of its own next to OCAS_HEAD_..., and the cascade of
+        // the (unquoted) DELETE reaches it. It used to be taken for the root itself, so nothing was checked and it was emptied.
+        string head = db.Name("head");
+        string twin = char.ToUpperInvariant(head[0]) + head[1..]; // "Ocas_head_xxxxxx"
+        Assert.NotEqual(head.ToUpperInvariant(), twin);
+        try
+        {
+            await db.OracleAsync("INSERT INTO {head} VALUES (1, 'old')",
+                $"CREATE TABLE \"{twin}\" (id NUMBER(10) PRIMARY KEY, head_id NUMBER(10) NOT NULL, " +
+                $"CONSTRAINT fk_tw_{head[^6..]} FOREIGN KEY (head_id) REFERENCES {{head}}(id) ON DELETE CASCADE)",
+                $"INSERT INTO \"{twin}\" VALUES (1, 1)");
+            var asked = new List<string>();
+            var service = new DatabaseService { TruncateFailedHandlerAsync = ctx => { asked.Add(ctx.ErrorMessage ?? ""); return Task.FromResult(false); } };
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.MigrateTableAsync(db.Source, db.Target, db.Table("head"), new Progress<int>(), tablesLoadedLater: []));
+
+            Assert.Contains(twin, asked.Single(), StringComparison.Ordinal);
+            Assert.Equal(1, await db.ScalarAsync($"SELECT COUNT(*) FROM \"{twin}\""));
+        }
+        finally
+        {
+            await db.OracleAsync($"DROP TABLE \"{twin}\" PURGE");
+        }
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
+    public async Task AfterAGrantIsRevoked_PressingConnectLiftsTheRefusal()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(childRule: "ON DELETE CASCADE");
+        await db.OracleAsync("INSERT INTO {head} VALUES (1, 'old')");
+        var other = await db.CreateUserAsync("OCAS_R");
+        await db.SystemAsync($"GRANT ALL ON migration_test.{db.Name("head")} TO {other.Username}");
+        var asked = 0;
+        var service = new DatabaseService { TruncateFailedHandlerAsync = _ => { asked++; return Task.FromResult(false); } };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.MigrateTableAsync(db.Source, db.Target, db.Table("head"), new Progress<int>(), tablesLoadedLater: []));
+        Assert.Equal(1, asked);
+
+        // The DBA takes the privilege back and the user presses Connect: the next attempt (within the 30 seconds the grants are
+        // otherwise remembered) must see it, on the same service the application keeps for its whole life.
+        await db.SystemAsync($"REVOKE ALL ON migration_test.{db.Name("head")} FROM {other.Username}");
+        Assert.True(await service.TestConnectionAsync(db.Target));
+        await service.MigrateTableAsync(db.Source, db.Target, db.Table("head"), new Progress<int>(), tablesLoadedLater: []);
+
+        Assert.Equal(1, asked); // not asked again
+        Assert.Equal(3, await db.ScalarAsync("SELECT COUNT(*) FROM {head} WHERE name = 'new'"));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
     public async Task ASetNullChildWithAHiddenGrandchild_DoesNotBlockTheLoad()
     {
         if (!ShouldRunE2E()) return;
