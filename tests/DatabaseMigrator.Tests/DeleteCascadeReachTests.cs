@@ -15,6 +15,22 @@ public class DeleteCascadeReachTests
     private static string[] Reach(string root, params DeleteRuleEdge[] edges) =>
         DeleteCascadeReach.Affected("APP", root, edges).Select(t => $"{t.Schema}.{t.Table}").Order().ToArray();
 
+    private static string[] Lost(string root, params DeleteRuleEdge[] edges) =>
+        DeleteCascadeReach.Deleted("APP", root, edges).Select(t => $"{t.Schema}.{t.Table}").Order().ToArray();
+
+    [Fact]
+    public void OnlyTheTablesThatLoseRowsAreDeleted_NotThoseThatOnlyHaveAColumnNulled()
+    {
+        // MID loses its rows (CASCADE) and so does LEAF below it; SET_NULL_CHILD is only updated, and what is below it is not touched.
+        var edges = new[]
+        {
+            Cascade("MID", "HEAD"), Cascade("LEAF", "MID"), SetNull("SET_NULL_CHILD", "HEAD"), Cascade("UNDER_SET_NULL", "SET_NULL_CHILD"),
+        };
+
+        Assert.Equal(["APP.LEAF", "APP.MID"], Lost("HEAD", edges));
+        Assert.Equal(["APP.LEAF", "APP.MID", "APP.SET_NULL_CHILD"], Reach("HEAD", edges)); // all of them are still "affected"
+    }
+
     [Fact]
     public void WithoutAnyKey_NothingIsReached() => Assert.Empty(Reach("HEAD"));
 

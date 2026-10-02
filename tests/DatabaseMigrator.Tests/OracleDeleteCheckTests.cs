@@ -79,8 +79,8 @@ public class OracleDeleteCheckTests
 
         var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [], "APP");
 
-        Assert.Equal(["G"], check.UnverifiableSchemas);
-        Assert.Equal(["G.VISIBLE_CHILD"], check.NotOwned); // and its own grants cannot be read: it is not the user's table
+        Assert.Equal(["G su APP.HEAD"], check.UnverifiableSchemas);
+        Assert.Empty(check.NotOwned!); // the visible child is empty: nothing to cascade, so its (unreadable) grants need not be asked
         Assert.Empty(check.Populated);
     }
 
@@ -92,7 +92,7 @@ public class OracleDeleteCheckTests
         // C1 is itself reloaded later. Only HEAD's grants used to be read.
         var keys = Keys(("APP", "C1", "APP", "HEAD", 1));
         using var connection = new FakeConnection(
-            command => command.Contains("APP.HEAD") ? 1 : null,
+            command => command.Contains("ROWNUM = 1") ? 1 : null, // HEAD and C1 hold rows
             readerWithBinds: (command, binds) =>
                 command.Contains("dba_constraints") ? throw OracleError(942)
                 : command.Contains("all_tab_privs") ? Names(binds["tab"]!.ToString() == "C1" ? ["S"] : []).CreateDataReader()
@@ -100,7 +100,61 @@ public class OracleDeleteCheckTests
 
         var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [new TableInfo { Schema = "APP", TableName = "C1" }], "APP");
 
-        Assert.Equal(["S"], check.UnverifiableSchemas);
+        Assert.Equal(["S su APP.C1"], check.UnverifiableSchemas); // and it says on which table the grant is
+    }
+
+    [Fact]
+    public async Task ASetNullChildWithAGrant_IsNotRefused_BecauseNothingBelowItIsDeleted()
+    {
+        // HEAD -> C1 is SET NULL: C1 only has a column nulled, so whatever references C1 loses nothing. Asking about C1's grants
+        // refused a reload that could not harm anything.
+        var keys = Keys(("APP", "C1", "APP", "HEAD", 0));
+        using var connection = new FakeConnection(
+            command => command.Contains("ROWNUM = 1") ? 1 : null,
+            readerWithBinds: (command, binds) =>
+                command.Contains("dba_constraints") ? throw OracleError(942)
+                : command.Contains("all_tab_privs") ? Names(binds["tab"]!.ToString() == "C1" ? ["S"] : []).CreateDataReader()
+                : keys.CreateDataReader());
+
+        var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [new TableInfo { Schema = "APP", TableName = "C1" }], "APP");
+
+        Assert.Empty(check.UnverifiableSchemas);
+    }
+
+    [Fact]
+    public async Task AnEmptyCascadeChildWithAGrant_IsNotRefused_BecauseItHasNothingToCascade()
+    {
+        var keys = Keys(("APP", "C1", "APP", "HEAD", 1));
+        using var connection = new FakeConnection(
+            command => command.Contains("APP.HEAD") ? 1 : null, // only HEAD has rows
+            readerWithBinds: (command, binds) =>
+                command.Contains("dba_constraints") ? throw OracleError(942)
+                : command.Contains("all_tab_privs") ? Names(binds["tab"]!.ToString() == "C1" ? ["S"] : []).CreateDataReader()
+                : keys.CreateDataReader());
+
+        var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [new TableInfo { Schema = "APP", TableName = "C1" }], "APP");
+
+        Assert.Empty(check.UnverifiableSchemas);
+    }
+
+    [Fact]
+    public async Task TheGrantsOfATable_AreReadOnceNotOncePerRootThatReachesIt()
+    {
+        var keys = Keys(("APP", "C1", "APP", "HEAD", 1));
+        using var connection = new FakeConnection(
+            command => command.Contains("ROWNUM = 1") ? 1 : null,
+            command => command.Contains("dba_constraints") ? throw OracleError(942)
+                : command.Contains("all_tab_privs") ? Names().CreateDataReader()
+                : keys.CreateDataReader());
+        var service = new DatabaseService();
+
+        await service.CheckOracleDeleteAsync(connection, Head, [], "APP");
+        int afterTheFirst = connection.CountOf("all_tab_privs");
+        for (int i = 0; i < 5; i++)
+            await service.CheckOracleDeleteAsync(connection, Head, [], "APP");
+
+        Assert.Equal(2, afterTheFirst);                              // HEAD and C1
+        Assert.Equal(afterTheFirst, connection.CountOf("all_tab_privs")); // never again within the lifetime of the keys
     }
 
     [Fact]
@@ -108,7 +162,7 @@ public class OracleDeleteCheckTests
     {
         var keys = Keys(("OTHER", "CHILD", "APP", "HEAD", 1));
         using var connection = new FakeConnection(
-            command => command.Contains("APP.HEAD") ? 1 : null, // the visible child is empty
+            command => command.Contains("ROWNUM = 1") ? 1 : null, // the other schema's child holds rows
             command => command.Contains("dba_constraints") ? throw OracleError(942)
                 : command.Contains("all_tab_privs") ? Names().CreateDataReader()
                 : keys.CreateDataReader());
@@ -130,7 +184,7 @@ public class OracleDeleteCheckTests
 
         var check = await new DatabaseService().CheckOracleDeleteAsync(connection, Head, [], "APP");
 
-        Assert.Equal(["S"], check.UnverifiableSchemas);
+        Assert.Equal(["S su APP.HEAD"], check.UnverifiableSchemas);
     }
 
     // ── the keys are kept for a short while, and for the view they were read from ─

@@ -276,6 +276,25 @@ public class OracleDeleteCascadeE2ETests
 
     [Trait("Category", "E2E")]
     [Fact]
+    public async Task ASetNullChildWithAHiddenGrandchild_DoesNotBlockTheLoad()
+    {
+        if (!ShouldRunE2E()) return;
+        await using var db = await Scratch.CreateAsync(childRule: "ON DELETE SET NULL", childHeadIdNullable: true);
+        await db.OracleAsync("INSERT INTO {head} VALUES (1, 'old')", "INSERT INTO {child} VALUES (1, 1, 'old')");
+        // head -> child is SET NULL: child only has a column nulled and is reloaded later, so a table that cascades from child
+        // loses nothing. It used to be asked about all the same (and the refusal left head empty).
+        await db.CreateGrandchildInAnotherSchemaAsync();
+        var asked = 0;
+        var service = new DatabaseService { TruncateFailedHandlerAsync = _ => { asked++; return Task.FromResult(false); } };
+
+        await service.MigrateTableAsync(db.Source, db.Target, db.Table("head"), new Progress<int>(), tablesLoadedLater: [db.Table("child")]);
+
+        Assert.Equal(0, asked);
+        Assert.Equal(3, await db.ScalarAsync("SELECT COUNT(*) FROM {head} WHERE name = 'new'"));
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
     public async Task AGrantOfReferencesOnSomeColumnsOnly_IsRefusedWithoutCatalogAccess()
     {
         if (!ShouldRunE2E()) return;
@@ -338,7 +357,9 @@ public class OracleDeleteCascadeE2ETests
         Assert.Equal(1, await db.ScalarAsync("SELECT COUNT(*) FROM {head} WHERE name = 'old'")); // nothing was deleted
 
         await db.SystemAsync("GRANT SELECT_CATALOG_ROLE TO migration_test");
-        Oracle.ManagedDataAccess.Client.OracleConnection.ClearAllPools(); // a role is active only in sessions opened after the grant
+        // A role is active only in sessions opened after the grant. The application drops the pooled sessions when it connects
+        // (and when this check asks), so pressing Connect again is enough: the test does not clear the pool itself.
+        Assert.True(await new DatabaseService().TestConnectionAsync(db.Target));
         try
         {
             await new DatabaseService().MigrateTableAsync(db.Source, db.Target, db.Table("head"), new Progress<int>(), tablesLoadedLater: []);

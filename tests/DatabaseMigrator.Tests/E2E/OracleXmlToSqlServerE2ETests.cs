@@ -40,6 +40,72 @@ public class OracleXmlToSqlServerE2ETests
 
     [Trait("Category", "E2E")]
     [Fact]
+    public async Task AnXmlTypeLoadedThroughAViewOverAnXmlColumn_IsStrippedToo()
+    {
+        if (!ShouldRunE2E()) return;
+
+        // The target the user picked can be a view: INFORMATION_SCHEMA lists it (sys.tables does not), and its xml column needs
+        // the declaration removed as much as a table's.
+        string id = Guid.NewGuid().ToString("N")[..8];
+        string table = $"XMLV_{id}".ToUpperInvariant();
+        var source = new ConnectionInfo
+        {
+            DatabaseType = DatabaseType.Oracle, Server = "127.0.0.1", Port = 1521, Database = "FREEPDB1",
+            Username = "migration_test", Password = "oraclepass123"
+        };
+        var master = SqlServer("master");
+        var target = SqlServer($"xmlvw_{id}");
+
+        await using var oracle = new OracleConnection(source.GetConnectionString());
+        await oracle.OpenAsync();
+        try
+        {
+            foreach (var statement in new[]
+            {
+                $"CREATE TABLE {table} (id NUMBER(10) PRIMARY KEY, doc XMLTYPE)",
+                $"INSERT INTO {table} VALUES (1, XMLTYPE('<?xml version=\"1.0\" encoding=\"UTF-8\"?><a>1</a>'))",
+                "COMMIT"
+            })
+            {
+                await using var command = new OracleCommand(statement, oracle);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await ExecAsync(master, $"CREATE DATABASE [{target.Database}]");
+            await ExecAsync(target, "CREATE SCHEMA [MIGRATION_TEST]");
+            await ExecAsync(target, $"CREATE TABLE [MIGRATION_TEST].[base_{table}] ([ID] INT NOT NULL PRIMARY KEY, [DOC] XML NULL)");
+            await ExecAsync(target, $"CREATE VIEW [MIGRATION_TEST].[{table}] AS SELECT [ID], [DOC] FROM [MIGRATION_TEST].[base_{table}]");
+
+            await new DatabaseService().MigrateTableAsync(source, target, new TableInfo { Schema = "MIGRATION_TEST", TableName = table }, new Progress<int>());
+
+            Assert.Equal("1", await ScalarAsync(target, $"SELECT [DOC].value('(/a)[1]', 'nvarchar(10)') FROM [MIGRATION_TEST].[base_{table}] WHERE [ID] = 1"));
+        }
+        finally
+        {
+            try
+            {
+                await using var drop = new OracleCommand($"DROP TABLE {table} PURGE", oracle);
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch
+            {
+                // Best effort.
+            }
+
+            SqlConnection.ClearAllPools();
+            try
+            {
+                await ExecAsync(master, $"ALTER DATABASE [{target.Database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{target.Database}];");
+            }
+            catch
+            {
+                // Best effort.
+            }
+        }
+    }
+
+    [Trait("Category", "E2E")]
+    [Fact]
     public async Task AnXmlTypeLoadedIntoAnExistingTextColumn_KeepsItsDeclaration()
     {
         if (!ShouldRunE2E()) return;

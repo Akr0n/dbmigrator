@@ -42,7 +42,12 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         try
         {
             Log($"TestConnectionAsync started for {DescribeConnection(connectionInfo)}");
-            
+
+            // A role (SELECT_CATALOG_ROLE, say) is active only in sessions opened after it was granted. Connecting again must
+            // not hand back a pooled session from before: the check before an Oracle DELETE asks for exactly that role.
+            if (connectionInfo.DatabaseType == DatabaseType.Oracle)
+                OracleConnection.ClearAllPools();
+
             using (var connection = CreateConnection(connectionInfo))
             {
                 Log("Opening connection...");
@@ -507,15 +512,14 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         var populated = new List<string>();
         var unreadable = new List<string>();
         var affected = DeleteCascadeReach.Affected(owner, tableName, edges).ToList();
+        var rowsOf = new Dictionary<(string, string), bool?>();
         foreach (var (schema, name) in affected)
         {
             if (loadedLater.Contains((schema.ToUpperInvariant(), name.ToUpperInvariant())))
                 continue;
 
-            // The catalog's own spelling, quoted: a table created as "MixedCase" is not found as MIXEDCASE.
-            char quote = (char)34;
-            string exact = quote + EscapeOracleIdentifier(schema) + quote + "." + quote + EscapeOracleIdentifier(name) + quote;
-            var hasRows = await OracleTableHasRowsAsync(connection, exact);
+            var hasRows = await OracleTableHasRowsAsync(connection, QuoteOracleName(schema, name));
+            rowsOf[(schema.ToUpperInvariant(), name.ToUpperInvariant())] = hasRows;
             if (hasRows == null)
                 unreadable.Add($"{schema}.{name}"); // the cascade runs whatever the user may read: this cannot be proved empty
             else if (hasRows.Value)
@@ -530,28 +534,33 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 "are not checked (grant SELECT_CATALOG_ROLE to check them)");
 
             // The grants of a table are visible to its owner, the grantor and the grantee only, so they can be read for the tables
-            // of the migration user's own schema. The tables the cascade passes through count as much as the one being emptied:
-            // a schema granted REFERENCES on a child can own a table that cascades from it, whether or not this run loads that
-            // child later. A table of another schema cannot be asked at all.
-            var cascadeTables = new List<(string Schema, string Name)> { (owner, tableName) };
-            cascadeTables.AddRange(affected);
-            foreach (var (schema, name) in cascadeTables)
+            // of the migration user's own schema. The tables that lose their rows through the cascade count as much as the one
+            // being emptied: a schema granted REFERENCES on such a child can own a table that cascades from it, whether or not
+            // this run loads that child later. A table of another schema cannot be asked at all. A table that only has a column
+            // nulled (SET NULL) passes nothing on, and an empty one has nothing to pass on.
+            var cascadeTables = new List<(string Schema, string Name, bool Root)> { (owner, tableName, true) };
+            cascadeTables.AddRange(DeleteCascadeReach.Deleted(owner, tableName, edges).Select(t => (t.Schema, t.Table, false)));
+            foreach (var (schema, name, isRoot) in cascadeTables)
             {
+                if (!isRoot)
+                {
+                    if (!rowsOf.TryGetValue((schema.ToUpperInvariant(), name.ToUpperInvariant()), out var rows))
+                        rows = await OracleTableHasRowsAsync(connection, QuoteOracleName(schema, name)); // one that is loaded later
+                    if (rows == false)
+                        continue;
+                }
+
                 if (!string.Equals(schema, currentUser, StringComparison.OrdinalIgnoreCase))
                 {
                     notOwned.Add($"{schema}.{name}");
                     continue;
                 }
 
-                // Bind variables: a distinct literal per table would be hard-parsed by the server every time. A grant of REFERENCES
-                // on some columns only is recorded in ALL_COL_PRIVS, not in ALL_TAB_PRIVS: both are read.
-                foreach (var grantee in await ReadOracleNamesAsync(connection,
-                    "SELECT grantee FROM all_tab_privs WHERE table_schema = :owner AND table_name = :tab AND privilege = 'REFERENCES' AND grantee <> :owner " +
-                    "UNION SELECT grantee FROM all_col_privs WHERE table_schema = :owner AND table_name = :tab AND privilege = 'REFERENCES' AND grantee <> :owner",
-                    ("owner", schema), ("tab", name)))
+                foreach (var grantee in await ReadReferencesGranteesAsync(connection, schema, name))
                 {
-                    if (!unverifiable.Contains(grantee, StringComparer.OrdinalIgnoreCase))
-                        unverifiable.Add(grantee);
+                    string entry = $"{grantee} su {schema}.{name}";
+                    if (!unverifiable.Contains(entry, StringComparer.OrdinalIgnoreCase))
+                        unverifiable.Add(entry);
                 }
             }
         }
@@ -607,6 +616,44 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     private readonly object _oracleKeyCacheLock = new();
     private (string Key, DateTime ReadAt, List<DeleteRuleEdge> Edges)? _oracleKeyCache;
     private static readonly TimeSpan OracleKeyCacheLifetime = TimeSpan.FromSeconds(30);
+
+    /// <summary>The catalog's own spelling, quoted: a table created as "MixedCase" is not found as MIXEDCASE.</summary>
+    private string QuoteOracleName(string schema, string name)
+    {
+        char quote = (char)34;
+        return quote + EscapeOracleIdentifier(schema) + quote + "." + quote + EscapeOracleIdentifier(name) + quote;
+    }
+
+    private readonly Dictionary<string, (DateTime ReadAt, List<string> Grantees)> _oracleGrantsCache = new();
+
+    /// <summary>
+    /// The schemas holding REFERENCES on a table, as a whole or on some columns only (the latter is recorded in ALL_COL_PRIVS, not in
+    /// ALL_TAB_PRIVS). Kept for as long as the keys are: the same table is reached from every root above it.
+    /// </summary>
+    private async Task<List<string>> ReadReferencesGranteesAsync(DbConnection connection, string schema, string name)
+    {
+        string cacheKey = connection.ConnectionString + "|" + schema + "|" + name;
+        var now = Clock.GetUtcNow().UtcDateTime;
+        lock (_oracleKeyCacheLock)
+        {
+            if (_oracleGrantsCache.TryGetValue(cacheKey, out var cached) && now - cached.ReadAt < OracleKeyCacheLifetime)
+                return cached.Grantees;
+        }
+
+        // Bind variables: a distinct literal per table would be hard-parsed by the server every time.
+        var grantees = await ReadOracleNamesAsync(connection,
+            "SELECT grantee FROM all_tab_privs WHERE table_schema = :owner AND table_name = :tab AND privilege = 'REFERENCES' AND grantee <> :owner " +
+            "UNION SELECT grantee FROM all_col_privs WHERE table_schema = :owner AND table_name = :tab AND privilege = 'REFERENCES' AND grantee <> :owner",
+            ("owner", schema), ("tab", name));
+        lock (_oracleKeyCacheLock)
+        {
+            foreach (var expired in _oracleGrantsCache.Where(e => now - e.Value.ReadAt >= OracleKeyCacheLifetime).Select(e => e.Key).ToList())
+                _oracleGrantsCache.Remove(expired);
+            _oracleGrantsCache[cacheKey] = (now, grantees);
+        }
+
+        return grantees;
+    }
 
     /// <summary>The first column of a query as strings. A query that cannot be run is an error, not an empty answer.</summary>
     private async Task<List<string>> ReadOracleNamesAsync(DbConnection connection, string sql, params (string Name, string Value)[] binds)
@@ -904,8 +951,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                         {
                             OracleConnection.ClearAllPools(); // see above
                             throw new InvalidOperationException(
-                                $"Gli schemi {ListNames(check.UnverifiableSchemas)} hanno il privilegio REFERENCES su {table.Schema}.{table.TableName} e le loro chiavi esterne non sono visibili all'utente di migrazione: " +
-                                "potrebbero avere tabelle con dati e ON DELETE CASCADE / SET NULL che il DELETE svuoterebbe. Concedi il ruolo SELECT_CATALOG_ROLE all'utente di migrazione per verificarlo, oppure svuota la tabella tu. " +
+                                $"Questi schemi hanno il privilegio REFERENCES su tabelle toccate dal DELETE di {table.Schema}.{table.TableName} e le loro chiavi esterne non sono visibili all'utente di migrazione: {ListNames(check.UnverifiableSchemas)}. " +
+                                "Potrebbero avere tabelle con dati e ON DELETE CASCADE / SET NULL che il DELETE svuoterebbe. Concedi il ruolo SELECT_CATALOG_ROLE all'utente di migrazione per verificarlo, oppure svuota la tabella tu. " +
                                 "Se continui, i dati vengono aggiunti a quelli già presenti nella tabella, senza svuotarla.");
                         }
                     }
@@ -1229,20 +1276,16 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         }
     }
 
-    /// <summary>
-    /// Checks if a SQL Server table has an IDENTITY column.
-    /// </summary>
-    /// <summary>The names of the xml columns of a SQL Server table (case-insensitive).</summary>
+    /// <summary>The names of the xml columns of a SQL Server table or view (case-insensitive).</summary>
     private async Task<HashSet<string>> GetSqlServerXmlColumnsAsync(DbConnection connection, string schema, string tableName, DbTransaction? transaction)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         using var command = connection.CreateCommand();
+        // INFORMATION_SCHEMA lists views as well as tables: a load into a view over an xml column needs the strip too.
         command.CommandText = @"
-            SELECT c.name
-            FROM sys.columns c
-            INNER JOIN sys.tables t ON c.object_id = t.object_id
-            INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
-            WHERE s.name = @Schema AND t.name = @TableName AND TYPE_NAME(c.user_type_id) = 'xml'";
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = @Schema AND TABLE_NAME = @TableName AND DATA_TYPE = 'xml'";
         command.CommandTimeout = _commandTimeoutSeconds;
         if (transaction != null)
             command.Transaction = transaction;
@@ -1263,6 +1306,9 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         return names;
     }
 
+    /// <summary>
+    /// Checks if a SQL Server table has an IDENTITY column.
+    /// </summary>
     private async Task<bool> HasIdentityColumnAsync(DbConnection connection, string schema, string tableName, DbTransaction? transaction)
     {
         using (var command = connection.CreateCommand())
@@ -1661,8 +1707,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     /// A string literal for an Oracle script: every CR and LF is written as CHR(13) / CHR(10), the text in pieces of at most
     /// <see cref="OracleScriptPiece"/> characters, all joined with ||. SQL*Plus ignores a line of more than 4999 bytes (and
     /// still exits with 0), so after a || the literal goes on to a new physical line once the current one is over
-    /// <see cref="OracleScriptLineBudget"/> bytes: a line break outside the quotes is just white space to Oracle. A short value
-    /// stays on one line, exactly as before.
+    /// <see cref="OracleScriptLineBudget"/> bytes: a line break outside the quotes is just white space to Oracle. A value of up to
+    /// <see cref="OracleScriptPiece"/> characters stays one literal, as before.
     /// </summary>
     private string OracleScriptLiteral(string value)
     {

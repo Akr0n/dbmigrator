@@ -22,7 +22,18 @@ public static class DeleteCascadeReach
     /// by CASCADE lose their rows and so propagate to their own children; a SET NULL child only has a column nulled, which
     /// propagates nowhere. Self-references are ignored. Names are matched ignoring case.
     /// </summary>
-    public static List<(string Schema, string Table)> Affected(string rootSchema, string rootTable, IEnumerable<DeleteRuleEdge> edges)
+    public static List<(string Schema, string Table)> Affected(string rootSchema, string rootTable, IEnumerable<DeleteRuleEdge> edges) =>
+        Walk(rootSchema, rootTable, edges).Affected;
+
+    /// <summary>
+    /// Of those, the tables that lose rows: the ones reached by CASCADE (the root excluded). Only these can in turn cascade into
+    /// the tables that reference them; a table that merely has a column nulled does not.
+    /// </summary>
+    public static List<(string Schema, string Table)> Deleted(string rootSchema, string rootTable, IEnumerable<DeleteRuleEdge> edges) =>
+        Walk(rootSchema, rootTable, edges).Deleted;
+
+    private static (List<(string Schema, string Table)> Affected, List<(string Schema, string Table)> Deleted) Walk(
+        string rootSchema, string rootTable, IEnumerable<DeleteRuleEdge> edges)
     {
         static (string, string) Key(string schema, string table) => (schema.ToUpperInvariant(), table.ToUpperInvariant());
 
@@ -33,6 +44,7 @@ public static class DeleteCascadeReach
         var root = Key(rootSchema, rootTable);
         var affected = new Dictionary<(string, string), (string Schema, string Table)>();
         var deleted = new HashSet<(string, string)> { root };
+        var deletedTables = new List<(string Schema, string Table)>();
         var pending = new Queue<(string, string)>();
         pending.Enqueue(root);
 
@@ -46,10 +58,13 @@ public static class DeleteCascadeReach
 
                 affected.TryAdd(child, (edge.ChildSchema, edge.ChildTable));
                 if (edge.Cascades && deleted.Add(child))
+                {
+                    deletedTables.Add((edge.ChildSchema, edge.ChildTable));
                     pending.Enqueue(child);
+                }
             }
         }
 
-        return affected.Values.ToList();
+        return (affected.Values.ToList(), deletedTables);
     }
 }
