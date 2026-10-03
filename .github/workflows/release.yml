@@ -1,0 +1,171 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'dry-run: build and test only. candidate: prerelease vX.Y.Z-rc.N from any ref. stable: release from main.'
+        type: choice
+        options:
+          - dry-run
+          - candidate
+          - stable
+        default: dry-run
+      version:
+        description: 'vX.Y.Z or X.Y.Z; empty means the next patch after the last stable release'
+        type: string
+        default: ''
+  schedule:
+    - cron: '0 4 * * 1'   # every Monday: a dry run on main, which also runs the E2E matrix
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.channel != 'dry-run' && 'release' || format('release-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      previous: ${{ steps.plan.outputs.previous }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide what this run does, and refuse anything unsafe
+        id: plan
+        shell: bash
+        env:
+          CHANNEL: ${{ github.event_name == 'schedule' && 'dry-run' || inputs.channel }}
+          REQUESTED: ${{ inputs.version }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          case "$CHANNEL" in dry-run|candidate|stable) ;; *) fail "unknown channel '$CHANNEL'" ;; esac
+
+          previous=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | { grep -v -- '-' || true; } | sort -V | tail -n 1)
+          [ -n "$previous" ] || fail "no stable tag found: cannot work out the next version"
+
+          if [ -n "$REQUESTED" ]; then
+            version="${REQUESTED#v}"
+          else
+            last="${previous#v}"
+            version="${last%.*}.$(( ${last##*.} + 1 ))"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "version '$version' is not X.Y.Z"
+          newest=$(printf '%s\n%s\n' "${previous#v}" "$version" | sort -V | tail -n 1)
+          { [ "$newest" = "$version" ] && [ "${previous#v}" != "$version" ]; } || fail "version $version does not increase over $previous"
+
+          tag="v$version"
+          if [ "$CHANNEL" = candidate ]; then
+            n=$(git tag --list "$tag-rc.*" | wc -l)
+            tag="$tag-rc.$((n + 1))"
+          fi
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then fail "tag $tag already exists: a tag is never reused"; fi
+
+          for f in README.md LICENSE THIRD-PARTY-NOTICES.txt; do
+            [ -f "$f" ] || fail "$f is missing: it is shipped with every release"
+          done
+
+          if [ "$CHANNEL" = stable ]; then
+            [ "$REF" = refs/heads/main ] || fail "a stable release comes only from main (this run is on $REF)"
+            rc=0; git diff --quiet "$previous" HEAD -- src '*.sln' README.md LICENSE THIRD-PARTY-NOTICES.txt || rc=$?
+            [ "$rc" -le 1 ] || fail "git diff failed (exit $rc)"
+            [ "$rc" -eq 1 ] || fail "nothing shippable changed since $previous (src, *.sln, README.md, LICENSE, THIRD-PARTY-NOTICES.txt)"
+          fi
+
+          prerelease=false; [ "$CHANNEL" = candidate ] && prerelease=true
+          {
+            echo "tag=$tag"
+            echo "version=${tag#v}"
+            echo "previous=$previous"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## $CHANNEL: $tag"
+            echo "Previous stable release: $previous. Commits since then:"
+            echo
+            git log --oneline "$previous..HEAD" | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: plan
+    uses: ./.github/workflows/_build.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+
+  e2e:
+    needs: plan
+    uses: ./.github/workflows/e2e-matrix.yml
+
+  publish:
+    needs: [plan, build, e2e]
+    if: github.event_name == 'workflow_dispatch' && inputs.channel != 'dry-run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      PREVIOUS: ${{ needs.plan.outputs.previous }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Refuse to continue over an existing release or a leftover draft
+        shell: bash
+        run: |
+          if out=$(gh release view "$TAG" 2>&1); then
+            echo "::error::A release (or a leftover draft) for $TAG already exists. Delete a draft with: gh release delete $TAG --yes"
+            exit 1
+          elif ! grep -qi 'release not found' <<<"$out"; then
+            echo "::error::Cannot tell whether a release for $TAG exists: $out"
+            exit 1
+          fi
+
+      - name: Download the exe that was built and tested above
+        uses: actions/download-artifact@v8
+        with:
+          name: exe
+
+      - name: Write the release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f previous_tag_name="$PREVIOUS" --jq .body > RELEASE_NOTES.txt
+          {
+            echo
+            echo "## Build"
+            echo "- $TAG, commit $GITHUB_SHA"
+            echo "- .NET 10, Windows x64, self-contained"
+          } >> RELEASE_NOTES.txt
+          cat RELEASE_NOTES.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create the draft, check it, publish it
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=(--draft --target "$GITHUB_SHA" --title "Release $TAG" --notes-file RELEASE_NOTES.txt)
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" "${flags[@]}" DatabaseMigrator.exe RELEASE_NOTES.txt README.md LICENSE THIRD-PARTY-NOTICES.txt
+          count=$(gh release view "$TAG" --json assets --jq '.assets | length')
+          if [ "$count" != 5 ]; then
+            echo "::error::$count assets instead of 5: the draft is left for inspection (gh release delete $TAG --yes)"
+            exit 1
+          fi
+          gh release edit "$TAG" --draft=false
