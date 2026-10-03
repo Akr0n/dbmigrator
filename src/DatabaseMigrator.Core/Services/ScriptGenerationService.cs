@@ -651,6 +651,9 @@ public class ScriptGenerationService : DatabaseServiceBase
         }
 
         var columnNames = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToList();
+        // SQL Server cannot compile an INSERT with too many values (rows x columns): a wide table gets fewer rows per statement (README).
+        if (dialect == DatabaseType.SqlServer)
+            batchSize = DatabaseService.RowsPerInsertStatement(columnNames.Count, batchSize);
         var formattedColumns = columnNames.Select(c => FormatColumnName(dialect, c)).ToList();
         string columnList = dialect == DatabaseType.Oracle ? JoinForSqlPlus(formattedColumns) : string.Join(", ", formattedColumns);
         string insertHead = $"INSERT INTO {targetTable} ({columnList}) VALUES";
@@ -699,6 +702,8 @@ public class ScriptGenerationService : DatabaseServiceBase
 
         bool isSqlServerReader = reader is Microsoft.Data.SqlClient.SqlDataReader;
         // A SQL Server script is read by a server that refuses a Unicode literal whose XML declaration names an encoding.
+        // The script has no target to ask, so this judges by the source column type: right when the script creates the tables
+        // (xml maps to xml, text to text), but in a data-only script an existing column of the other kind gets it wrong (README, Known limitations).
         int[] xmlColumns = dialect == DatabaseType.SqlServer ? DatabaseService.XmlColumnIndexes(reader) : [];
         try
         {

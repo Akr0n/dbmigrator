@@ -208,6 +208,17 @@ namespace DatabaseMigrator.Views;
             FilterErrorsCheckBox.Bind(CheckBox.IsCheckedProperty,
                 new Binding("ShowOnlyErrors") { Source = _vm, Mode = BindingMode.TwoWay });
 
+            FollowLogToggle.Bind(Avalonia.Controls.Primitives.ToggleButton.IsCheckedProperty,
+                new Binding("FollowLog") { Source = _vm, Mode = BindingMode.TwoWay });
+            FollowLogToggle.IsCheckedChanged += (s, e) =>
+            {
+                if (FollowLogToggle.IsChecked == true)
+                    ScrollLogToEndLater(); // switched on again: go to the last line now, without waiting for a new one
+            };
+            // The list of a tab that is not shown is not in the tree, so the scrolls the lines asked for while it was hidden did
+            // nothing: when the tab is opened, follow means being at the last line.
+            LogListBox.AttachedToVisualTree += (s, e) => ScrollLogToEndLater();
+
             ClearLogButton.Click += (s, e) =>
                 _vm?.ClearLogCommand.Execute(System.Reactive.Unit.Default).Subscribe();
 
@@ -271,14 +282,30 @@ namespace DatabaseMigrator.Views;
     
     private void OnLogEntriesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        if (e.Action != NotifyCollectionChangedAction.Add) return;
+        // "Segui" off: the list stays where the user left it, so an older line can be read while the log keeps growing.
+        if (e.Action != NotifyCollectionChangedAction.Add || _vm?.FollowLog != true) return;
+        ScrollLogToEndLater();
+    }
+
+    private bool _logScrollPending;
+
+    private void ScrollLogToEndLater()
+    {
+        // One scroll for however many lines arrive together, and decided when it runs: lines that came in a burst used to queue
+        // one scroll each, and those still queued moved the list after "Segui" had been switched off.
+        if (_logScrollPending) return;
+        _logScrollPending = true;
         Avalonia.Threading.Dispatcher.UIThread.Post(() =>
         {
+            _logScrollPending = false;
+            if (_vm?.FollowLog != true) return;
             try
             {
+                // ScrollIntoView, not the last item's container: the list is virtualized and that container does not exist
+                // until the item is scrolled near, so asking for it scrolled nothing once the log was long.
                 var count = LogListBox.ItemCount;
                 if (count > 0)
-                    LogListBox.ContainerFromIndex(count - 1)?.BringIntoView();
+                    LogListBox.ScrollIntoView(count - 1);
             }
             catch { /* Ignore scroll errors */ }
         }, Avalonia.Threading.DispatcherPriority.Background);

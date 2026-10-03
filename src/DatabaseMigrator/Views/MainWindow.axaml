@@ -134,6 +134,30 @@
             <Setter Property="Opacity" Value="0.5"/>
         </Style>
 
+        <!-- Toggle that looks like a secondary button and turns blue while it is on (the log's "Segui") -->
+        <Style Selector="ToggleButton.follow">
+            <Setter Property="Background" Value="#21262d"/>
+            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="Padding" Value="16,0"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="BorderBrush" Value="#30363d"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="ToggleButton.follow:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#30363d"/>
+        </Style>
+        <Style Selector="ToggleButton.follow:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#1f6feb"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style Selector="ToggleButton.follow:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#388bfd"/>
+        </Style>
+
         <!-- TabControl / TabItem -->
         <Style Selector="TabControl">
             <Setter Property="Background" Value="#0d1117"/>
@@ -571,6 +595,9 @@
                                               VerticalContentAlignment="Center"
                                               Margin="8,0,0,0"
                                               ToolTip.Tip="Mostra solo le righe di errore"/>
+                                    <ToggleButton x:Name="FollowLogToggle" Classes="follow"
+                                                  Content="Segui"
+                                                  ToolTip.Tip="Acceso: il log scorre da solo fino all'ultima riga man mano che avanza. Spento: resta dove lo hai lasciato, per rileggere"/>
                                     <Button x:Name="OpenLogFileButton" Classes="secondary"
                                             Content="Apri file log"
                                             ToolTip.Tip="Apre il file debug.log con l'applicazione predefinita"/>

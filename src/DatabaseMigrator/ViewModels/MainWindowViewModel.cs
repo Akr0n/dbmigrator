@@ -195,6 +195,15 @@ public class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private bool _followLog = true;
+
+    /// <summary>Whether the Log tab keeps scrolling to the last line as new ones arrive (the "Segui" button).</summary>
+    public bool FollowLog
+    {
+        get => _followLog;
+        set => this.RaiseAndSetIfChanged(ref _followLog, value);
+    }
+
     public int LogErrorCount
     {
         get => _logErrorCount;

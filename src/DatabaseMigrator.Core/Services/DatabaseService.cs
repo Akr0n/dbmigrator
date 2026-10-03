@@ -51,7 +51,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 ResetOracleCaches(); // and what was read about keys and grants: Connect starts from what the catalog says now
             }
 
-            using (var connection = CreateConnection(connectionInfo))
+            using (var connection = ConnectionFactory(connectionInfo))
             {
                 Log("Opening connection...");
                 await ExecuteWithRetryAsync(() => connection.OpenAsync(), "TestConnectionAsync.Open");
@@ -554,7 +554,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                         continue;
                 }
 
-                if (!string.Equals(schema, currentUser, StringComparison.OrdinalIgnoreCase))
+                // Exact: "App" and APP are two users, and the grants of APP's table are not visible to "App".
+                if (!string.Equals(schema, currentUser, StringComparison.Ordinal))
                 {
                     notOwned.Add($"{schema}.{name}");
                     continue;
@@ -626,6 +627,50 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
     /// <summary>The clock the key cache measures its lifetime with (a test replaces it).</summary>
     internal TimeProvider Clock { get; set; } = TimeProvider.System;
+
+    /// <summary>Opens the connection <see cref="TestConnectionAsync"/> tests (a test replaces it, so that no server is needed).</summary>
+    internal Func<ConnectionInfo, DbConnection> ConnectionFactory { get; set; } = CreateConnection;
+
+    /// <summary>
+    /// How often and how long a lost connection to the source is retried while a table is being read (a test replaces it with
+    /// short waits): up to 5 times in a row without a new row, 2 seconds the first time, doubling up to 30.
+    /// </summary>
+    internal Func<ResumePolicy> NewResumePolicy { get; set; } = () => new ResumePolicy(5, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(30));
+
+    /// <summary>
+    /// A table with fewer rows than this is read as before: no ordering and no resume. Ordering by the key makes the server sort
+    /// when the key is not the physical order, a cost and a risk worth taking only for a table big enough to lose minutes to a
+    /// cut; a small one just starts over. A test sets it to 0.
+    /// </summary>
+    internal long ResumeMinRows { get; set; } = 100_000;
+
+    /// <summary>
+    /// The most values (rows x columns) one INSERT ... VALUES may hold on a SQL Server target. The query processor compiles every
+    /// value as an expression and the cost grows much faster than their number: 1000 rows of a 199-column table (about 200,000
+    /// values) made it give up after 44 seconds with error 8623 ("ran out of internal resources and could not produce a query
+    /// plan") before loading a row; 150,000 values compiled in 7 seconds on a test server and 300,000 did not in four minutes.
+    /// </summary>
+    internal const int MaxValuesPerSqlServerInsert = 30_000;
+
+    /// <summary>SQL Server accepts at most 1000 row constructors in one VALUES list (error 10738), whatever the batch size is set to.</summary>
+    internal const int MaxRowsPerSqlServerInsert = 1000;
+
+    /// <summary>
+    /// How many rows one INSERT holds on a SQL Server target: the batch size, but never more than SQL Server accepts in a VALUES
+    /// list, and fewer when the table has so many columns that the batch would go over the limit of values.
+    /// </summary>
+    internal static int RowsPerInsertStatement(int columnCount, int batchSize)
+    {
+        int rows = Math.Min(batchSize, MaxRowsPerSqlServerInsert);
+        return columnCount <= 0 ? Math.Max(1, rows) : Math.Max(1, Math.Min(rows, MaxValuesPerSqlServerInsert / columnCount));
+    }
+
+    /// <summary>
+    /// The user the owner test compares schemas with: the session's own user as the server reports it (SELECT USER), else the
+    /// typed user name as Oracle would log it in, which for an unquoted name means upper-cased.
+    /// </summary>
+    internal static string OracleSessionUser(string? reportedByServer, string typedUserName) =>
+        reportedByServer ?? typedUserName.Trim().ToUpperInvariant();
 
     private readonly object _oracleKeyCacheLock = new();
     private (string Key, DateTime ReadAt, List<DeleteRuleEdge> Edges)? _oracleKeyCache;
@@ -827,7 +872,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         command.CommandTimeout = _commandTimeoutSeconds;
         command.CommandText = $"SELECT EXISTS (SELECT 1 FROM {(includeDescendants ? "" : "ONLY ")}" +
                               $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(name)}\")";
-        return Convert.ToBoolean(await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "MigrateTableAsync.ProbeTableRows"));
+        return Convert.ToBoolean(await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "MigrateTableAsync.ProbeTableRows", transaction));
     }
 
     public async Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, TableInfo table, IProgress<int> progress,
@@ -891,7 +936,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 if (columnNames.Count == 0)
                 {
                     progress?.Report(100);
-                    await FinalizeTransactionAsync(targetConn, transaction, target.DatabaseType, true);
+                    await FinalizeTransactionAsync(targetConn, transaction, target.DatabaseType, true, $"{table.Schema}.{table.TableName}");
                     return;
                 }
 
@@ -934,7 +979,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                         // Oracle empties the table with DELETE, which an enabled ON DELETE CASCADE / SET NULL key spreads to
                         // the tables that reference it, selected or not.
                         var check = await CheckOracleDeleteAsync(targetConn, table, tablesLoadedLater,
-                            oracleSessionUser ?? target.Username.Trim());
+                            OracleSessionUser(oracleSessionUser, target.Username));
                         if (check.Populated.Count > 0)
                         {
                             throw new InvalidOperationException(
@@ -996,7 +1041,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                             truncateCommand.CommandTimeout = _commandTimeoutSeconds;
                             try
                             {
-                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.Truncate");
+                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.Truncate", transaction);
                             }
                             catch (SqlException ex) when (target.DatabaseType == DatabaseType.SqlServer && ex.Number == 4712)
                             {
@@ -1004,12 +1049,14 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                 // disabled or the referencing table is empty. DELETE is allowed once the keys are off, but
                                 // an ENABLED key with ON DELETE CASCADE / SET NULL / SET DEFAULT would silently wipe or alter
                                 // rows in a referencing table, which may not be one the user selected. Let the user decide.
+                                transaction = RestartTransactionIfEnded(targetConn, transaction);
+                                truncateCommand.Transaction = transaction;
                                 if (await HasEnabledCascadingReferenceAsync(targetConn, transaction, table.Schema, table.TableName))
                                     throw;
 
                                 Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} is referenced by a foreign key: using DELETE instead of TRUNCATE");
                                 truncateCommand.CommandText = $"DELETE FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}";
-                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.DeleteInsteadOfTruncate");
+                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.DeleteInsteadOfTruncate", transaction);
                             }
                         }
                         Log($"[MigrateTableAsync] Table truncated successfully");
@@ -1036,17 +1083,58 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                     // Default behavior (no handler): keep previous semantics and continue.
                 }
 
+                // Whatever ended the transaction in the block above (the user answered "continue" after a refused TRUNCATE, say), the rows
+                // that follow must not be loaded outside one.
+                transaction = RestartTransactionIfEnded(targetConn, transaction);
+
                 // Leggi i dati dalla sorgente in batch
                 long totalRows = await GetTableRowCountAsync(source, table.Schema, table.TableName);
                 long migratedRows = 0;
 
+                // A table is read in one stream that can last tens of minutes, and the connection to the source can be cut in the
+                // middle of it. Reading in primary key order from the first row on lets the read start again after the last row
+                // received (SourceResume); the target transaction stays open meanwhile. No key, no order: no resume.
+                var keyColumns = new List<string>();
+                if (_enableTransientRetries && !SourceResume.ShouldOrderRead(totalRows, ResumeMinRows))
+                {
+                    // Small enough to be read again from the start in seconds: read as before, with no ORDER BY (which can make the
+                    // server sort first). A table whose count failed (-1) is not here: its size is unknown, so it is treated as big.
+                    Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} has {totalRows} rows, fewer than {ResumeMinRows}: it is read without ordering and cannot resume, so if the connection to the source is lost while it is read, the table fails");
+                }
+                else if (_enableTransientRetries)
+                {
+                    try
+                    {
+                        keyColumns = (await SourceResume.GetKeyColumnsAsync(sourceConn, source.DatabaseType, table.Schema,
+                                table.TableName, _commandTimeoutSeconds))
+                            .Select(column => SourceResume.QuoteColumn(source.DatabaseType, column)).ToList();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"[MigrateTableAsync] Could not read the primary key of {table.Schema}.{table.TableName}: {ex.Message}");
+                    }
+
+                    if (keyColumns.Count == 0)
+                        Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} has no usable primary key (none, a disabled or not validated one, an inheritance parent, or one this user cannot see): it cannot resume, so if the connection to the source is lost while it is read, the table fails");
+                }
+
+                string dataQuery = keyColumns.Count > 0
+                    ? SourceResume.OrderedSelect(source.DatabaseType, sourceQuery, keyColumns, 0)
+                    : sourceQuery;
+
                 using (var sourceCommand = sourceConn.CreateCommand())
                 {
-                    sourceCommand.CommandText = sourceQuery;
+                    sourceCommand.CommandText = dataQuery;
                     sourceCommand.CommandTimeout = _commandTimeoutSeconds;
 
-                    using (var reader = await ExecuteWithRetryAsync(() => sourceCommand.ExecuteReaderAsync(), "MigrateTableAsync.SourceReader"))
+                    using var resumedRead = new ResumedRead(); // what a resume opens: closed when the table is done, however it ends
+                    using (var initialReader = await ExecuteWithRetryAsync(() => sourceCommand.ExecuteReaderAsync(), "MigrateTableAsync.SourceReader"))
                     {
+                        // The reader the rows come from: the first one, and a new one after each loss of the connection to the source.
+                        DbDataReader reader = initialReader;
+                        DbConnection readConnection = sourceConn;
+                        var resumePolicy = NewResumePolicy();
+                        int resumes = 0;
                         // For SQL Server: check if table has IDENTITY column and enable IDENTITY_INSERT
                         bool hasIdentity = false;
                         string formattedTableName = FormatTableName(target.DatabaseType, table.Schema, table.TableName);
@@ -1063,7 +1151,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                     identityCmd.CommandTimeout = _commandTimeoutSeconds;
                                     if (transaction != null)
                                         identityCmd.Transaction = transaction;
-                                    await ExecuteWithRetryAsync(() => identityCmd.ExecuteNonQueryAsync(), "MigrateTableAsync.IdentityInsertOn");
+                                    await ExecuteWithRetryAsync(() => identityCmd.ExecuteNonQueryAsync(), "MigrateTableAsync.IdentityInsertOn", transaction);
                                 }
                             }
                         }
@@ -1123,8 +1211,77 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                     if (targetXml.Count > 0)
                                         xmlColumns = Enumerable.Range(0, reader.FieldCount).Where(i => targetXml.Contains(reader.GetName(i))).ToArray();
                                 }
-                                var batchRows = new List<object?[]>(_batchSize);
-                                while (await reader.ReadAsync())
+                                // A statement with too many values cannot be compiled by SQL Server: a wide table gets fewer rows per INSERT.
+                                int rowsPerStatement = target.DatabaseType == DatabaseType.SqlServer
+                                    ? RowsPerInsertStatement(columnNames.Count, _batchSize)
+                                    : _batchSize;
+                                if (rowsPerStatement < _batchSize)
+                                    Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} has {columnNames.Count} columns: {rowsPerStatement} rows per INSERT instead of {_batchSize}, so that SQL Server can compile each statement");
+                                var batchRows = new List<object?[]>(rowsPerStatement);
+
+                                // The next row of the source. When the connection to it is lost, a new one is opened and the read goes
+                                // on from the row after the last one received (already inserted, or waiting in batchRows).
+                                async Task<bool> ReadRowAsync()
+                                {
+                                    while (true)
+                                    {
+                                        try
+                                        {
+                                            return await reader.ReadAsync();
+                                        }
+                                        catch (Exception lost) when (keyColumns.Count > 0 && SourceResume.IsConnectionLoss(lost, readConnection))
+                                        {
+                                            await ResumeReadAsync(lost, migratedRows + batchRows.Count);
+                                        }
+                                    }
+                                }
+
+                                async Task ResumeReadAsync(Exception lost, long consumed)
+                                {
+                                    while (true)
+                                    {
+                                        var wait = resumePolicy.OnFailure(consumed);
+                                        if (wait == null)
+                                        {
+                                            throw new InvalidOperationException(
+                                                $"La connessione alla sorgente si è interrotta dopo {consumed} righe di {table.Schema}.{table.TableName} " +
+                                                $"e non è stato possibile riprendere la lettura: {lost.Message}", lost);
+                                        }
+
+                                        Log($"[MigrateTableAsync] Connection to the source lost after {consumed} rows of {table.Schema}.{table.TableName} " +
+                                            $"({lost.Message}); resuming in {wait.Value.TotalSeconds:0.#} s");
+                                        await Task.Delay(wait.Value);
+                                        try
+                                        {
+                                            try { reader.Dispose(); } catch { /* the connection it belonged to is gone */ }
+                                            resumedRead.Dispose();
+                                            resumedRead.Connection = CreateConnection(source);
+                                            await resumedRead.Connection.OpenAsync();
+                                            readConnection = resumedRead.Connection;
+                                            resumedRead.Command = resumedRead.Connection.CreateCommand();
+                                            resumedRead.Command.CommandText =
+                                                SourceResume.OrderedSelect(source.DatabaseType, sourceQuery, keyColumns, consumed);
+                                            resumedRead.Command.CommandTimeout = _commandTimeoutSeconds;
+                                            resumedRead.Reader = await resumedRead.Command.ExecuteReaderAsync();
+                                            reader = resumedRead.Reader;
+                                            resumes++;
+                                            Log($"[MigrateTableAsync] Resumed reading {table.Schema}.{table.TableName} from row {consumed + 1}");
+                                            return;
+                                        }
+                                        catch (Exception again) when (IsTransient(again) || resumedRead.Connection is not { State: ConnectionState.Open })
+                                        {
+                                            lost = again; // still down: wait again, or give up when nothing new has arrived for too long
+                                        }
+                                        catch (Exception other)
+                                        {
+                                            // Not the network (a server that does not know OFFSET, say): reading again would not help.
+                                            throw new InvalidOperationException(
+                                                $"La ripresa della lettura di {table.Schema}.{table.TableName} dalla riga {consumed + 1} non è riuscita: {other.Message}", other);
+                                        }
+                                    }
+                                }
+
+                                while (await ReadRowAsync())
                                 {
                                     var rowValues = new object[reader.FieldCount];
                                     if (reader is Microsoft.Data.SqlClient.SqlDataReader sqlReader)
@@ -1150,7 +1307,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                     StripXmlDeclarations(rowValues, xmlColumns);
                                     batchRows.Add(rowValues);
 
-                                    if (batchRows.Count >= _batchSize)
+                                    if (batchRows.Count >= rowsPerStatement)
                                     {
                                         await InsertBatchAsync(batchRows);
                                         migratedRows += batchRows.Count;
@@ -1170,6 +1327,13 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                         ? (int)((migratedRows / (double)totalRows) * 100)
                                         : 100;
                                     progress?.Report(Math.Min(percentage, 100));
+                                }
+
+                                if (resumes > 0 && totalRows > 0 && migratedRows != totalRows)
+                                {
+                                    // After a resume the read relies on the source not having changed: say so if the numbers disagree.
+                                    Log($"[MigrateTableAsync] Warning: {migratedRows} rows were read from {table.Schema}.{table.TableName} after " +
+                                        $"{resumes} resume(s), but {totalRows} were counted before the read: the source may have changed while it was being read");
                                 }
 
                                 if (migratedRows == 0)
@@ -1193,7 +1357,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                         identityCmd.CommandTimeout = _commandTimeoutSeconds;
                                         if (transaction != null)
                                             identityCmd.Transaction = transaction;
-                                        await ExecuteWithRetryAsync(() => identityCmd.ExecuteNonQueryAsync(), "MigrateTableAsync.IdentityInsertOff");
+                                        await ExecuteWithRetryAsync(() => identityCmd.ExecuteNonQueryAsync(), "MigrateTableAsync.IdentityInsertOff", transaction);
                                     }
                                 }
                                 catch (Exception ex)
@@ -1206,7 +1370,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 }
 
                 progress?.Report(100);
-                await FinalizeTransactionAsync(targetConn, transaction, target.DatabaseType, true);
+                await FinalizeTransactionAsync(targetConn, transaction, target.DatabaseType, true, $"{table.Schema}.{table.TableName}");
                 Log($"[MigrateTableAsync] Transaction finalized successfully");
 
                 // PostgreSQL/Oracle: the rows just committed were inserted with EXPLICIT values into GENERATED BY
@@ -1252,7 +1416,25 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         }
     }
 
-    private async Task FinalizeTransactionAsync(DbConnection connection, DbTransaction? transaction, DatabaseType dbType, bool commit)
+    /// <summary>
+    /// SQL Server ends the open transaction when a TRUNCATE fails (error 4712 sets @@TRANCOUNT back to 0), and the driver quietly
+    /// ignores a transaction that has ended: a command given it simply runs on its own. The DELETE that replaces the TRUNCATE and every
+    /// INSERT after it would then be committed one by one, with nothing to roll back if a later batch failed. When the transaction has
+    /// ended, a new one is begun and returned; otherwise the same one comes back.
+    /// </summary>
+    internal static DbTransaction? RestartTransactionIfEnded(DbConnection connection, DbTransaction? transaction)
+    {
+        if (transaction is not { Connection: null })
+            return transaction;
+
+        transaction.Dispose();
+        var restarted = connection.BeginTransaction();
+        Log("[MigrateTableAsync] The transaction had ended (the server rolled it back with the failed statement): a new one was begun");
+        return restarted;
+    }
+
+    internal async Task FinalizeTransactionAsync(DbConnection connection, DbTransaction? transaction, DatabaseType dbType, bool commit,
+        string? tableName = null)
     {
         try
         {
@@ -1285,6 +1467,16 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         catch (Exception ex)
         {
             Log($"[FinalizeTransactionAsync] Error finalizing transaction: {ex.Message}");
+            // A rollback that fails is only logged: the caller is already handling the error that made it roll back (and a rollback
+            // of millions of rows can well time out). A COMMIT that fails is another matter: the rows are not saved, and swallowing
+            // it reported the table as migrated. Not on Oracle: there is no driver transaction, every statement was committed as it
+            // ran, and the COMMIT sent at the end has nothing left to save.
+            if (commit && dbType != DatabaseType.Oracle)
+            {
+                throw new InvalidOperationException(
+                    $"Il COMMIT della transazione{(tableName != null ? $" di {tableName}" : "")} non è riuscito, quindi le righe non sono state salvate: {ex.Message}",
+                    ex);
+            }
         }
     }
 
@@ -1312,7 +1504,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         tableParam.Value = tableName;
         command.Parameters.Add(tableParam);
 
-        using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.FindXmlColumns");
+        using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.FindXmlColumns", transaction);
         while (await reader.ReadAsync())
             names.Add(reader.GetString(0));
         return names;
@@ -1347,7 +1539,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             tableParam.Value = tableName;
             command.Parameters.Add(tableParam);
 
-            var result = await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "HasIdentityColumnAsync.ExecuteScalar");
+            var result = await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "HasIdentityColumnAsync.ExecuteScalar", transaction);
             var count = Convert.ToInt32(result ?? 0);
             Log($"[HasIdentityColumnAsync] Table {schema}.{tableName} has {count} identity column(s)");
             return count > 0;
@@ -1407,7 +1599,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         catch (Exception ex)
         {
             Log($"GetTableRowCountAsync error for {schema}.{tableName}: {ex.Message}");
-            return 0;
+            return -1; // not 0: a count that failed is not an empty table (the caller treats an unknown size as a big one)
         }
     }
 

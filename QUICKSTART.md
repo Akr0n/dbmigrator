@@ -122,7 +122,7 @@ In the **"Migration"** tab:
 3. Click the **"Start Migration"** button
 
 What happens automatically:
-- ✅ Creates target database if it doesn't exist
+- ✅ Creates the tables on the target (the target database itself must already exist)
 - ✅ Creates tables with correct schema and data types
 - ✅ Migrates Primary Keys and UNIQUE constraints
 - ✅ Applies correct identifier case for target database
@@ -136,11 +136,11 @@ What happens automatically:
 
 ### Save Configuration
 1. Configure both source and target connections
-2. File → Save Configuration (or Ctrl+S)
+2. File → Salva Configurazione...
 3. Choose a location and filename
 
 ### Load Configuration
-1. File → Load Configuration (or Ctrl+O)
+1. File → Carica Configurazione...
 2. Select a previously saved configuration file
 3. Connection fields will be populated automatically
 

@@ -173,6 +173,8 @@ jobs:
             ./publish/DatabaseMigrator.exe
             ./RELEASE_NOTES.txt
             ./README.md
+            ./LICENSE
+            ./THIRD-PARTY-NOTICES.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         if: env.MERGE_FROM_DEVELOP == 'true'
