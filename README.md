@@ -26,7 +26,7 @@ A Windows tool for migrating data between relational databases (SQL Server, Orac
 ## Installation
 
 ### Method 1: Standalone Executable (Recommended)
-1. Download `DatabaseMigrator.exe` from the [latest release](https://github.com/Akr0n/dbmigrator/releases/latest) (a release marked "Pre-release" is a test build)
+1. Download `DatabaseMigrator.exe` from the [latest release](https://github.com/Akr0n/dbmigrator/releases/latest)
 2. Run the executable directly
 
 ### Method 2: Build from Source
@@ -240,8 +240,10 @@ Contributions are welcome! Please read the ARCHITECTURE.md file to understand th
 `main` is the only long-lived branch and takes changes only through a pull request: its required check, `test / build` (the build and all the tests), must pass, so a direct push is rejected. From a short-lived branch:
 
 ```powershell
-git switch -c fix/x && git push -u origin HEAD
-gh pr create --fill && gh pr merge --auto --merge --delete-branch
+git switch -c fix/x
+# edit, then commit your change
+git push -u origin HEAD
+gh pr create --title "What the change does, in one line" --fill && gh pr merge --auto --merge --delete-branch
 ```
 
 The pull request merges itself once the check passes, and its branch is deleted. Give it a descriptive title: the release notes list the titles of the merged pull requests.

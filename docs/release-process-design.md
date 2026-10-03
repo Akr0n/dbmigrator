@@ -1,8 +1,6 @@
 # Release process: single-trunk design
 
-Status: approved by the owner on 2026-10-03; implemented from the same day (the manual release workflow, the required CI check,
-the version in the exe and the branch ruleset are live; the old develop/staging workflows are removed in a later step).
-`DEPLOYMENT.md` holds the procedure.
+Status: approved by the owner on 2026-10-03 and implemented. `DEPLOYMENT.md` holds the procedure.
 
 ## Decisions
 
