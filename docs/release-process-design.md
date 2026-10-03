@@ -1,7 +1,6 @@
 # Release process: single-trunk design
 
-Status: approved by the owner on 2026-10-03, not implemented yet. This file is the design; `DEPLOYMENT.md` becomes the
-procedure once step 9 of the migration is done.
+Status: approved by the owner on 2026-10-03 and implemented. `DEPLOYMENT.md` holds the procedure.
 
 ## Decisions
 

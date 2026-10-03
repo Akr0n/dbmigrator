@@ -26,7 +26,7 @@ A Windows tool for migrating data between relational databases (SQL Server, Orac
 ## Installation
 
 ### Method 1: Standalone Executable (Recommended)
-1. Download `DatabaseMigrator.exe` from Releases
+1. Download `DatabaseMigrator.exe` from the [latest release](https://github.com/Akr0n/dbmigrator/releases/latest)
 2. Run the executable directly
 
 ### Method 2: Build from Source
@@ -237,4 +237,15 @@ The executable bundles third-party components under their own licenses. Nearly a
 
 Contributions are welcome! Please read the ARCHITECTURE.md file to understand the codebase structure.
 
-Open pull requests against `develop`: every push to `develop` builds, tests and publishes a `vX.Y.Z-dev` prerelease. A stable release is cut by the maintainer by fast-forwarding `staging` to `develop` and merging `staging` into `main` with a **merge commit** (not squash or rebase); any other push to `main` publishes nothing.
+`main` is the only long-lived branch and takes changes only through a pull request: its required check, `test / build` (the build and all the tests), must pass, so a direct push is rejected. From a short-lived branch:
+
+```powershell
+git switch -c fix/x
+# edit, then commit your change
+git push -u origin HEAD
+gh pr create --title "What the change does, in one line" --fill && gh pr merge --auto --merge --delete-branch
+```
+
+The pull request merges itself once the check passes, and its branch is deleted. Give it a descriptive title: the release notes list the titles of the merged pull requests.
+
+A release is cut by the maintainer with one manual run of the `Release` workflow, which also runs the cross-database E2E matrix and blocks the release if it fails; see "Releasing" in [DEPLOYMENT.md](DEPLOYMENT.md#releasing).

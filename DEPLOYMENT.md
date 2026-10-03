@@ -10,8 +10,9 @@
 ## Release Files
 
 ### Standalone Executable (Recommended)
-- **File**: `DatabaseMigrator.exe` (~166 MB)
-- **Location**: `/release/`
+- **File**: `DatabaseMigrator.exe`
+- **Download**: the [latest release](https://github.com/Akr0n/dbmigrator/releases/latest)
+- **Built locally**: `.\publish.ps1` writes it to `release\`
 - **Requirements**: Windows 10/11 64-bit, no external dependencies
 - **Runtime**: .NET 10.0 (self-contained)
 
@@ -19,8 +20,8 @@
 
 ### Direct Execution
 ```powershell
-# Copy exe to your preferred folder
-Copy-Item release\DatabaseMigrator.exe "C:\Program Files\DatabaseMigrator\"
+# Copy exe to your preferred folder (run this where the exe is: the folder you downloaded it to, or release\ after .\publish.ps1)
+Copy-Item DatabaseMigrator.exe "C:\Program Files\DatabaseMigrator\"
 
 # Run
 & "C:\Program Files\DatabaseMigrator\DatabaseMigrator.exe"
@@ -218,10 +219,76 @@ Before starting an important migration:
 2. Delete the installation folder
 3. Optionally delete configurations from `%LOCALAPPDATA%\DatabaseMigrator\`
 
+## Releasing
+
+`main` is the only long-lived branch. A ruleset on it requires a pull request and the status check `test / build` (the build and all
+the tests, run by `ci.yml` on every pull request to `main` and on every push to it), so a direct push to `main` is rejected. Every
+change goes through a pull request from a short-lived branch:
+
+```powershell
+git switch -c fix/x
+# edit, then commit your change
+git push -u origin HEAD
+gh pr create --title "What the change does, in one line" --fill && gh pr merge --auto --merge --delete-branch
+```
+
+The pull request merges itself once `test / build` passes, and its branch is deleted. Merge commits are the only allowed merge method.
+
+A release is one manual run of the `Release` workflow (`.github/workflows/release.yml`):
+
+```powershell
+gh workflow run release.yml -f channel=stable
+```
+
+| Channel | What it does | Publishes |
+|---------|--------------|-----------|
+| `dry-run` (default) | Builds, runs all the tests and the cross-database E2E matrix (real SQL Server, PostgreSQL and Oracle containers); the exe is kept for 7 days as the artifact `exe` | Nothing |
+| `candidate` | The same, then publishes; it can be built from any branch | A public prerelease `vX.Y.Z-rc.N` |
+| `stable` | The same, then publishes; it must run on `main` | The release `vX.Y.Z` |
+
+To try a pull request's build on another PC before merging it, run a candidate from its branch: `--ref` runs the copy of
+`release.yml` on that branch and builds that branch's commit.
+
+```powershell
+gh workflow run release.yml -f channel=candidate --ref <branch>
+```
+
+The prerelease is public; delete it afterwards (see below).
+
+`dry-run` is the default channel, so forgetting `-f channel=...` is harmless; a dry run also runs by itself every Monday at 04:00 UTC. The E2E matrix runs
+alongside the build and blocks every `candidate` and `stable` release; there is no switch to skip it. If a job fails, nothing is
+published.
+
+The version is the next patch after the last stable release; `-f version=vX.Y.Z` (or `X.Y.Z`) sets another one. The first job,
+`plan`, refuses and says why:
+- a version that does not increase over the last stable tag, or a tag that already exists (a tag is never reused);
+- a missing `README.md`, `LICENSE` or `THIRD-PARTY-NOTICES.txt`, which every release ships;
+- for `stable`, a ref other than `main`, or nothing shippable changed since the last stable tag. Only `src/`, `*.sln`, `README.md`,
+  `LICENSE` and `THIRD-PARTY-NOTICES.txt` count: a change that touches only tests, other docs or workflows lands on `main` but cannot
+  be released on its own.
+
+The release is created as a draft with exactly five assets (`DatabaseMigrator.exe`, `RELEASE_NOTES.txt`, `README.md`, `LICENSE`,
+`THIRD-PARTY-NOTICES.txt`), the assets are counted, and only then is it published. The release notes list the titles of the pull
+requests merged since the previous stable release (those labelled `dependencies` are left out), so give every pull request a
+descriptive title.
+
+A wrong release is not corrected in place: the next release gets the next number. Delete a candidate once it has served:
+
+```powershell
+gh release delete vX.Y.Z-rc.N --cleanup-tag --yes
+```
+
+Delete all the candidates of that version, not only an earlier one: the next number is counted from the existing `-rc` tags, and `plan`
+refuses a number that is already taken.
+
 ## Version Information
 
-**Current Version**: 1.0.0  
-**Release Date**: January 2026  
+The executable carries its version and the commit it was built from: its file and product version is `X.Y.Z+<commit>` (`X.Y.Z-rc.N+<commit>`
+for a candidate). The window title reads `Database Migrator X.Y.Z+<7-character commit>`, the About text shows the same, and
+`debug.log` gets the line `Database Migrator X.Y.Z+<7-character commit> started` at every start, so a log sent from another PC says
+which build produced it. The releases, with their notes, are on the
+[Releases page](https://github.com/Akr0n/dbmigrator/releases); the latest stable one is marked "Latest", and a release marked "Pre-release" is a test build.
+
 **Build**: Win-x64, .NET 10.0 self-contained
 
 ### Release Notes v1.0.0
