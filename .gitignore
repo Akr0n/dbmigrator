@@ -43,6 +43,8 @@ coverage/
 # Environment & Configuration
 *.log
 *.txt
+# The licenses of the bundled packages are released with the executable (scripts/generate-third-party-notices.ps1 writes it).
+!THIRD-PARTY-NOTICES.txt
 *.env
 
 # OS
