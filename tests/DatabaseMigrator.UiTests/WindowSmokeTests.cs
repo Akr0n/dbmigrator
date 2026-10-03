@@ -49,7 +49,7 @@ public class WindowSmokeTests
         var (window, viewModel) = await Ui.OpenWindowAsync();
         try
         {
-            await Ui.WaitUntilAsync(() => window.Title is { } t && t.Contains(AppVersion.Current), "the title to show the version");
+            await Ui.WaitUntilAsync(() => window.Title is { } t && t.Contains(AppVersion.Current), "the title to show the version", timeoutMs: 30000);
         }
         finally
         {

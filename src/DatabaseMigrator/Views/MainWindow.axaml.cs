@@ -30,6 +30,7 @@ namespace DatabaseMigrator.Views;
     public MainWindow()
     {
         InitializeComponent();
+        Title = BaseTitle; // the XAML has the bare name: the version is there from the first frame, not only once InitializeViewModel has run
         // Off unless the runtime settings say otherwise: accepting any certificate switches the verification of the server off.
         bool trustByDefault = RuntimeOptionsProvider.Current.Security.TrustServerCertificateByDefault;
         SourceTrustServerCertificateCheckBox.IsChecked = trustByDefault;
@@ -50,7 +51,7 @@ namespace DatabaseMigrator.Views;
         try
         {
             _vm = new MainWindowViewModel();
-            Log($"Database Migrator {AppVersion.Current} started");
+            Log($"{BaseTitle} started");
             DataContext = _vm;
             _vm.TruncateFailedPromptHandlerAsync = ShowTruncateFailedDialogAsync;
             
@@ -1073,6 +1074,6 @@ namespace DatabaseMigrator.Views;
 
     private void ShowAbout()
     {
-        StatusBarTextBlock.Text = "Database Migrator v1.0 - Strumento per migrare dati tra SQL Server, PostgreSQL e Oracle";
+        StatusBarTextBlock.Text = $"{BaseTitle} - Strumento per migrare dati tra SQL Server, PostgreSQL e Oracle";
     }
 }
