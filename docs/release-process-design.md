@@ -43,7 +43,7 @@ gh workflow run release.yml -f channel=stable
 
 | Channel | What it does | Publishes |
 |---|---|---|
-| `dry-run` (default, and every Monday from a schedule) | plan, build, test, E2E; the exe is kept as a 7-day artifact; the notes are printed | nothing |
+| `dry-run` (default, and every Monday from a schedule) | plan, build, test, E2E; the exe is kept as a 7-day artifact; the commits since the previous stable release are printed (the notes API needs a write token, which a dry run does not have) | nothing |
 | `candidate` | as above, then a prerelease `vX.Y.Z-rc.N` from any ref | prerelease, deleted by hand after the stable one |
 | `stable` | as above, only from `refs/heads/main` | release `vX.Y.Z` |
 
@@ -55,14 +55,15 @@ gh workflow run release.yml -f channel=stable
   report), `permissions: contents: read`.
 - **`e2e-matrix.yml`**: gains `workflow_call` next to `workflow_dispatch`, with a job timeout; its cron moves into `release.yml`.
 - **`release.yml`**: jobs `plan` (ubuntu) -> `build` (windows) in parallel with `e2e` (ubuntu) -> `publish` (ubuntu).
-  - `plan` computes the next patch version from the last stable tag (`sort -V`) and refuses: a tag that already exists, a leftover
-    draft release, a version that does not increase, a missing shipped file (README, LICENSE, THIRD-PARTY-NOTICES.txt), and for
+  - `plan` (read-only token) computes the next patch version from the last stable tag (`sort -V`) and refuses: a tag that already
+    exists, a version that does not increase, a missing shipped file (README, LICENSE, THIRD-PARTY-NOTICES.txt), and for
     `stable` a ref other than `refs/heads/main` or no change since the last stable tag in `src/`, `*.sln`, `README.md`, `LICENSE` or
     `THIRD-PARTY-NOTICES.txt`. Every guard prints why before `exit 1`.
   - `publish` runs only with `if: github.event_name == 'workflow_dispatch' && inputs.channel != 'dry-run'` (the positive form: on the
     schedule `inputs.channel` is empty and the negative form alone would publish). It creates the release as a **draft** with the five
     assets, checks that there are exactly five, and only then publishes. The tag therefore appears at publication; a failed run leaves
-    no tag without a release. `contents: write` exists only in this job.
+    no tag without a release. `contents: write` exists only in this job, so the refusal of a leftover draft (a draft is invisible to a
+    read-only token) is its first step.
   - Concurrency: real releases share the group `release` and never cancel each other; dry runs and the schedule use a group per run.
 - Actions are pinned to the versions already on `main` (checkout v7, setup-dotnet v6, upload-artifact v7); the `download-artifact`
   version that pairs with upload v7 is confirmed by the first dry run. `upload-artifact` uses `overwrite: true`,
@@ -85,8 +86,8 @@ must be descriptive.
 - Ruleset `10526240` on `main`: keep `deletion`, `non_fast_forward`, `copilot_code_review`; add `pull_request` (0 approvals) and
   `required_status_checks` with the check name read from a real PR in step 4 (expected `test / build`, to be confirmed),
   `strict_required_status_checks_policy: false`; keep the bypass list empty.
-- `delete_branch_on_merge = true`; **`allow_auto_merge = true`** (needed by `gh pr merge --auto`; it is a repository setting and is
-  switched on only at step 6).
+- `delete_branch_on_merge = true` (set at step 6). `allow_auto_merge` is already true (checked on 2026-10-03; the Dependabot
+  auto-merge workflow relies on it), as is merge-commit-only (squash and rebase are off).
 
 ## Safety properties
 
@@ -134,8 +135,8 @@ approved.
 5. **Rehearsal of publishing**: `gh workflow run release.yml -f channel=candidate --ref <branch>` creates `vX.Y.Z-rc.1`. Check five assets,
    the prerelease flag, the exe's product version and that no draft is left; prove that `publish` does not run from the schedule; then
    `gh release delete vX.Y.Z-rc.1 --cleanup-tag --yes`.
-6. **Ruleset**: add `pull_request` and the required check by the name found in step 4; switch on `allow_auto_merge` and
-   `delete_branch_on_merge`. Verify with `gh api repos/Akr0n/dbmigrator/rules/branches/main` and a test PR (it must wait for the check
+6. **Ruleset**: add `pull_request` and the required check by the name found in step 4; set `delete_branch_on_merge` (`allow_auto_merge`
+   is already on). Verify with `gh api repos/Akr0n/dbmigrator/rules/branches/main` and a test PR (it must wait for the check
    and a direct merge must be refused). Evaluate mode is probably not available on this plan, so this is validated by applying it;
    rollback in seconds: set the ruleset to `enforcement: disabled`.
 7. **First stable with the new flow**: a PR with a change in `src/`, then `channel=stable`. Check five assets, the exe digest, the version in
