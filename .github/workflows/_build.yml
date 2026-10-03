@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       version:
-        description: 'X.Y.Z stamped into the exe; empty means build and test only'
+        description: 'X.Y.Z or X.Y.Z-rc.N stamped into the exe; empty means build and test only'
         type: string
         default: ''
 
@@ -35,7 +35,6 @@ jobs:
           $buildArgs = @('DatabaseMigrator.sln', '--configuration', 'Release', '--no-restore')
           if ($env:VERSION) {
             $buildArgs += "-p:Version=$env:VERSION"
-            $buildArgs += "-p:InformationalVersion=$env:VERSION+$env:GITHUB_SHA"
           }
           dotnet build @buildArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -47,7 +46,7 @@ jobs:
         if: inputs.version != ''
         shell: pwsh
         run: |
-          dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj --configuration Release --runtime win-x64 --self-contained --no-build --output ./publish "-p:Version=$env:VERSION" "-p:InformationalVersion=$env:VERSION+$env:GITHUB_SHA"
+          dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj --configuration Release --runtime win-x64 --self-contained --no-build --output ./publish "-p:Version=$env:VERSION"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload test results

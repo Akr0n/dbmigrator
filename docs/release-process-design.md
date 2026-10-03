@@ -64,7 +64,8 @@ gh workflow run release.yml -f channel=stable
     assets, checks that there are exactly five, and only then publishes. The tag therefore appears at publication; a failed run leaves
     no tag without a release. `contents: write` exists only in this job, so the refusal of a leftover draft (a draft is invisible to a
     read-only token) is its first step.
-  - Concurrency: real releases share the group `release` and never cancel each other; dry runs and the schedule use a group per run.
+  - Concurrency: real releases share the group `release`: a running release is never cancelled, and a newer queued run replaces an
+    older one that is still queued; dry runs and the schedule use a group per run.
 - Actions are pinned to the versions already on `main` (checkout v7, setup-dotnet v6, upload-artifact v7); the `download-artifact`
   version that pairs with upload v7 is confirmed by the first dry run. `upload-artifact` uses `overwrite: true`,
   `if-no-files-found: error`, `retention-days: 7`.
@@ -72,7 +73,8 @@ gh workflow run release.yml -f channel=stable
 ### Version in the exe
 
 Delete `AssemblyVersion` and `FileVersion` from the csproj (lines 19-20) and pass `-p:Version=X.Y.Z` to both build and publish, so
-the informational version is `X.Y.Z+<sha>`. The window title shows it with the sha cut to seven characters, and the log writes it at
+the informational version is `X.Y.Z+<sha>` (the SDK adds the commit by itself; passing `InformationalVersion` too would duplicate it).
+A candidate carries its number in the exe as well: its version is `X.Y.Z-rc.N`, the tag without the `v`. The window title shows it with the sha cut to seven characters, and the log writes it at
 every start (not only in the first line: log rotation moves the file).
 
 ### Release notes

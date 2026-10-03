@@ -8,14 +8,14 @@ migration, releasing v1.0.77 with the current flow, is done separately and is no
 
 **Architecture:** one reusable `_build.yml` (restore, build, test, publish) used by `ci.yml` (required PR check) and by `release.yml`
 (`plan` -> `build` + `e2e` -> `publish`). The release is created as a draft, checked, then published. The version is stamped into the
-exe with `-p:Version` and `-p:InformationalVersion`. Every task below is shippable and reversible on its own; the old DEV/PROD workflows
+exe with `-p:Version` alone (the SDK appends `+<full commit sha>` to the informational version by itself). Every task below is shippable and reversible on its own; the old DEV/PROD workflows
 keep working until Task 7.
 
 **Tech stack:** GitHub Actions (YAML, bash on ubuntu, pwsh on windows), `gh` CLI, .NET 10, Avalonia, xUnit.
 
 ## Global constraints
 
-- Existing releases and tags `v1.0.70`, `v1.0.75`, `v1.0.76` stay intact; a wrong release is followed by the next number, a tag is never reused.
+- Existing releases and tags `v1.0.70`, `v1.0.75`, `v1.0.76`, `v1.0.77` stay intact; a wrong release is followed by the next number, a tag is never reused.
 - The release assets are exactly five, with these names: `DatabaseMigrator.exe`, `RELEASE_NOTES.txt`, `README.md`, `LICENSE`, `THIRD-PARTY-NOTICES.txt`.
 - Actions are pinned to: `actions/checkout@v7`, `actions/setup-dotnet@v6`, `actions/upload-artifact@v7`, `actions/download-artifact@v8`
   (v8.0.1 is current and its README pairs it with upload-artifact v7), `actions/cache@v6`.
@@ -58,8 +58,8 @@ publishes nothing). The old PROD does not publish for this merge: its second par
 - Docs carried along: `docs/release-process-design.md`, `docs/release-process-plan.md`
 
 **Interfaces:**
-- Produces: `_build.yml` input `version` (string, `X.Y.Z` or empty); artifact `exe` (7 days) when a version is given; artifact
-  `test-results-windows`. `release.yml` plan outputs `tag`, `version`, `previous`, `publish`, `prerelease`. `e2e-matrix.yml` callable.
+- Produces: `_build.yml` input `version` (string, `X.Y.Z`, `X.Y.Z-rc.N` or empty); artifact `exe` (7 days) when a version is given; artifact
+  `test-results-windows`. `release.yml` plan outputs `tag`, `version` (the tag without the `v`: `1.0.78`, or `1.0.78-rc.1` for a candidate), `previous`, `prerelease`. `e2e-matrix.yml` callable.
 
 - [ ] **Step 1: Start from `main` on a short-lived branch and bring the design docs along**
 
@@ -82,7 +82,7 @@ on:
   workflow_call:
     inputs:
       version:
-        description: 'X.Y.Z stamped into the exe; empty means build and test only'
+        description: 'X.Y.Z or X.Y.Z-rc.N stamped into the exe; empty means build and test only'
         type: string
         default: ''
 
@@ -113,7 +113,6 @@ jobs:
           $buildArgs = @('DatabaseMigrator.sln', '--configuration', 'Release', '--no-restore')
           if ($env:VERSION) {
             $buildArgs += "-p:Version=$env:VERSION"
-            $buildArgs += "-p:InformationalVersion=$env:VERSION+$env:GITHUB_SHA"
           }
           dotnet build @buildArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -125,7 +124,7 @@ jobs:
         if: inputs.version != ''
         shell: pwsh
         run: |
-          dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj --configuration Release --runtime win-x64 --self-contained --no-build --output ./publish "-p:Version=$env:VERSION" "-p:InformationalVersion=$env:VERSION+$env:GITHUB_SHA"
+          dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj --configuration Release --runtime win-x64 --self-contained --no-build --output ./publish "-p:Version=$env:VERSION"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload test results
@@ -185,7 +184,6 @@ jobs:
       tag: ${{ steps.plan.outputs.tag }}
       version: ${{ steps.plan.outputs.version }}
       previous: ${{ steps.plan.outputs.previous }}
-      publish: ${{ steps.plan.outputs.publish }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
     steps:
       - name: Checkout
@@ -203,8 +201,9 @@ jobs:
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
+          case "$CHANNEL" in dry-run|candidate|stable) ;; *) fail "unknown channel '$CHANNEL'" ;; esac
 
-          previous=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v -- '-' | sort -V | tail -n 1)
+          previous=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | { grep -v -- '-' || true; } | sort -V | tail -n 1)
           [ -n "$previous" ] || fail "no stable tag found: cannot work out the next version"
 
           if [ -n "$REQUESTED" ]; then
@@ -230,18 +229,16 @@ jobs:
 
           if [ "$CHANNEL" = stable ]; then
             [ "$REF" = refs/heads/main ] || fail "a stable release comes only from main (this run is on $REF)"
-            if git diff --quiet "$previous" HEAD -- src '*.sln' README.md LICENSE THIRD-PARTY-NOTICES.txt; then
-              fail "nothing shippable changed since $previous (src, *.sln, README.md, LICENSE, THIRD-PARTY-NOTICES.txt)"
-            fi
+            rc=0; git diff --quiet "$previous" HEAD -- src '*.sln' README.md LICENSE THIRD-PARTY-NOTICES.txt || rc=$?
+            [ "$rc" -le 1 ] || fail "git diff failed (exit $rc)"
+            [ "$rc" -eq 1 ] || fail "nothing shippable changed since $previous (src, *.sln, README.md, LICENSE, THIRD-PARTY-NOTICES.txt)"
           fi
 
-          publish=false; [ "$CHANNEL" != dry-run ] && publish=true
           prerelease=false; [ "$CHANNEL" = candidate ] && prerelease=true
           {
             echo "tag=$tag"
-            echo "version=$version"
+            echo "version=${tag#v}"
             echo "previous=$previous"
-            echo "publish=$publish"
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
           {
@@ -270,18 +267,24 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.plan.outputs.tag }}
       PREVIOUS: ${{ needs.plan.outputs.previous }}
       PRERELEASE: ${{ needs.plan.outputs.prerelease }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Refuse to continue over an existing release or a leftover draft
         shell: bash
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          if out=$(gh release view "$TAG" 2>&1); then
             echo "::error::A release (or a leftover draft) for $TAG already exists. Delete a draft with: gh release delete $TAG --yes"
+            exit 1
+          elif ! grep -qi 'release not found' <<<"$out"; then
+            echo "::error::Cannot tell whether a release for $TAG exists: $out"
             exit 1
           fi
 
@@ -412,7 +415,7 @@ pwsh -NoProfile -Command "(Get-Item out/DatabaseMigrator.exe).VersionInfo | Form
 gh run view "$id" --json jobs --jq '.jobs[] | "\(.name): \(.conclusion)"'
 ```
 
-Expected: `ProductVersion` is `1.0.NN+<the run's full commit sha>` where `1.0.NN` is the next patch after the last stable tag; the jobs list shows `publish: skipped`. (`FileVersion` is still `1.0.0` until Task 4 deletes the fixed value; that is expected here.)
+Expected: `ProductVersion` is `1.0.NN+<the run's full commit sha>` where `1.0.NN` is the next patch after the last stable tag (no `-rc` part: only a candidate carries one); the jobs list shows `publish: skipped`. (`FileVersion` is still `1.0.0` until Task 4 deletes the fixed value; that is expected here.)
 
 - [ ] **Step 3: Check the three guards by dispatching them on purpose**
 
@@ -421,7 +424,7 @@ gh workflow run release.yml -f channel=stable -f version=v1.0.76   # must fail i
 gh workflow run release.yml -f channel=candidate -f version=v1.0.75 # must fail in plan: the version does not increase
 ```
 
-Expected: both runs fail in `plan` with `does not increase over v1.0.76` and nothing is published. Record the real failure text in the PR that fixes anything found.
+Expected: both runs fail in `plan` with `does not increase over v1.0.77` and nothing is published. Record the real failure text in the PR that fixes anything found.
 
 - [ ] **Step 4: If a build error appears, fix it before going on.** The two things the design flagged: `dotnet publish --runtime win-x64 --no-build`
 after a solution build that took the runtime from the csproj, and the `download-artifact` pairing. Fix in a PR, repeat Steps 1-2.
@@ -553,7 +556,7 @@ using System.Reflection;
 
 namespace DatabaseMigrator;
 
-/// <summary>The version of this build, as the release workflow stamps it (-p:Version and -p:InformationalVersion=X.Y.Z+sha).</summary>
+/// <summary>The version of this build, as the release workflow stamps it (-p:Version=X.Y.Z; the SDK appends +sha).</summary>
 public static class AppVersion
 {
     /// <summary>"1.0.77+5bb2f8d": the informational version with the commit cut to seven characters.</summary>
@@ -639,11 +642,12 @@ Expected: 0 warnings; every test passes, including the new ones.
 - [ ] **Step 10: Look at it for real** (this PC runs at 125%, work area 1920x1020)
 
 ```powershell
-dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj -c Release -r win-x64 --self-contained -o out-check "-p:Version=9.9.9" "-p:InformationalVersion=9.9.9+0123456789abcdef"
+dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj -c Release -r win-x64 --self-contained -o out-check "-p:Version=9.9.9"
 (Get-Item out-check\DatabaseMigrator.exe).VersionInfo | Format-List ProductVersion, FileVersion
+git rev-parse HEAD
 ```
 
-Start `out-check\DatabaseMigrator.exe`: the title bar reads `Database Migrator 9.9.9+0123456`, and the last lines of `%LOCALAPPDATA%\DatabaseMigrator\debug.log` contain `Database Migrator 9.9.9+0123456 started`. Delete `out-check` afterwards.
+Expected: `ProductVersion` is `9.9.9+<the full sha printed by git rev-parse HEAD>` (the SDK adds the commit by itself). Start `out-check\DatabaseMigrator.exe`: the title bar reads `Database Migrator 9.9.9+` followed by the first seven characters of that sha, and the last lines of `%LOCALAPPDATA%\DatabaseMigrator\debug.log` contain `Database Migrator 9.9.9+<those seven characters> started`. Delete `out-check` afterwards.
 
 - [ ] **Step 11: Commit and PR**
 
@@ -680,7 +684,7 @@ gh release download "$tag" -p DatabaseMigrator.exe -D out-rc
 pwsh -NoProfile -Command "(Get-Item out-rc/DatabaseMigrator.exe).VersionInfo | Format-List ProductVersion, FileVersion"
 ```
 
-Expected: `draft=false prerelease=true`, the five names `DatabaseMigrator.exe,LICENSE,README.md,RELEASE_NOTES.txt,THIRD-PARTY-NOTICES.txt`, the tag looks like `v1.0.NN-rc.1`, and `ProductVersion` is `1.0.NN-rc.1`'s base version plus `+<sha>`.
+Expected: `draft=false prerelease=true`, the five names `DatabaseMigrator.exe,LICENSE,README.md,RELEASE_NOTES.txt,THIRD-PARTY-NOTICES.txt`, the tag looks like `v1.0.NN-rc.1`, and `ProductVersion` is `1.0.NN-rc.1+<the run's full commit sha>` (the tag without the `v`, plus the commit).
 
 - [ ] **Step 3: Prove the schedule cannot publish.** Read the last scheduled or dry-run run's jobs (`gh run view <id> --json jobs`) and confirm `publish` is `skipped`; the `if` condition in `release.yml` is the positive form (the Task 1 validation asserts it).
 
@@ -770,7 +774,7 @@ gh release download "$tag" -p DatabaseMigrator.exe -D out-stable; (Get-Item out-
 gh release list --limit 4
 ```
 
-Expected: five assets, not a draft, not a prerelease, notes listing only the PRs since the previous stable release, `ProductVersion` is `<tag without v>+<sha>`, `v1.0.70`, `v1.0.75`, `v1.0.76` untouched. Start the downloaded exe: the title shows the version. A wrong release is followed by the next number, never by deleting and reusing a tag.
+Expected: five assets, not a draft, not a prerelease, notes listing only the PRs since the previous stable release, `ProductVersion` is `<tag without v>+<sha>`, `v1.0.70`, `v1.0.75`, `v1.0.76`, `v1.0.77` untouched. Start the downloaded exe: the title shows the version. A wrong release is followed by the next number, never by deleting and reusing a tag.
 
 - [ ] **Step 3: One clean week.** After one green Monday dry run, go on.
 
@@ -865,4 +869,4 @@ gh release list --limit 300 --json tagName,isPrerelease --jq '.[] | select(.isPr
 - Ruleset and `delete_branch_on_merge` (`allow_auto_merge` already true): Task 6.
 - Old workflows removed, branches left for 30 days, documentation, optional prerelease cleanup: Tasks 7, 8 and 9.
 - Safety table: PR-only (Task 6), no publish on push (Task 1), tested bytes are the shipped bytes (`publish` downloads the artifact `build` made after `test`), E2E gate, assets counted, existing tag refused.
-- Names used consistently: `_build.yml` input `version`; `release.yml` outputs `tag`, `version`, `previous`, `publish`, `prerelease`; artifact `exe`; `AppVersion.Format` / `AppVersion.Current`.
+- Names used consistently: `_build.yml` input `version`; `release.yml` outputs `tag`, `version`, `previous`, `prerelease`; artifact `exe`; `AppVersion.Format` / `AppVersion.Current`.

@@ -33,7 +33,6 @@ jobs:
       tag: ${{ steps.plan.outputs.tag }}
       version: ${{ steps.plan.outputs.version }}
       previous: ${{ steps.plan.outputs.previous }}
-      publish: ${{ steps.plan.outputs.publish }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
     steps:
       - name: Checkout
@@ -51,8 +50,9 @@ jobs:
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
+          case "$CHANNEL" in dry-run|candidate|stable) ;; *) fail "unknown channel '$CHANNEL'" ;; esac
 
-          previous=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v -- '-' | sort -V | tail -n 1)
+          previous=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | { grep -v -- '-' || true; } | sort -V | tail -n 1)
           [ -n "$previous" ] || fail "no stable tag found: cannot work out the next version"
 
           if [ -n "$REQUESTED" ]; then
@@ -78,18 +78,16 @@ jobs:
 
           if [ "$CHANNEL" = stable ]; then
             [ "$REF" = refs/heads/main ] || fail "a stable release comes only from main (this run is on $REF)"
-            if git diff --quiet "$previous" HEAD -- src '*.sln' README.md LICENSE THIRD-PARTY-NOTICES.txt; then
-              fail "nothing shippable changed since $previous (src, *.sln, README.md, LICENSE, THIRD-PARTY-NOTICES.txt)"
-            fi
+            rc=0; git diff --quiet "$previous" HEAD -- src '*.sln' README.md LICENSE THIRD-PARTY-NOTICES.txt || rc=$?
+            [ "$rc" -le 1 ] || fail "git diff failed (exit $rc)"
+            [ "$rc" -eq 1 ] || fail "nothing shippable changed since $previous (src, *.sln, README.md, LICENSE, THIRD-PARTY-NOTICES.txt)"
           fi
 
-          publish=false; [ "$CHANNEL" != dry-run ] && publish=true
           prerelease=false; [ "$CHANNEL" = candidate ] && prerelease=true
           {
             echo "tag=$tag"
-            echo "version=$version"
+            echo "version=${tag#v}"
             echo "previous=$previous"
-            echo "publish=$publish"
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
           {
@@ -118,18 +116,24 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.plan.outputs.tag }}
       PREVIOUS: ${{ needs.plan.outputs.previous }}
       PRERELEASE: ${{ needs.plan.outputs.prerelease }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Refuse to continue over an existing release or a leftover draft
         shell: bash
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          if out=$(gh release view "$TAG" 2>&1); then
             echo "::error::A release (or a leftover draft) for $TAG already exists. Delete a draft with: gh release delete $TAG --yes"
+            exit 1
+          elif ! grep -qi 'release not found' <<<"$out"; then
+            echo "::error::Cannot tell whether a release for $TAG exists: $out"
             exit 1
           fi
 
