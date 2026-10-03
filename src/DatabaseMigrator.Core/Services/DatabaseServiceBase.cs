@@ -31,16 +31,16 @@ public abstract class DatabaseServiceBase
         _enableTransientRetries = opts.EnableTransientRetries;
     }
 
-    protected async Task ExecuteWithRetryAsync(Func<Task> operation, string operationName)
+    protected async Task ExecuteWithRetryAsync(Func<Task> operation, string operationName, DbTransaction? transaction = null)
     {
         await ExecuteWithRetryAsync(async () =>
         {
             await operation();
             return true;
-        }, operationName);
+        }, operationName, transaction);
     }
 
-    protected async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> operation, string operationName)
+    protected async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> operation, string operationName, DbTransaction? transaction = null)
     {
         int attempt = 0;
         while (true)
@@ -49,7 +49,9 @@ public abstract class DatabaseServiceBase
             {
                 return await operation();
             }
-            catch (Exception ex) when (_enableTransientRetries && attempt < _retryCount && IsTransient(ex))
+            // A statement that ran in a transaction the server has since ended (a deadlock victim is rolled back as a whole) is not
+            // retried: the driver quietly drops an ended transaction, so the retry would run on its own and commit at once.
+            catch (Exception ex) when (_enableTransientRetries && attempt < _retryCount && IsTransient(ex) && transaction is not { Connection: null })
             {
                 attempt++;
                 int delayMs = (int)Math.Min(_retryInitialDelayMilliseconds * Math.Pow(2, attempt - 1), 10_000);

@@ -872,7 +872,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         command.CommandTimeout = _commandTimeoutSeconds;
         command.CommandText = $"SELECT EXISTS (SELECT 1 FROM {(includeDescendants ? "" : "ONLY ")}" +
                               $"\"{EscapePostgresIdentifier(schema)}\".\"{EscapePostgresIdentifier(name)}\")";
-        return Convert.ToBoolean(await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "MigrateTableAsync.ProbeTableRows"));
+        return Convert.ToBoolean(await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "MigrateTableAsync.ProbeTableRows", transaction));
     }
 
     public async Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, TableInfo table, IProgress<int> progress,
@@ -1041,7 +1041,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                             truncateCommand.CommandTimeout = _commandTimeoutSeconds;
                             try
                             {
-                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.Truncate");
+                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.Truncate", transaction);
                             }
                             catch (SqlException ex) when (target.DatabaseType == DatabaseType.SqlServer && ex.Number == 4712)
                             {
@@ -1056,7 +1056,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
                                 Log($"[MigrateTableAsync] {table.Schema}.{table.TableName} is referenced by a foreign key: using DELETE instead of TRUNCATE");
                                 truncateCommand.CommandText = $"DELETE FROM {FormatTableName(target.DatabaseType, table.Schema, table.TableName)}";
-                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.DeleteInsteadOfTruncate");
+                                await ExecuteWithRetryAsync(() => truncateCommand.ExecuteNonQueryAsync(), "MigrateTableAsync.DeleteInsteadOfTruncate", transaction);
                             }
                         }
                         Log($"[MigrateTableAsync] Table truncated successfully");
@@ -1151,7 +1151,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                     identityCmd.CommandTimeout = _commandTimeoutSeconds;
                                     if (transaction != null)
                                         identityCmd.Transaction = transaction;
-                                    await ExecuteWithRetryAsync(() => identityCmd.ExecuteNonQueryAsync(), "MigrateTableAsync.IdentityInsertOn");
+                                    await ExecuteWithRetryAsync(() => identityCmd.ExecuteNonQueryAsync(), "MigrateTableAsync.IdentityInsertOn", transaction);
                                 }
                             }
                         }
@@ -1357,7 +1357,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                         identityCmd.CommandTimeout = _commandTimeoutSeconds;
                                         if (transaction != null)
                                             identityCmd.Transaction = transaction;
-                                        await ExecuteWithRetryAsync(() => identityCmd.ExecuteNonQueryAsync(), "MigrateTableAsync.IdentityInsertOff");
+                                        await ExecuteWithRetryAsync(() => identityCmd.ExecuteNonQueryAsync(), "MigrateTableAsync.IdentityInsertOff", transaction);
                                     }
                                 }
                                 catch (Exception ex)
@@ -1504,7 +1504,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         tableParam.Value = tableName;
         command.Parameters.Add(tableParam);
 
-        using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.FindXmlColumns");
+        using var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "MigrateTableAsync.FindXmlColumns", transaction);
         while (await reader.ReadAsync())
             names.Add(reader.GetString(0));
         return names;
@@ -1539,7 +1539,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             tableParam.Value = tableName;
             command.Parameters.Add(tableParam);
 
-            var result = await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "HasIdentityColumnAsync.ExecuteScalar");
+            var result = await ExecuteWithRetryAsync(() => command.ExecuteScalarAsync(), "HasIdentityColumnAsync.ExecuteScalar", transaction);
             var count = Convert.ToInt32(result ?? 0);
             Log($"[HasIdentityColumnAsync] Table {schema}.{tableName} has {count} identity column(s)");
             return count > 0;
