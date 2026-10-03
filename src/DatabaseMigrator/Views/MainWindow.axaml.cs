@@ -25,9 +25,12 @@ namespace DatabaseMigrator.Views;
 
     private static void Log(string message) => DatabaseMigrator.Core.Services.LoggerService.Log(message);
 
+    private static string BaseTitle => $"Database Migrator {AppVersion.Current}";
+
     public MainWindow()
     {
         InitializeComponent();
+        Title = BaseTitle; // the XAML has the bare name: the version is there from the first frame, not only once InitializeViewModel has run
         // Off unless the runtime settings say otherwise: accepting any certificate switches the verification of the server off.
         bool trustByDefault = RuntimeOptionsProvider.Current.Security.TrustServerCertificateByDefault;
         SourceTrustServerCertificateCheckBox.IsChecked = trustByDefault;
@@ -48,6 +51,7 @@ namespace DatabaseMigrator.Views;
         try
         {
             _vm = new MainWindowViewModel();
+            Log($"{BaseTitle} started");
             DataContext = _vm;
             _vm.TruncateFailedPromptHandlerAsync = ShowTruncateFailedDialogAsync;
             
@@ -162,14 +166,14 @@ namespace DatabaseMigrator.Views;
                     {
                         var src = _vm.SourceConnection.ConnectionInfo;
                         var tgt = _vm.TargetConnection.ConnectionInfo;
-                        Title = $"Database Migrator — {src.DatabaseType}@{src.Server}  →  {tgt.DatabaseType}@{tgt.Server}";
+                        Title = $"{BaseTitle} — {src.DatabaseType}@{src.Server}  →  {tgt.DatabaseType}@{tgt.Server}";
 
                         // Allinea il dialetto di default del tab "Genera Script" al database sorgente.
                         ScriptDialectCombo.SelectedIndex = DialectToComboIndex(src.DatabaseType);
                     }
                     else
                     {
-                        Title = "Database Migrator";
+                        Title = BaseTitle;
                     }
                 });
             });
@@ -1070,6 +1074,6 @@ namespace DatabaseMigrator.Views;
 
     private void ShowAbout()
     {
-        StatusBarTextBlock.Text = "Database Migrator v1.0 - Strumento per migrare dati tra SQL Server, PostgreSQL e Oracle";
+        StatusBarTextBlock.Text = $"{BaseTitle} - Strumento per migrare dati tra SQL Server, PostgreSQL e Oracle";
     }
 }

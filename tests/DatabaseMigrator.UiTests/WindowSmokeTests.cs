@@ -41,4 +41,22 @@ public class WindowSmokeTests
             Ui.Reset(window, viewModel);
         }
     }
+
+    // The title carries the version of the build: a window or a screenshot sent from another PC says which build it is.
+    [AvaloniaFact]
+    public async Task TheTitleShowsTheVersionOfTheBuild()
+    {
+        var (window, viewModel) = await Ui.OpenWindowAsync();
+        // The constructor sets the title, then the connect handler overwrites it through a queued UI job: flush the queue, so the
+        // assertion sees the final title and not the constructor's, which would pass whatever the handler assigns.
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        try
+        {
+            await Ui.WaitUntilAsync(() => window.Title is { } t && t.Contains(AppVersion.Current), "the title to show the version", timeoutMs: 30000);
+        }
+        finally
+        {
+            Ui.Reset(window, viewModel);
+        }
+    }
 }
