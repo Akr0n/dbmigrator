@@ -72,6 +72,27 @@ public class SourceResumeTests
     }
 
     [Fact]
+    public void ATransportErrorIsALoss_EvenWhenTheDriverStillReportsTheConnectionOpen()
+    {
+        // On Linux, SqlClient raises SqlException -> IOException -> SocketException "Connection reset by peer" and leaves State at Open:
+        // the state alone missed the cut that Windows reports as Closed.
+        using var connection = new StubConnection(ConnectionState.Open);
+        var reset = new InvalidOperationException("A transport-level error has occurred when receiving results from the server",
+            new IOException("Unable to read data from the transport connection", new System.Net.Sockets.SocketException(104)));
+
+        Assert.True(SourceResume.IsConnectionLoss(reset, connection));
+    }
+
+    [Fact]
+    public void ATimeoutOnAnOpenConnection_IsNotALoss()
+    {
+        // A command that ran out of time is a slow query, not a cut connection: it is reported, not retried.
+        using var connection = new StubConnection(ConnectionState.Open);
+
+        Assert.False(SourceResume.IsConnectionLoss(new TimeoutException("Execution Timeout Expired"), connection));
+    }
+
+    [Fact]
     public void AnErrorOnAConnectionThatIsStillOpen_IsNotALoss()
     {
         // A cast that fails or a value that does not fit is a defect of the data or of the code: reading again would repeat it.

@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.IO;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 using DatabaseMigrator.Core.Models;
 using Oracle.ManagedDataAccess.Client;
@@ -53,8 +55,25 @@ internal static class SourceResume
     /// gone away (the driver itself reports it no longer open) and not a problem with the data or the code, which reading
     /// again would only repeat.
     /// </summary>
-    internal static bool IsConnectionLoss(Exception exception, DbConnection connection) =>
-        exception is not OperationCanceledException && connection.State is ConnectionState.Closed or ConnectionState.Broken;
+    internal static bool IsConnectionLoss(Exception exception, DbConnection connection)
+    {
+        if (exception is OperationCanceledException)
+            return false;
+
+        if (connection.State is ConnectionState.Closed or ConnectionState.Broken)
+            return true;
+
+        // A driver does not always change the state of a connection it has just lost: SqlClient on Linux raises SqlException ->
+        // IOException -> SocketException "Connection reset by peer" and leaves the state at Open. A failure of the transport
+        // itself, an I/O or socket error anywhere in the chain, is a loss too.
+        for (var inner = exception; inner != null; inner = inner.InnerException)
+        {
+            if (inner is IOException or SocketException)
+                return true;
+        }
+
+        return false;
+    }
 
     /// <summary>The primary key columns of a table, in key order; empty when it has none.</summary>
     internal static async Task<List<string>> GetKeyColumnsAsync(DbConnection connection, DatabaseType dialect, string schema,

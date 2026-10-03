@@ -1049,6 +1049,8 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                                 // disabled or the referencing table is empty. DELETE is allowed once the keys are off, but
                                 // an ENABLED key with ON DELETE CASCADE / SET NULL / SET DEFAULT would silently wipe or alter
                                 // rows in a referencing table, which may not be one the user selected. Let the user decide.
+                                transaction = RestartTransactionIfEnded(targetConn, transaction);
+                                truncateCommand.Transaction = transaction;
                                 if (await HasEnabledCascadingReferenceAsync(targetConn, transaction, table.Schema, table.TableName))
                                     throw;
 
@@ -1080,6 +1082,10 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
                     // Default behavior (no handler): keep previous semantics and continue.
                 }
+
+                // Whatever ended the transaction in the block above (the user answered "continue" after a refused TRUNCATE, say), the rows
+                // that follow must not be loaded outside one.
+                transaction = RestartTransactionIfEnded(targetConn, transaction);
 
                 // Leggi i dati dalla sorgente in batch
                 long totalRows = await GetTableRowCountAsync(source, table.Schema, table.TableName);
@@ -1408,6 +1414,23 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 throw;
             }
         }
+    }
+
+    /// <summary>
+    /// SQL Server ends the open transaction when a TRUNCATE fails (error 4712 sets @@TRANCOUNT back to 0), and the driver quietly
+    /// ignores a transaction that has ended: a command given it simply runs on its own. The DELETE that replaces the TRUNCATE and every
+    /// INSERT after it would then be committed one by one, with nothing to roll back if a later batch failed. When the transaction has
+    /// ended, a new one is begun and returned; otherwise the same one comes back.
+    /// </summary>
+    internal static DbTransaction? RestartTransactionIfEnded(DbConnection connection, DbTransaction? transaction)
+    {
+        if (transaction is not { Connection: null })
+            return transaction;
+
+        transaction.Dispose();
+        var restarted = connection.BeginTransaction();
+        Log("[MigrateTableAsync] The transaction had ended (the server rolled it back with the failed statement): a new one was begun");
+        return restarted;
     }
 
     internal async Task FinalizeTransactionAsync(DbConnection connection, DbTransaction? transaction, DatabaseType dbType, bool commit,
