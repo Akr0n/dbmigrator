@@ -25,6 +25,8 @@ namespace DatabaseMigrator.Views;
 
     private static void Log(string message) => DatabaseMigrator.Core.Services.LoggerService.Log(message);
 
+    private static string BaseTitle => $"Database Migrator {AppVersion.Current}";
+
     public MainWindow()
     {
         InitializeComponent();
@@ -48,6 +50,7 @@ namespace DatabaseMigrator.Views;
         try
         {
             _vm = new MainWindowViewModel();
+            Log($"Database Migrator {AppVersion.Current} started");
             DataContext = _vm;
             _vm.TruncateFailedPromptHandlerAsync = ShowTruncateFailedDialogAsync;
             
@@ -162,14 +165,14 @@ namespace DatabaseMigrator.Views;
                     {
                         var src = _vm.SourceConnection.ConnectionInfo;
                         var tgt = _vm.TargetConnection.ConnectionInfo;
-                        Title = $"Database Migrator — {src.DatabaseType}@{src.Server}  →  {tgt.DatabaseType}@{tgt.Server}";
+                        Title = $"{BaseTitle} — {src.DatabaseType}@{src.Server}  →  {tgt.DatabaseType}@{tgt.Server}";
 
                         // Allinea il dialetto di default del tab "Genera Script" al database sorgente.
                         ScriptDialectCombo.SelectedIndex = DialectToComboIndex(src.DatabaseType);
                     }
                     else
                     {
-                        Title = "Database Migrator";
+                        Title = BaseTitle;
                     }
                 });
             });

@@ -41,4 +41,19 @@ public class WindowSmokeTests
             Ui.Reset(window, viewModel);
         }
     }
+
+    // The title carries the version of the build: a window or a screenshot sent from another PC says which build it is.
+    [AvaloniaFact]
+    public async Task TheTitleShowsTheVersionOfTheBuild()
+    {
+        var (window, viewModel) = await Ui.OpenWindowAsync();
+        try
+        {
+            await Ui.WaitUntilAsync(() => window.Title is { } t && t.Contains(AppVersion.Current), "the title to show the version");
+        }
+        finally
+        {
+            Ui.Reset(window, viewModel);
+        }
+    }
 }
