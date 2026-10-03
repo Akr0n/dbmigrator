@@ -49,7 +49,7 @@ Copy-Item release\DatabaseMigrator.exe "C:\Program Files\DatabaseMigrator\"
 
 ### Oracle
 - **Versions**: 19c, 21c, 23c
-- **Access**: Direct connection or TNS
+- **Access**: Direct connection to the listener (host name or IP, port, service name); tnsnames.ora aliases are not used
 
 ### PostgreSQL
 - **Versions**: 12, 13, 14, 15, 16
@@ -140,7 +140,7 @@ Logs include:
 - Check credentials (username/password)
 - Verify port (1433 SQL Server, 1521 Oracle, 5432 PostgreSQL)
 - Check firewall settings
-- Verify database name/SID
+- Verify the database name (for Oracle it is the service name; a SID that is not also a registered service name does not connect)
 
 ### Connection Timeout
 **Problem**: Application hangs during connection
