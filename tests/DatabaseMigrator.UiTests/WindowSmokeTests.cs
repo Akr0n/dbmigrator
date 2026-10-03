@@ -20,4 +20,25 @@ public class WindowSmokeTests
             Ui.Reset(window, viewModel);
         }
     }
+
+    // Ui.CreateWindowAsync asks for 3000x2000, more than the headless screen (1920x1280 at 100%) has: on opening, the window must shrink to
+    // that screen's work area and sit at its origin. The first version subscribed Opened in InitializeViewModel, after it had already
+    // been raised, so the fit never ran, and nothing but this test looks at that wiring. (Headless windows report no frame, so the
+    // title bar and borders - frame minus client, 14.4x37.6 units at 125% on a real window - are covered by WindowFitTests, not here.)
+    [AvaloniaFact]
+    public async Task TheWindowIsFittedToTheScreenItOpensOn()
+    {
+        var (window, viewModel) = await Ui.OpenWindowAsync();
+        try
+        {
+            var area = window.Screens.Primary!.WorkingArea;
+
+            await Ui.WaitUntilAsync(() => window.Width == area.Width && window.Height == area.Height, "the window to be fitted to the screen");
+            Assert.Equal(area.Position, window.Position);
+        }
+        finally
+        {
+            Ui.Reset(window, viewModel);
+        }
+    }
 }

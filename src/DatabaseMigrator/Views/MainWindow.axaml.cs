@@ -33,6 +33,7 @@ namespace DatabaseMigrator.Views;
         SourceTrustServerCertificateCheckBox.IsChecked = trustByDefault;
         TargetTrustServerCertificateCheckBox.IsChecked = trustByDefault;
         Loaded += OnWindowLoaded;
+        Opened += OnOpened; // here, not in InitializeViewModel: that runs after Loaded, when Opened has already been raised
     }
 
     private async void OnWindowLoaded(object? sender, RoutedEventArgs e)
@@ -279,7 +280,36 @@ namespace DatabaseMigrator.Views;
             throw;
         }
     }
-    
+
+    // 1400x900 are device-independent units: at 125% or more they are taller than many screens, and CenterScreen then centres a frame
+    // that does not fit, with the title bar (close, maximise, minimise) above the top edge. Once open, the screen and the real
+    // thickness of the frame are known: shrink to that screen's work area and centre again.
+    private void OnOpened(object? sender, EventArgs e)
+    {
+        try
+        {
+            // Started maximised (a shortcut set to "Run: Maximized"): the client already fills the work area, and writing a size and
+            // a position to it would only push it about 9 pixels off.
+            if (WindowState != WindowState.Normal) return;
+
+            var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+            if (screen is null) return;
+
+            var frame = FrameSize ?? ClientSize;
+            var chrome = new Size(frame.Width - ClientSize.Width, frame.Height - ClientSize.Height);
+            if (WindowFit.Compute(screen.WorkingArea, screen.Scaling, ClientSize, chrome) is not { } fit) return;
+
+            Log($"[OnOpened] Window {ClientSize.Width:0}x{ClientSize.Height:0} does not fit the work area {screen.WorkingArea.Width}x{screen.WorkingArea.Height} at {screen.Scaling:P0}: resized to {fit.Client.Width:0}x{fit.Client.Height:0}");
+            Width = fit.Client.Width;
+            Height = fit.Client.Height;
+            Position = fit.Position;
+        }
+        catch (Exception ex)
+        {
+            Log($"[OnOpened] Could not fit the window to the screen: {ex.Message}");
+        }
+    }
+
     private void OnLogEntriesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         // "Segui" off: the list stays where the user left it, so an older line can be read while the log keeps growing.

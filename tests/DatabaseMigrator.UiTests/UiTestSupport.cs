@@ -84,7 +84,9 @@ internal static class Ui
 
     private static async Task<(MainWindow Window, MainWindowViewModel ViewModel)> CreateWindowAsync()
     {
-        var window = new MainWindow();
+        // Bigger than the headless screen (1920x1280), on purpose: on opening the window has to fit itself to the screen, and
+        // WindowSmokeTests checks that it did. Still one window, so the one-MainWindow-per-process limit is respected.
+        var window = new MainWindow { Width = 3000, Height = 2000 };
         window.Show();
         // Generous: a loaded one-core CI runner needs several seconds to start the window.
         var viewModel = await WaitForAsync(() => window.DataContext as MainWindowViewModel, "the window's view model", timeoutMs: 60000);
