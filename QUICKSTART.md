@@ -7,7 +7,7 @@
 # Navigate to the project folder
 cd c:\_repositories\dbmigrator
 
-# Run directly
+# Run directly (.\publish.ps1 writes the exe there; or run the one downloaded from the latest GitHub release)
 .\release\DatabaseMigrator.exe
 ```
 
