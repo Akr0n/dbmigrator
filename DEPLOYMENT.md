@@ -241,8 +241,17 @@ gh workflow run release.yml -f channel=stable
 | Channel | What it does | Publishes |
 |---------|--------------|-----------|
 | `dry-run` (default) | Builds, runs all the tests and the cross-database E2E matrix (real SQL Server, PostgreSQL and Oracle containers); the exe is kept for 7 days as the artifact `exe` | Nothing |
-| `candidate` | The same, then publishes; to try a build on another PC. Unlike `stable` it is not limited to `main` | A public prerelease `vX.Y.Z-rc.N` |
+| `candidate` | The same, then publishes; it can be built from any branch | A public prerelease `vX.Y.Z-rc.N` |
 | `stable` | The same, then publishes; it must run on `main` | The release `vX.Y.Z` |
+
+To try a pull request's build on another PC before merging it, run a candidate from its branch: `--ref` runs the copy of
+`release.yml` on that branch and builds that branch's commit.
+
+```powershell
+gh workflow run release.yml -f channel=candidate --ref <branch>
+```
+
+The prerelease is public; delete it afterwards (see below).
 
 A dry run also runs by itself every Monday at 04:00 UTC, so forgetting the channel gives a harmless dry run. The E2E matrix runs
 alongside the build and blocks every `candidate` and `stable` release; there is no switch to skip it. If a job fails, nothing is
