@@ -41,7 +41,7 @@ public class LogFollowUiTests
         {
             await AddLinesAsync(viewModel, "follow-on");
 
-            await Ui.WaitUntilAsync(() => AtTheEnd(scroll), "the log to scroll to its last line");
+            await WaitAsync(() => AtTheEnd(scroll), "the log to scroll to its last line");
         }
         finally
         {
@@ -56,11 +56,11 @@ public class LogFollowUiTests
         try
         {
             await AddLinesAsync(viewModel, "before");
-            await Ui.WaitUntilAsync(() => AtTheEnd(scroll), "the log to reach its end while following");
+            await WaitAsync(() => AtTheEnd(scroll), "the log to reach its end while following");
 
             viewModel.FollowLog = false;
             scroll.Offset = new Vector(0, 0); // the user scrolls back up to read
-            await Ui.WaitUntilAsync(() => scroll.Offset.Y == 0, "the list to be at the top");
+            await WaitAsync(() => scroll.Offset.Y == 0, "the list to be at the top");
 
             await AddLinesAsync(viewModel, "while-reading");
             await Task.Delay(300); // the scroll, if there were one, is posted at background priority
@@ -83,12 +83,12 @@ public class LogFollowUiTests
             viewModel.FollowLog = false;
             await AddLinesAsync(viewModel, "while-off");
             scroll.Offset = new Vector(0, 0);
-            await Ui.WaitUntilAsync(() => scroll.Offset.Y == 0, "the list to be at the top");
+            await WaitAsync(() => scroll.Offset.Y == 0, "the list to be at the top");
 
             window.FindControl<ToggleButton>("FollowLogToggle")!.IsChecked = true; // the click: no new line arrives
 
             Assert.True(viewModel.FollowLog);
-            await Ui.WaitUntilAsync(() => AtTheEnd(scroll), "the log to jump to its last line");
+            await WaitAsync(() => AtTheEnd(scroll), "the log to jump to its last line");
         }
         finally
         {
@@ -111,9 +111,9 @@ public class LogFollowUiTests
             tabs.SelectedIndex = LogTabIndex;
 
             var list = window.FindControl<ListBox>("LogListBox")!;
-            var scroll = await Ui.WaitForAsync(() => list.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault(),
+            var scroll = await WaitForAsync(() => list.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault(),
                 "the log list's scroll viewer");
-            await Ui.WaitUntilAsync(() => AtTheEnd(scroll), "the log, opened after its lines arrived, to show the last one");
+            await WaitAsync(() => AtTheEnd(scroll), "the log, opened after its lines arrived, to show the last one");
         }
         finally
         {
@@ -123,6 +123,14 @@ public class LogFollowUiTests
 
     // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────
 
+    // These tests run early in the process, on a runner that may still be warming the window up and has two cores: the default 5 seconds
+    // of Ui.WaitUntilAsync timed out once on GitHub, waiting for 300 log lines to reach the list (they passed on the same code before).
+    private const int SlowRunnerMs = 30_000;
+
+    private static Task WaitAsync(Func<bool> condition, string what) => Ui.WaitUntilAsync(condition, what, SlowRunnerMs);
+
+    private static Task<T> WaitForAsync<T>(Func<T?> read, string what) where T : class => Ui.WaitForAsync(read, what, SlowRunnerMs);
+
     /// <summary>The shared window with the Log tab open and its list laid out (a tab that is not shown has no scroll viewer).</summary>
     private static async Task<(MainWindow Window, MainWindowViewModel ViewModel, ScrollViewer Scroll)> ShowLogAsync()
     {
@@ -130,7 +138,7 @@ public class LogFollowUiTests
         await Ui.RunAsync(viewModel.ClearLogCommand);
         window.FindControl<TabControl>("MainTabControl")!.SelectedIndex = LogTabIndex;
         var list = window.FindControl<ListBox>("LogListBox")!;
-        var scroll = await Ui.WaitForAsync(() => list.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault(),
+        var scroll = await WaitForAsync(() => list.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault(),
             "the log list's scroll viewer");
         return (window, viewModel, scroll);
     }
@@ -140,7 +148,7 @@ public class LogFollowUiTests
         int before = viewModel.FilteredLogEntries.Count;
         for (int i = 0; i < Lines; i++)
             LoggerService.Log($"{tag} line {i}");
-        await Ui.WaitUntilAsync(() => viewModel.FilteredLogEntries.Count >= before + Lines, "the log lines to reach the list");
+        await WaitAsync(() => viewModel.FilteredLogEntries.Count >= before + Lines, "the log lines to reach the list");
     }
 
     private static bool AtTheEnd(ScrollViewer scroll) =>
