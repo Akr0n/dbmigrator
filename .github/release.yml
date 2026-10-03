@@ -1,0 +1,8 @@
+changelog:
+  exclude:
+    labels:
+      - dependencies
+  categories:
+    - title: Changes
+      labels:
+        - '*'

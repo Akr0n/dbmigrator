@@ -1,0 +1,69 @@
+name: Build and test
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'X.Y.Z stamped into the exe; empty means build and test only'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up .NET 10.0
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore DatabaseMigrator.sln
+
+      - name: Build (Release)
+        shell: pwsh
+        run: |
+          $buildArgs = @('DatabaseMigrator.sln', '--configuration', 'Release', '--no-restore')
+          if ($env:VERSION) {
+            $buildArgs += "-p:Version=$env:VERSION"
+            $buildArgs += "-p:InformationalVersion=$env:VERSION+$env:GITHUB_SHA"
+          }
+          dotnet build @buildArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test
+        run: dotnet test DatabaseMigrator.sln --configuration Release --no-build --logger "trx;LogFileName=test-results.trx"
+
+      - name: Publish (win-x64)
+        if: inputs.version != ''
+        shell: pwsh
+        run: |
+          dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj --configuration Release --runtime win-x64 --self-contained --no-build --output ./publish "-p:Version=$env:VERSION" "-p:InformationalVersion=$env:VERSION+$env:GITHUB_SHA"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-windows
+          path: '**/test-results.trx'
+          overwrite: true
+
+      - name: Upload the exe
+        if: inputs.version != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: exe
+          path: publish/DatabaseMigrator.exe
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
