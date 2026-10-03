@@ -156,11 +156,24 @@ jobs:
           git tag --list
         if: env.MERGE_FROM_DEVELOP == 'true'
 
+      - name: Get previous release tag
+        run: |
+          # L'ultima release (tag senza -dev) prima di questa, partendo dal primo parent di main. Senza fromTag e toTag l'azione
+          # del changelog non trova l'intervallo e ripartiva da molto prima: ogni release elencava tutte le PR da #72 in poi.
+          $previous = (git describe --first-parent --tags --abbrev=0 --match "v[0-9]*" --exclude "*-dev" "${{ env.release_tag }}^" 2>$null)
+          if ($LASTEXITCODE -ne 0) { $previous = "" } # la prima release non ha un precedente: il changelog parte dall'inizio
+          Write-Output "Previous release tag: '$previous'"
+          "previous_release_tag=$previous" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          exit 0
+        if: env.MERGE_FROM_DEVELOP == 'true'
+
       - name: Generate changelog
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fromTag: ${{ env.previous_release_tag }}
+          toTag: ${{ env.release_tag }}
         if: env.MERGE_FROM_DEVELOP == 'true'
 
       - name: Create Release with changelog and assets
