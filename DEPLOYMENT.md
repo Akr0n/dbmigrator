@@ -278,12 +278,12 @@ A wrong release is not corrected in place: the next release gets the next number
 gh release delete vX.Y.Z-rc.N --cleanup-tag --yes
 ```
 
-Delete all the candidates of that version, not only an earlier one: the next number is counted from the existing `-rc` tags, and `plan`
-refuses a number that is already taken.
+A candidate gets the number after the highest `-rc` tag of that version, so deleting an earlier one does not bring its number back
+(deleting the highest one with `--cleanup-tag` does, because its tag goes with it); `plan` refuses a number that is already taken.
 
 ## Version Information
 
-The executable carries its version and the commit it was built from: its file and product version is `X.Y.Z+<commit>` (`X.Y.Z-rc.N+<commit>`
+The executable carries its version and the commit it was built from: its product version is `X.Y.Z+<commit>` (`X.Y.Z-rc.N+<commit>`
 for a candidate). The window title reads `Database Migrator X.Y.Z+<7-character commit>`, the About text shows the same, and
 `debug.log` gets the line `Database Migrator X.Y.Z+<7-character commit> started` at every start, so a log sent from another PC says
 which build produced it. The releases, with their notes, are on the

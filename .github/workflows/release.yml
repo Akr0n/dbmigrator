@@ -67,8 +67,9 @@ jobs:
 
           tag="v$version"
           if [ "$CHANNEL" = candidate ]; then
-            n=$(git tag --list "$tag-rc.*" | wc -l)
-            tag="$tag-rc.$((n + 1))"
+            # highest number in use + 1, not the count: with rc.2 left over after rc.1 was deleted, a count would pick rc.2 again
+            highest=$(git tag --list "$tag-rc.*" | sed 's/.*-rc\.//' | { grep -E '^[0-9]+$' || true; } | sort -n | tail -n 1)
+            tag="$tag-rc.$(( 10#${highest:-0} + 1 ))"
           fi
           if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then fail "tag $tag already exists: a tag is never reused"; fi
 
