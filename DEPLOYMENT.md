@@ -60,16 +60,16 @@ Copy-Item DatabaseMigrator.exe "C:\Program Files\DatabaseMigrator\"
 
 ### 1. Connection Configuration
 1. Launch the application
-2. Go to "Database Connections" tab
+2. Go to "Connessioni Database" tab
 3. Enter connection details:
    - Server/Host
    - Port
    - Database name
    - Username/Password
-4. Click "Connect to Databases"
+4. Click "Connetti ai Database"
 
 ### 2. Object Selection
-1. Go to "Table Selection" tab
+1. Go to "Selezione Tabelle" tab
 2. Select tables to migrate
 3. Use search box to filter
 4. View row counts per table
@@ -77,13 +77,13 @@ Copy-Item DatabaseMigrator.exe "C:\Program Files\DatabaseMigrator\"
 
 ### 3. Migration Mode
 Select the appropriate mode:
-- **Schema + Data**: Full migration with constraints and automatic rollback on failure
-- **Schema Only**: Create table structures with Primary Keys and UNIQUE constraints
-- **Data Only**: Migrate data only (tables must exist)
+- **Schema + Data** ("Schema + Dati"): Full migration with constraints and automatic rollback on failure
+- **Schema Only** ("Solo Schema"): Create table structures with Primary Keys and UNIQUE constraints
+- **Data Only** ("Solo Dati"): Migrate data only (tables must exist)
 
 ### 4. Start Migration
-1. Go to "Migration" tab
-2. Click "Start Migration"
+1. Go to "Migrazione" tab
+2. Click "Avvia Migrazione"
 3. Monitor progress
 4. Wait for completion
 
@@ -103,16 +103,16 @@ The application performs intelligent automatic data type mapping:
 | nvarchar(max) | text | NCLOB |
 | char(n) | char(n) | CHAR(n) |
 | text | text | CLOB |
-| datetime | timestamp | TIMESTAMP(6) |
-| datetime2 | timestamp | TIMESTAMP(6) |
+| datetime | timestamp(3) | TIMESTAMP(3) |
+| datetime2(p) | timestamp(min(p,6)) | TIMESTAMP(min(p,9)) |
 | date | date | DATE |
-| time | time | TIMESTAMP(0) |
+| time(p) | time(min(p,6)) | TIMESTAMP(min(p,9)) |
 | bit | boolean | NUMBER(1) |
 | decimal(p,s) | numeric(p,s) | NUMBER(p,s) |
 | float | double precision | BINARY_DOUBLE |
 | real | real | BINARY_FLOAT |
 | binary(n) | bytea | RAW(n) |
-| varbinary | bytea | BLOB |
+| varbinary(n) | bytea | RAW(n) |
 | varbinary(max) | bytea | BLOB |
 | uniqueidentifier | uuid | RAW(16) |
 
@@ -149,7 +149,7 @@ Logs include:
 **Solutions**:
 - Check network speed and latency
 - Verify server load
-- Default timeout is 300 seconds
+- Default command timeout is 300 seconds (`DBMIGRATOR_COMMAND_TIMEOUT_SECONDS`)
 
 ### "String or binary data would be truncated"
 **Problem**: Data migration fails with truncation error
@@ -190,7 +190,7 @@ Logs include:
 ### Optimization Settings
 - **Batch Size**: 1000 rows per batch
 - **Command Timeout**: 300 seconds (5 minutes)
-- **Parallel Row Counts**: 10 concurrent operations
+- **Row Counts**: read one table at a time on a single connection
 - **Memory Usage**: ~100-200 MB during migration
 
 ### Typical Performance

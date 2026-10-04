@@ -9,7 +9,7 @@ namespace DatabaseMigrator.Tests.E2E;
 /// <summary>
 /// PostgreSQL and Oracle keep text in any script. Migrated into SQL Server as <c>varchar</c>, the text was converted to the
 /// database code page and everything outside it (Japanese, Cyrillic, Greek) arrived as '?', with no error. The columns are now
-/// created as nvarchar/nchar: this runs the real schema + data migration into a database with a Latin code page.
+/// created as nvarchar: this runs the real schema + data migration into a database with a Latin code page.
 /// </summary>
 public class TextToSqlServerUnicodeE2ETests
 {

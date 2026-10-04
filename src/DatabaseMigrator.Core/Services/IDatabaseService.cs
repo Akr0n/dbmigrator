@@ -11,7 +11,6 @@ public interface IDatabaseService
     Task<List<TableInfo>> GetTablesAsync(ConnectionInfo connectionInfo);
     Task<bool> DatabaseExistsAsync(ConnectionInfo connectionInfo);
     Task<string?> CreateDatabaseAsync(ConnectionInfo connectionInfo);
-    Task<string> GetTableSchemaAsync(ConnectionInfo connectionInfo, string tableName, string schema);
     /// <param name="tablesLoadedLater">
     /// The tables this migration will still load after <paramref name="table"/>. Emptying <paramref name="table"/> on the
     /// target spreads to other tables (PostgreSQL: TRUNCATE ... CASCADE empties every table that references it; Oracle: DELETE

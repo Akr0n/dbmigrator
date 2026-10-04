@@ -13,7 +13,7 @@
 
     The engine is resolved by scripts/container-engine.ps1 and exported via
     DBMIGRATOR_CONTAINER_ENGINE so the E2E tests (which shell out to `exec`) use the
-    same one. Because Podman and Docker share the CLI surface used here, -Engine docker
+    same one. Because Podman and Docker share the CLI surface used here, setting DBMIGRATOR_CONTAINER_ENGINE=docker
     still works during the transition.
 
 .PARAMETER SkipStartup

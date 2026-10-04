@@ -6,9 +6,6 @@
     <Nullable>enable</Nullable>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
-    <AvaloniaDisableBuildTelemetry>true</AvaloniaDisableBuildTelemetry>
-    <AvaloniaDisableAnalyzers>false</AvaloniaDisableAnalyzers>
-    <AvaloniaDisableTelemetry>true</AvaloniaDisableTelemetry>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>

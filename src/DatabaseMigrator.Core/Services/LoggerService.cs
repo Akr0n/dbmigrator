@@ -105,11 +105,6 @@ public static class LoggerService
     }
 
     /// <summary>
-    /// Gets the path to the log directory.
-    /// </summary>
-    public static string GetLogDirectory() => LogDirectory;
-
-    /// <summary>
     /// Gets the path to the debug log file.
     /// </summary>
     public static string GetLogPath() => LogPath;

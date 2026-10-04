@@ -1,16 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Data.Common;
-using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using Microsoft.Data.SqlClient;
-using Npgsql;
-using Oracle.ManagedDataAccess.Client;
 using DatabaseMigrator.Core.Models;
 
 namespace DatabaseMigrator.Core.Services;
@@ -91,7 +86,7 @@ public class SchemaMigrationService : DatabaseServiceBase
                     DatabaseType.SqlServer => $"DROP TABLE [{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
                     // Match FormatTableName: PostgreSQL DDL always uses lowercased quoted identifiers.
                     DatabaseType.PostgreSQL => $"DROP TABLE {FormatTableName(DatabaseType.PostgreSQL, schema, tableName)}",
-                    // Oracle: include schema prefix (was missing) so the correct table is dropped.
+                    // Oracle: include the schema prefix so the correct table is dropped.
                     DatabaseType.Oracle => $"DROP TABLE {schema.ToUpperInvariant()}.{tableName.ToUpperInvariant()}",
                     _ => throw new NotSupportedException()
                 };
@@ -242,7 +237,6 @@ public class SchemaMigrationService : DatabaseServiceBase
                         string generatedConstraintName = GenerateConstraintName(
                             constraint.ConstraintName,
                             target.DatabaseType,
-                            table.Schema,
                             table.TableName,
                             constraintTypeUpper);
 
@@ -918,11 +912,8 @@ public class SchemaMigrationService : DatabaseServiceBase
     private class ConstraintInfo
     {
         public string ConstraintName { get; set; } = string.Empty;
-        public string ConstraintType { get; set; } = string.Empty;  // PRIMARY KEY, UNIQUE, FOREIGN KEY
+        public string ConstraintType { get; set; } = string.Empty;  // PRIMARY KEY, UNIQUE
         public List<string> Columns { get; set; } = new List<string>();
-        public string? ReferencedTable { get; set; }
-        public string? ReferencedSchema { get; set; }
-        public List<string> ReferencedColumns { get; set; } = new List<string>();
     }
 
     private async Task<List<ConstraintInfo>> GetTableConstraintsWithColumnsAsync(DbConnection connection, 
@@ -1294,7 +1285,7 @@ public class SchemaMigrationService : DatabaseServiceBase
                     ? $"timestamptz({Math.Min(dateTimePrecision.Value, 6)})" 
                     : "timestamptz(6)",
                 "bit" => "boolean",
-                "binary" => maxLength.HasValue && maxLength > 0 ? "bytea" : "bytea",
+                "binary" => "bytea",
                 "varbinary" => "bytea",
                 "image" => "bytea",
                 "uniqueidentifier" => "uuid",
@@ -1671,7 +1662,7 @@ public class SchemaMigrationService : DatabaseServiceBase
         string tableRef = FormatTableName(targetDbType, schema, tableName);
 
         // Generate constraint name (ensuring it's valid for target DB)
-        string constraintName = GenerateConstraintName(constraint.ConstraintName, targetDbType, schema, tableName, constraintType);
+        string constraintName = GenerateConstraintName(constraint.ConstraintName, targetDbType, tableName, constraintType);
 
         string ddl = targetDbType switch
         {
@@ -1692,7 +1683,7 @@ public class SchemaMigrationService : DatabaseServiceBase
     /// Generates a valid constraint name for the target database
     /// </summary>
     private string GenerateConstraintName(string originalName, DatabaseType targetDbType, 
-        string schema, string tableName, string constraintType)
+        string tableName, string constraintType)
     {
         // Use original name if it's valid, otherwise generate a new one
         string baseName = !string.IsNullOrEmpty(originalName) ? originalName : 
@@ -1866,33 +1857,6 @@ public class SchemaMigrationService : DatabaseServiceBase
             FROM all_tab_columns
             WHERE owner = :schema AND table_name = :tableName
             ORDER BY column_id";
-    }
-
-    private string GetSqlServerConstraintsQuery()
-    {
-        return @"
-            SELECT CONSTRAINT_NAME
-            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
-            WHERE TABLE_SCHEMA = @schema AND TABLE_NAME = @tableName
-            AND CONSTRAINT_TYPE IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')";
-    }
-
-    private string GetPostgresConstraintsQuery()
-    {
-        return @"
-            SELECT constraint_name
-            FROM information_schema.table_constraints
-            WHERE table_schema = @schema AND table_name = @tableName
-            AND constraint_type IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')";
-    }
-
-    private string GetOracleConstraintsQuery()
-    {
-        return @"
-            SELECT constraint_name
-            FROM all_constraints
-            WHERE owner = :schema AND table_name = :tableName
-            AND constraint_type IN ('P', 'U', 'R')";
     }
 
     /// <summary>

@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Headless;
-using DatabaseMigrator;
 using DatabaseMigrator.UiTests;
 
 [assembly: AvaloniaTestApplication(typeof(TestAppBuilder))]

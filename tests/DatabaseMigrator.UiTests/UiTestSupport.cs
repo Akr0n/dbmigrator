@@ -37,8 +37,6 @@ internal sealed class FakeDatabaseService : IDatabaseService
 
     public Task<string?> CreateDatabaseAsync(ConnectionInfo connectionInfo) => throw new NotSupportedException();
 
-    public Task<string> GetTableSchemaAsync(ConnectionInfo connectionInfo, string tableName, string schema) => throw new NotSupportedException();
-
     public Task MigrateTableAsync(ConnectionInfo source, ConnectionInfo target, TableInfo table, IProgress<int> progress,
         IEnumerable<TableInfo>? tablesLoadedLater = null) => throw new NotSupportedException();
 }

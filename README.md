@@ -160,13 +160,13 @@ The application automatically maps data types between different database systems
 | nvarchar(n) | varchar(n) | NVARCHAR2(n) |
 | varchar(max) | text | CLOB |
 | nvarchar(max) | text | NCLOB |
-| datetime2 | timestamp | TIMESTAMP(6) |
+| datetime2(p) | timestamp(p) | TIMESTAMP(p) |
 | bit | boolean | NUMBER(1) |
 | text | text | CLOB |
-| varbinary | bytea | BLOB |
+| varbinary(max) | bytea | BLOB |
 | uniqueidentifier | uuid | RAW(16) |
 
-On Oracle the sizes are capped: `VARCHAR2` at 4000, `NVARCHAR2` at 2000 and `RAW` at 2000. `varbinary(n)` becomes `RAW(n)` within that cap and only `varbinary(max)` becomes `BLOB`; `datetime2(p)` becomes `TIMESTAMP(p)`.
+On Oracle the sizes are capped: `VARCHAR2` at 4000, `NVARCHAR2` at 2000 and `RAW` at 2000. `varbinary(n)` becomes `RAW(n)` within that cap and only `varbinary(max)` becomes `BLOB`; `datetime2(p)` becomes `TIMESTAMP(p)` (p is capped at 9 on Oracle and at 6 on PostgreSQL, and is 6 when the source reports no precision).
 
 ## Error Handling
 
@@ -226,6 +226,13 @@ Cross-database E2E matrix automation is available via:
 ```
 
 See `PODMAN_E2E_TESTING.md` for prerequisites and details.
+
+## Documentation
+
+- [QUICKSTART.md](QUICKSTART.md): the first migration in five minutes.
+- [DEPLOYMENT.md](DEPLOYMENT.md): requirements, troubleshooting and the release procedure.
+- [ARCHITECTURE.md](ARCHITECTURE.md): design, services and data-type mapping.
+- [PODMAN_E2E_TESTING.md](PODMAN_E2E_TESTING.md): the cross-database E2E tests with Podman.
 
 ## License
 

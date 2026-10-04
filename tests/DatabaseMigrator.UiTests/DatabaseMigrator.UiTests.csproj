@@ -9,7 +9,7 @@
          project from referencing it does not apply. -->
     <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
-    <!-- Turns a hung test host into a failed run instead of a six-hour CI job; see the file. -->
+    <!-- Turns a hung test host into a failed run instead of a CI job stuck until its timeout; see the file. -->
     <RunSettingsFilePath>$(MSBuildProjectDirectory)\ui.runsettings</RunSettingsFilePath>
   </PropertyGroup>
 

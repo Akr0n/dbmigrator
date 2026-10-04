@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Data.Common;
 using System.IO;
 using System.Linq;
@@ -1134,7 +1133,7 @@ public class ScriptGenerationService : DatabaseServiceBase
 
 
     // Emette un DROP CONSTRAINT idempotente per il dialetto target.
-    // Oracle non supporta IF EXISTS sulle constraint: si usa un blocco PL/SQL che ignora ORA-02443/02431.
+    // Oracle non supporta IF EXISTS sulle constraint: si usa un blocco PL/SQL che ignora ORA-02443/02431/00942.
     private static async Task WriteDropConstraintAsync(TextWriter output, DatabaseType dialect,
         DatabaseObject table, string constraintName)
     {
@@ -1152,8 +1151,6 @@ public class ScriptGenerationService : DatabaseServiceBase
         }
     }
 
-    // The statement sits inside a PL/SQL string literal, so every single quote in the names (they come from the source
-    // catalog) must be doubled or it would end the literal and the rest of the name would run as PL/SQL.
     /// <summary>
     /// Items separated by commas, going on to a new physical line whenever the current one would pass
     /// <see cref="DatabaseService.OracleScriptLineBudget"/>: SQL*Plus ignores a line of more than 4999 bytes (and still
@@ -1191,6 +1188,8 @@ public class ScriptGenerationService : DatabaseServiceBase
         return sb.ToString();
     }
 
+    // The statement sits inside a PL/SQL string literal, so every single quote in the names (they come from the source
+    // catalog) must be doubled or it would end the literal and the rest of the name would run as PL/SQL.
     internal static string BuildOracleDropConstraintBlock(string tableRef, string name) =>
         "BEGIN" + Environment.NewLine +
         $"  EXECUTE IMMEDIATE '{$"ALTER TABLE {tableRef} DROP CONSTRAINT {name}".Replace("'", "''")}';" + Environment.NewLine +
