@@ -278,8 +278,8 @@ A wrong release is not corrected in place: the next release gets the next number
 gh release delete vX.Y.Z-rc.N --cleanup-tag --yes
 ```
 
-Delete all the candidates of that version, not only an earlier one: the next number is counted from the existing `-rc` tags, and `plan`
-refuses a number that is already taken.
+A candidate gets the number after the highest `-rc` tag of that version, so deleting an earlier one does not bring its number back
+(deleting the highest one does, because its tag goes with it); `plan` refuses a number that is already taken.
 
 ## Version Information
 
