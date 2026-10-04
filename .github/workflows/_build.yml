@@ -17,6 +17,9 @@ jobs:
     timeout-minutes: 30
     env:
       VERSION: ${{ inputs.version }}
+      # Avalonia.BuildServices sends build telemetry unless this variable exists (the value is not read). The project has no Avalonia
+      # Accelerate license key, so the opt-out is honored; a Community or Trial license would override it.
+      AVALONIA_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v7
