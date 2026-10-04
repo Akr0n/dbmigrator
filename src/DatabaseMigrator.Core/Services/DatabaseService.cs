@@ -2,12 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
-using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
-using Npgsql;
 using Oracle.ManagedDataAccess.Client;
 using DatabaseMigrator.Core.Models;
 
@@ -16,7 +13,6 @@ namespace DatabaseMigrator.Core.Services;
 public class DatabaseService : DatabaseServiceBase, IDatabaseService
 {
     private readonly int _batchSize;
-    private readonly int _rowCountMaxConcurrency;
 
     /// <summary>
     /// Optional handler invoked when emptying a target table fails or is refused during data migration: the TRUNCATE / DELETE
@@ -29,7 +25,6 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
     {
         var options = RuntimeOptionsProvider.Current.Database;
         _batchSize = options.BatchSize;
-        _rowCountMaxConcurrency = options.RowCountMaxConcurrency;
     }
 
     private static string DescribeConnection(ConnectionInfo connectionInfo)
@@ -144,7 +139,6 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                 Log($"Retrieved {tables.Count} tables");
 
                 // Get row count for all tables in batch to avoid too many connections
-                // Use controlled parallelism for databases with many tables
                 Log($"Starting row count retrieval for {tables.Count} tables...");
                 await GetAllTableRowCountsAsync(connectionInfo, tables);
                 Log($"Row count retrieval completed");
@@ -292,7 +286,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                     }
                 }
                 
-                // Retorna la password usata (per Oracle) o null (per altri database)
+                // Ritorna la password usata (per Oracle) o null (per altri database)
                 return usedPassword;
             }
         }
@@ -393,55 +387,6 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
         // Use cryptographically secure random number generator without modulo bias
         return System.Security.Cryptography.RandomNumberGenerator.GetInt32(maxValue);
-    }
-
-    public async Task<string> GetTableSchemaAsync(ConnectionInfo connectionInfo, string tableName, string schema)
-    {
-        using (var connection = CreateConnection(connectionInfo))
-        {
-            await ExecuteWithRetryAsync(() => connection.OpenAsync(), "GetTableSchemaAsync.Open");
-
-            string query = connectionInfo.DatabaseType switch
-            {
-                DatabaseType.SqlServer => GetSqlServerTableSchema(),
-                DatabaseType.PostgreSQL => GetPostgresTableSchema(schema, tableName),
-                DatabaseType.Oracle => GetOracleTableSchema(schema, tableName),
-                _ => throw new NotSupportedException()
-            };
-
-            using (var command = connection.CreateCommand())
-            {
-                command.CommandText = query;
-                command.CommandTimeout = _commandTimeoutSeconds;
-
-                // SQL Server query references @schema and @table as parameters.
-                if (connectionInfo.DatabaseType == DatabaseType.SqlServer)
-                {
-                    var schemaParam = command.CreateParameter();
-                    schemaParam.ParameterName = "@schema";
-                    schemaParam.Value = schema;
-                    command.Parameters.Add(schemaParam);
-
-                    var tableParam = command.CreateParameter();
-                    tableParam.ParameterName = "@table";
-                    tableParam.Value = tableName;
-                    command.Parameters.Add(tableParam);
-                }
-
-                var script = new System.Text.StringBuilder();
-                script.AppendLine($"-- Tabella: {schema}.{tableName}");
-
-                using (var reader = await ExecuteWithRetryAsync(() => command.ExecuteReaderAsync(), "GetTableSchemaAsync.ExecuteReader"))
-                {
-                    while (await reader.ReadAsync())
-                    {
-                        script.AppendLine(reader[0].ToString());
-                    }
-                }
-
-                return script.ToString();
-            }
-        }
     }
 
     /// <summary>
@@ -888,7 +833,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             string? oracleSessionUser = null;
 
             // Diagnostica: logga lo schema e l'utente per Oracle
-            if (target.DatabaseType == DatabaseType.Oracle && targetConn is OracleConnection oracleConn)
+            if (target.DatabaseType == DatabaseType.Oracle && targetConn is OracleConnection)
             {
                 try
                 {
@@ -950,7 +895,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                     throw new InvalidOperationException(
                         $"La tabella '{table.Schema}.{table.TableName}' nel database di destinazione non contiene le colonne presenti nella sorgente: {sample}. " +
                         "Di solito la tabella nel target è stata creata da un altro DB o da uno script con definizione diversa (ad es. type_coverage nativo PostgreSQL vs Oracle). " +
-                        "Elimina la tabella nel target o usa un database vuoto, poi esegui la migrazione con modalità 'Schema + dati'.");
+                        "Elimina la tabella nel target o usa un database vuoto, poi esegui la migrazione con modalità 'Schema + Dati'.");
                 }
 
                 // Tronca la tabella nel target per evitare duplicati
@@ -1548,7 +1493,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
     /// <summary>
     /// Gets row counts for all tables reusing a single open connection to avoid per-table
-    /// connection overhead (previously opened N connections serially behind a semaphore).
+    /// connection overhead.
     /// </summary>
     private async Task GetAllTableRowCountsAsync(ConnectionInfo connectionInfo, List<TableInfo> tables)
     {
@@ -2151,61 +2096,4 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
         
         return result;
     }
-    // Schema and table are passed as @schema / @table SQL parameters from GetTableSchemaAsync.
-    private string GetSqlServerTableSchema()
-    {
-        return @"
-            SELECT 'CREATE TABLE [' + @schema + '].[' + @table + '] (' +
-                   STUFF((SELECT ', [' + c.COLUMN_NAME + '] ' +
-                          CASE WHEN c.DATA_TYPE IN ('int', 'bigint', 'smallint', 'tinyint', 'decimal', 'float', 'real') THEN c.DATA_TYPE
-                               WHEN c.DATA_TYPE = 'varchar' THEN 'varchar(' + CAST(c.CHARACTER_MAXIMUM_LENGTH AS varchar) + ')'
-                               WHEN c.DATA_TYPE = 'nvarchar' THEN 'nvarchar(' + CAST(c.CHARACTER_MAXIMUM_LENGTH AS varchar) + ')'
-                               WHEN c.DATA_TYPE = 'char' THEN 'char(' + CAST(c.CHARACTER_MAXIMUM_LENGTH AS varchar) + ')'
-                               WHEN c.DATA_TYPE = 'nchar' THEN 'nchar(' + CAST(c.CHARACTER_MAXIMUM_LENGTH AS varchar) + ')'
-                               ELSE c.DATA_TYPE
-                          END +
-                          CASE WHEN c.IS_NULLABLE = 'YES' THEN ' NULL' ELSE ' NOT NULL' END
-                        FROM INFORMATION_SCHEMA.COLUMNS c
-                        WHERE c.TABLE_SCHEMA = @schema AND c.TABLE_NAME = @table
-                        ORDER BY c.ORDINAL_POSITION
-                        FOR XML PATH(''), TYPE).value('.', 'varchar(max)'), 1, 2, '') +
-                   ')'
-            FROM INFORMATION_SCHEMA.TABLES t
-            WHERE t.TABLE_SCHEMA = @schema AND t.TABLE_NAME = @table";
-    }
-
-    private string GetPostgresTableSchema(string schema, string tableName)
-    {
-        // Fix: use EscapeSqlString consistently for all embedded literals, and correct the
-        // spacing/quoting around the dot separator (was: '"" ."" tableName ""').
-        return $@"
-            SELECT 'CREATE TABLE ""{EscapeSqlString(schema)}"".""{EscapeSqlString(tableName)}"" (' ||
-                   COALESCE(array_to_string(ARRAY_AGG(
-                       '""' || a.attname || '"" ' ||
-                       pg_catalog.format_type(a.atttypid, a.atttypmod) ||
-                       CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE '' END
-                       ORDER BY a.attnum
-                   ), ', '), '') || ')'
-            FROM pg_attribute a
-            JOIN pg_class c ON a.attrelid = c.oid
-            JOIN pg_namespace n ON c.relnamespace = n.oid
-            WHERE n.nspname = '{EscapeSqlString(schema)}'
-            AND c.relname = '{EscapeSqlString(tableName)}'
-            AND a.attnum > 0";
-    }
-
-    private string GetOracleTableSchema(string schema, string tableName)
-    {
-        // Fix: use EscapeSqlString for the schema/tableName inside the DDL string literal too,
-        // not just in the WHERE clause (previously schema and tableName were interpolated raw).
-        return $@"
-            SELECT 'CREATE TABLE {EscapeSqlString(schema)}.{EscapeSqlString(tableName)} (' ||
-                   LISTAGG(COLUMN_NAME || ' ' || DATA_TYPE ||
-                           CASE WHEN NULLABLE = 'N' THEN ' NOT NULL' ELSE '' END, ', ')
-                   WITHIN GROUP (ORDER BY COLUMN_ID) || ')'
-            FROM ALL_TAB_COLUMNS
-            WHERE OWNER = '{EscapeSqlString(schema)}'
-            AND TABLE_NAME = '{EscapeSqlString(tableName)}'";
-    }
-
 }

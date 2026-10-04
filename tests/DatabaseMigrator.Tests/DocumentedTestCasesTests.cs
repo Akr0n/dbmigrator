@@ -9,17 +9,17 @@ namespace DatabaseMigrator.Tests;
 /// <summary>
 /// Automated E2E tests derived from TestCases_DatabaseMigrator.docx v1.0 (2026-04-06).
 ///
-/// Automated coverage (26 test cases):
+/// Automated coverage (27 test cases):
 ///   TC-001..TC-004  Connettività
 ///   TC-007..TC-019  Migrazione Schema+Dati SS→PG (singole tabelle)
 ///   TC-021..TC-025  Migrazione Schema+Dati cross-DB (SS↔Oracle, PG↔Oracle, PG↔SS)
 ///   TC-026..TC-027  Solo Schema
 ///   TC-028..TC-030  Solo Dati
 ///
-/// NOT automatable — richiedono interazione con la GUI Avalonia (16 test cases):
+/// NOT automatable — richiedono interazione con la GUI Avalonia (15 test cases):
 ///   TC-005  Toggle visibilità password (pulsante 👁)
 ///   TC-006  Porta si aggiorna al cambio tipo DB (ComboBox)
-///   TC-020  Migrazione di tutte le 20 tabelle in una sola sessione (vedi DocumentedTestCases_FullMigrationTests)
+///   TC-020  Migrazione di tutte le 20 tabelle in una sola sessione
 ///   TC-031  Seleziona Tutto / Deseleziona Tutto
 ///   TC-032  Filtro ricerca tabelle per nome
 ///   TC-033  Aggiorna tabelle (Refresh)
@@ -133,21 +133,6 @@ public class DocumentedTestCasesTests : IAsyncLifetime
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"DROP TABLE IF EXISTS migration_test.\"{t}\" CASCADE";
-            await cmd.ExecuteNonQueryAsync();
-        }
-    }
-
-    // ─── SS cleanup helper ─────────────────────────────────────────────────
-    // Pass tables in FK-safe drop order (children first, parents last).
-    // SQL Server has no DROP ... CASCADE, so order matters.
-    private static async Task DropSsTablesAsync(params string[] tableNames)
-    {
-        await using var conn = new SqlConnection(SsConnStr);
-        await conn.OpenAsync();
-        foreach (var t in tableNames) // no Reverse: caller provides correct FK order
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"IF OBJECT_ID('migration_test.[{t}]') IS NOT NULL DROP TABLE migration_test.[{t}]";
             await cmd.ExecuteNonQueryAsync();
         }
     }

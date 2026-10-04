@@ -235,7 +235,7 @@ public class ForeignKeyLoadOrderE2ETests
         var service = new DatabaseService();
         var plan = await new ForeignKeyService().PrepareDataLoadAsync(db.Target, db.AlphabeticalTables);
         bool succeeded = false;
-        IReadOnlyList<string> warnings = Array.Empty<string>();
+        IReadOnlyList<string> warnings;
         try
         {
             foreach (var table in plan.OrderedTables)

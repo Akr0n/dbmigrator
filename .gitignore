@@ -53,12 +53,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# Docker volumes (local)
-docker_volumes/
-pg_data/
-oracle_data/
-mssql_data/
-
 # Temporary files
 *.tmp
 *.bak
@@ -68,13 +62,6 @@ mssql_data/
 .idea/
 *.sublime-workspace
 *.sublime-project
-
-# Claude Code & local AI tooling — memory/config/indexes, never published to GitHub
-.claude/
-.mcp.json
-CLAUDE.md
-.codegraph/
-.sofa/
 
 #Test Coverage
 *.docx

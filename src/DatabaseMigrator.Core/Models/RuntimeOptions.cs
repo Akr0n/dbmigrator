@@ -15,7 +15,6 @@ public sealed class DatabaseRuntimeOptions
 {
     public int BatchSize { get; set; } = 1000;
     public int CommandTimeoutSeconds { get; set; } = 300;
-    public int RowCountMaxConcurrency { get; set; } = 10;
     public int RetryCount { get; set; } = 3;
     public int RetryInitialDelayMilliseconds { get; set; } = 500;
     public bool EnableTransientRetries { get; set; } = true;
@@ -114,7 +113,6 @@ public static class RuntimeOptionsProvider
     {
         options.Database.BatchSize = GetIntEnv("DBMIGRATOR_BATCH_SIZE", options.Database.BatchSize);
         options.Database.CommandTimeoutSeconds = GetIntEnv("DBMIGRATOR_COMMAND_TIMEOUT_SECONDS", options.Database.CommandTimeoutSeconds);
-        options.Database.RowCountMaxConcurrency = GetIntEnv("DBMIGRATOR_ROWCOUNT_MAX_CONCURRENCY", options.Database.RowCountMaxConcurrency);
         options.Database.RetryCount = GetIntEnv("DBMIGRATOR_RETRY_COUNT", options.Database.RetryCount);
         options.Database.RetryInitialDelayMilliseconds = GetIntEnv("DBMIGRATOR_RETRY_INITIAL_DELAY_MS", options.Database.RetryInitialDelayMilliseconds);
         options.Database.EnableTransientRetries = GetBoolEnv("DBMIGRATOR_ENABLE_RETRIES", options.Database.EnableTransientRetries);
@@ -143,7 +141,6 @@ public static class RuntimeOptionsProvider
     {
         options.Database.BatchSize = Math.Max(1, options.Database.BatchSize);
         options.Database.CommandTimeoutSeconds = Math.Max(30, options.Database.CommandTimeoutSeconds);
-        options.Database.RowCountMaxConcurrency = Math.Clamp(options.Database.RowCountMaxConcurrency, 1, 64);
         options.Database.RetryCount = Math.Clamp(options.Database.RetryCount, 0, 10);
         options.Database.RetryInitialDelayMilliseconds = Math.Clamp(options.Database.RetryInitialDelayMilliseconds, 50, 10_000);
 

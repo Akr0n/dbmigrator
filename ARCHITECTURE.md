@@ -65,6 +65,7 @@
 - Microsoft.Data.SqlClient 6.1.3
 - Npgsql 10.0.1
 - Oracle.ManagedDataAccess.Core 23.26.0
+- ReactiveUI 22.3.1 (the observable `TableInfo` and `DatabaseObject` models)
 
 **Namespace Structure**:
 ```
@@ -74,12 +75,28 @@ DatabaseMigrator.Core
 │   ├── ConnectionConfig.cs    # Serializable configuration for save/load
 │   ├── DatabaseType.cs        # Enum: SqlServer, PostgreSQL, Oracle
 │   ├── MigrationMode.cs       # Enum: SchemaAndData, SchemaOnly, DataOnly
-│   └── TableInfo.cs           # Table metadata (name, schema, row count)
+│   ├── TableInfo.cs           # Table metadata (name, schema, row count)
+│   ├── ForeignKeyInfo.cs      # A FOREIGN KEY as read from a catalog
+│   ├── DatabaseObject.cs      # Object selectable in the "Genera Script" tab
+│   ├── DatabaseObjectType.cs  # Enum: Table, View, StoredProcedure, Function, Trigger, Sequence, Index
+│   ├── ScriptGenerationOptions.cs # Options of the script export
+│   ├── ScriptGenerationProgress.cs # Progress reported while a script is generated
+│   ├── TruncateFailureContext.cs # What the user is told when emptying a table fails or is refused
+│   ├── LogEntry.cs            # One line of the log (time, level, message)
+│   └── RuntimeOptions.cs      # Runtime settings (appsettings.json, DBMIGRATOR_* variables)
 └── Services/
     ├── IDatabaseService.cs        # Interface for database operations
     ├── DatabaseService.cs         # Connection testing, table discovery, data migration
     ├── SchemaMigrationService.cs  # Schema DDL generation, type mapping
-    └── LoggerService.cs           # Centralized logging service
+    ├── LoggerService.cs           # Centralized logging service
+    ├── DatabaseServiceBase.cs     # Shared base: retry, connection factory, identifier formatting
+    ├── ForeignKeyService.cs       # FOREIGN KEY handling around a data load (keys off/on on SQL Server)
+    ├── TableDependencyOrderer.cs  # Parents-first load order of tables
+    ├── DeleteCascadeReach.cs      # Tables a DELETE reaches through ON DELETE CASCADE / SET NULL (Oracle)
+    ├── SourceResume.cs            # Resume of a big table read after the source connection is lost
+    ├── TableSelection.cs          # Search filter and "select all" / "deselect all" rules
+    ├── ScriptGenerationService.cs # "Genera Script": DDL + data export to a .sql file
+    └── CredentialProtectionService.cs # DPAPI protection of saved passwords
 ```
 
 ### DatabaseMigrator (UI Application)
@@ -94,14 +111,20 @@ DatabaseMigrator.Core
 DatabaseMigrator
 ├── Program.cs              # Entry point
 ├── App.axaml               # Application configuration
+├── App.axaml.cs            # Creates the main window
+├── AppVersion.cs           # Build version shown in the window title
+├── appsettings.json        # Runtime settings template
 ├── Assets/                 # Application icons and resources
+├── Converters/             # Value converters (log level colours)
 ├── Views/
 │   ├── MainWindow.axaml    # Main UI definition (XAML)
-│   └── MainWindow.axaml.cs # Code-behind
+│   ├── MainWindow.axaml.cs # Code-behind
+│   └── WindowFit.cs        # Keeps the window inside the screen's work area
 └── ViewModels/
     ├── ViewModelBase.cs        # Base class with INotifyPropertyChanged
     ├── MainWindowViewModel.cs  # Main application logic
-    └── ConnectionViewModel.cs  # Connection form logic
+    ├── ConnectionViewModel.cs  # Connection form logic
+    └── ScriptGenerationViewModel.cs # "Genera Script" tab logic
 ```
 
 ## Key Components
@@ -125,8 +148,8 @@ public interface IDatabaseService
 
 **Key Features**:
 - Connection testing with detailed error reporting
-- Table discovery with parallel row count retrieval (controlled concurrency)
-- Batch data migration (1000 rows per batch)
+- Table discovery with row counts read one table at a time over a single connection
+- Batch data migration (1000 rows per batch by default, `DBMIGRATOR_BATCH_SIZE`)
 - Transaction support with commit/rollback
 - IDENTITY_INSERT handling for SQL Server
 
@@ -139,7 +162,10 @@ public class SchemaMigrationService
 {
     Task<bool> CheckTableExistsAsync(ConnectionInfo connectionInfo, string schema, string tableName);
     Task<bool> DropTableAsync(ConnectionInfo connectionInfo, string schema, string tableName);
-    Task MigrateSchemaAsync(ConnectionInfo source, ConnectionInfo target, List<TableInfo> tablesToMigrate);
+    Task<bool> DropConstraintAsync(ConnectionInfo connectionInfo, string schema, string tableName,
+        string constraintName, string constraintType);
+    Task<SchemaMigrationResult> MigrateSchemaAsync(ConnectionInfo source, ConnectionInfo target,
+        List<TableInfo> tablesToMigrate, List<TableInfo>? tablesCreatedOnTarget = null);
 }
 ```
 
@@ -172,9 +198,6 @@ public class MainWindowViewModel : ViewModelBase
     // Commands
     ReactiveCommand<Unit, Unit> ConnectDatabasesCommand { get; }
     ReactiveCommand<Unit, Unit> StartMigrationCommand { get; }
-    ReactiveCommand<Unit, Unit> SelectAllTablesCommand { get; }
-    ReactiveCommand<Unit, Unit> DeselectAllTablesCommand { get; }
-    ReactiveCommand<Unit, Unit> RefreshTablesCommand { get; }
     
     // Migration modes
     MigrationMode SelectedMigrationMode { get; set; }
@@ -222,7 +245,7 @@ public class MainWindowViewModel : ViewModelBase
    e. Commit on success
    
 5. On failure:
-   └─ Rollback: DROP all tables created during this migration
+   └─ Rollback: DROP the constraints added and all tables created during this migration
 ```
 
 ### Constraint Migration
@@ -243,7 +266,7 @@ ALTER TABLE [schema].[table] ADD CONSTRAINT [PK_name] PRIMARY KEY ([column])
 ALTER TABLE "schema"."table" ADD CONSTRAINT "pk_name" PRIMARY KEY ("column")
 
 -- Oracle
-ALTER TABLE TABLE_NAME ADD CONSTRAINT PK_NAME PRIMARY KEY (COLUMN)
+ALTER TABLE SCHEMA_NAME.TABLE_NAME ADD CONSTRAINT "PK_NAME" PRIMARY KEY (COLUMN)
 ```
 
 **Identifier Case Handling**:
@@ -270,7 +293,7 @@ The application supports bidirectional mapping between all supported databases:
 | varchar(n) | varchar(n) |
 | nvarchar(n) | varchar(n) |
 | varchar(max) | text |
-| datetime2 | timestamp |
+| datetime2(p) | timestamp(min(p,6)) |
 | bit | boolean |
 | varbinary | bytea |
 | uniqueidentifier | uuid |
@@ -283,9 +306,10 @@ The application supports bidirectional mapping between all supported databases:
 | varchar(n) | VARCHAR2(n) |
 | nvarchar(n) | NVARCHAR2(n) |
 | varchar(max) | CLOB |
-| datetime2 | TIMESTAMP(6) |
+| datetime2(p) | TIMESTAMP(min(p,9)) |
 | bit | NUMBER(1) |
-| varbinary | BLOB |
+| varbinary(n) | RAW(n), n capped at 2000 |
+| varbinary(max) | BLOB |
 
 **PostgreSQL / Oracle → SQL Server** (text is always Unicode, whatever the source type):
 | Source | SQL Server |
@@ -300,27 +324,11 @@ When source and target are the same database type, original types are preserved 
 
 ### Table Row Count Retrieval
 
-For databases with many tables (1000+), row counts are retrieved using controlled parallelism:
-
-```csharp
-const int maxConcurrency = 10;
-using var semaphore = new SemaphoreSlim(maxConcurrency);
-
-var tasks = tables.Select(async table => {
-    await semaphore.WaitAsync();
-    try {
-        table.RowCount = await GetTableRowCountAsync(...);
-    } finally {
-        semaphore.Release();
-    }
-});
-
-await Task.WhenAll(tasks);
-```
+Row counts are read one table at a time over a single open connection (`GetAllTableRowCountsAsync`), so a database with many tables (1000+) does not open one connection per table. A count that fails is logged and shown as 0. In Data Only mode the existence check of the target tables runs up to 10 checks at a time (a `SemaphoreSlim` in `MainWindowViewModel`).
 
 ### Batch Processing
 
-Data is migrated in batches of 1000 rows to:
+Data is migrated in batches of 1000 rows by default (`DBMIGRATOR_BATCH_SIZE`; a wide table gets fewer rows per `INSERT` on a SQL Server target) to:
 - Reduce memory consumption
 - Provide granular progress updates
 - Enable partial recovery on errors
@@ -351,7 +359,9 @@ For Oracle target databases, the connecting user needs:
 - CREATE SESSION
 - CREATE TABLE
 - CREATE SEQUENCE
-- CREATE PROCEDURE (for user creation)
+- CREATE PROCEDURE
+
+To create a missing target user, the connecting account also needs the CREATE USER and GRANT ANY PRIVILEGE system privileges; the new user is granted the four privileges above.
 
 ## Error Handling
 
@@ -374,24 +384,30 @@ Configurations are stored as JSON files:
 
 ```json
 {
-  "Name": "config_name",
-  "Source": {
-    "DatabaseType": "SqlServer",
-    "Server": "localhost",
-    "Port": 1433,
-    "Database": "SourceDB",
-    "Username": "sa",
-    "Password": "****"
+  "source": {
+    "databaseType": "SqlServer",
+    "server": "localhost",
+    "port": 1433,
+    "database": "SourceDB",
+    "username": "sa",
+    "password": "<DPAPI-protected>",
+    "passwordProtected": true,
+    "trustServerCertificate": false,
+    "requireEncryption": false
   },
-  "Target": {
-    "DatabaseType": "PostgreSQL",
-    "Server": "localhost",
-    "Port": 5432,
-    "Database": "TargetDB",
-    "Username": "postgres",
-    "Password": "****"
+  "target": {
+    "databaseType": "PostgreSQL",
+    "server": "localhost",
+    "port": 5432,
+    "database": "TargetDB",
+    "username": "postgres",
+    "password": "<DPAPI-protected>",
+    "passwordProtected": true,
+    "trustServerCertificate": false,
+    "requireEncryption": false
   },
-  "Timestamp": "2026-01-02T10:30:00"
+  "timestamp": "2026-01-02T10:30:00",
+  "name": "config_name"
 }
 ```
 

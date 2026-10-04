@@ -8,8 +8,6 @@ namespace DatabaseMigrator.Converters;
 
 public sealed class LogLevelToForegroundConverter : IValueConverter
 {
-    public static readonly LogLevelToForegroundConverter Instance = new();
-
     private static readonly IBrush InfoBrush    = new SolidColorBrush(Color.Parse("#e0e0e0"));
     private static readonly IBrush WarningBrush = new SolidColorBrush(Color.Parse("#ff9800"));
     private static readonly IBrush ErrorBrush   = new SolidColorBrush(Color.Parse("#ef5350"));

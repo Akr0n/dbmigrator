@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using DatabaseMigrator.Core.Models;
 using DatabaseMigrator.Core.Services;
 

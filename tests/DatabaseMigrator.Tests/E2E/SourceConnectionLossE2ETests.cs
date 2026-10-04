@@ -12,7 +12,7 @@ namespace DatabaseMigrator.Tests.E2E;
 public class SourceConnectionLossE2ETests
 {
     private const int Rows = 12_000;
-    private const long CutAfterBytes = 700_000; // a rows is about 170 bytes on the wire: the first cut falls near row 4,000
+    private const long CutAfterBytes = 700_000; // a row is about 170 bytes on the wire: the first cut falls near row 4,000
 
     private static bool ShouldRunE2E() =>
         string.Equals(Environment.GetEnvironmentVariable("DBMIGRATOR_RUN_E2E"), "true", StringComparison.OrdinalIgnoreCase);

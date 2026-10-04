@@ -18,7 +18,7 @@ The application will start with an empty interface.
 ## 🔌 Connection Configuration
 
 ### Step 1: Source Database
-In the **"Database Connections"** tab, left section:
+In the **"Connessioni Database"** tab (the window is in Italian), left section:
 
 **SQL Server Example**:
 ```
@@ -53,7 +53,7 @@ Password:           oracle123
 ```
 
 ### Step 2: Target Database
-In the **"Database Connections"** tab, right section:
+In the **"Connessioni Database"** tab, right section:
 
 ```
 Database Type:      PostgreSQL (can be different from source!)
@@ -65,7 +65,7 @@ Password:           postgres456
 ```
 
 ### Step 3: Connect
-Click the green **"Connect to Databases"** button
+Click the blue **"Connetti ai Database"** button
 
 You will see:
 - ✅ Progress bar
@@ -76,17 +76,17 @@ You will see:
 
 ## 📋 Table Selection
 
-In the **"Table Selection"** tab (enabled after connection):
+In the **"Selezione Tabelle"** tab (enabled after connection):
 
 ### Option A: Manual Selection
 - Click the checkbox next to each table
 - You'll see table name, schema, and row count
 
 ### Option B: Select All
-- Click **"Select All"**: it selects the tables the search filter shows (all of them when the filter is empty), so you can filter one schema and select it, then another
+- Click **"Seleziona Tutto"**: it selects the tables the search filter shows (all of them when the filter is empty), so you can filter one schema and select it, then another
 
 ### Option C: Deselect All
-- Click **"Deselect All"**: it clears every selection, including tables the filter hides
+- Click **"Deseleziona Tutto"**: it clears every selection, including tables the filter hides
 
 ### Search/Filter
 - Use the search box to filter tables by name or schema
@@ -101,9 +101,9 @@ Choose a migration mode before starting:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
-| **Schema + Data** | Creates tables with constraints and migrates data | Full migration to new database |
-| **Schema Only** | Creates tables with Primary Keys and UNIQUE constraints | Prepare target for manual data load |
-| **Data Only** | Migrates data only | Tables already exist in target |
+| **Schema + Data** ("Schema + Dati") | Creates tables with constraints and migrates data | Full migration to new database |
+| **Schema Only** ("Solo Schema") | Creates tables with Primary Keys and UNIQUE constraints | Prepare target for manual data load |
+| **Data Only** ("Solo Dati") | Migrates data only | Tables already exist in target |
 
 **Important**: 
 - With "Schema + Data" and "Data Only", every selected table is **emptied on the target before it is loaded**: its existing rows are replaced
@@ -115,11 +115,11 @@ Choose a migration mode before starting:
 
 ## ▶️ Start Migration
 
-In the **"Migration"** tab:
+In the **"Migrazione"** tab:
 
-1. Review the status message (should say "Connected!")
+1. Review the status message (should say "Connesso! Trovate N tabelle")
 2. Select your migration mode
-3. Click the **"Start Migration"** button
+3. Click the **"Avvia Migrazione"** button
 
 What happens automatically:
 - ✅ Creates the tables on the target (the target database itself must already exist)
@@ -149,7 +149,7 @@ What happens automatically:
 ## 🔄 Refresh Tables
 
 After connection, if you need to update the table list:
-- Click the **"Refresh"** button
+- Click the **"Aggiorna"** button
 - Table selections are preserved
 - Row counts are updated
 
@@ -163,9 +163,9 @@ After connection, if you need to update the table list:
 - Verify credentials
 - Check firewall settings
 
-### "Table does not exist" (Data Only mode)
+### "Modalità 'Solo Dati' selezionata ma N tabella/e non esistono nel database di destinazione" (Data Only mode)
 - Tables must exist in target before using Data Only mode
-- Use "Schema + Data" or "Schema Only" first
+- Use "Schema + Data" ("Schema + Dati") or "Schema Only" ("Solo Schema") first
 
 ### "String or binary data would be truncated"
 - Source column data is larger than target column

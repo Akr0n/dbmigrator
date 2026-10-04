@@ -35,7 +35,6 @@ public class MainWindowViewModel : ViewModelBase
     private string _errorMessage = "";
     private int _selectedTablesCount;
     private long _totalRowsToMigrate;
-    private bool _canStartMigration;
     private MigrationMode _selectedMigrationMode = MigrationMode.SchemaAndData;
     private string _tableSearchFilter = "";
     private ObservableCollection<TableInfo> _filteredTables = new();
@@ -155,12 +154,6 @@ public class MainWindowViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _totalRowsToMigrate, value);
     }
 
-    public bool CanStartMigration
-    {
-        get => _canStartMigration;
-        set => this.RaiseAndSetIfChanged(ref _canStartMigration, value);
-    }
-
     public MigrationMode SelectedMigrationMode
     {
         get => _selectedMigrationMode;
@@ -173,13 +166,8 @@ public class MainWindowViewModel : ViewModelBase
         }
     }
 
-    public IObservable<bool> CanStartMigrationObservable { get; }
-
     public ReactiveCommand<Unit, Unit> ConnectDatabasesCommand { get; }
     public ReactiveCommand<Unit, Unit> StartMigrationCommand { get; }
-    public ReactiveCommand<Unit, Unit> SelectAllTablesCommand { get; }
-    public ReactiveCommand<Unit, Unit> DeselectAllTablesCommand { get; }
-    public ReactiveCommand<Unit, Unit> RefreshTablesCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearLogCommand { get; }
 
     // Log tab — backed by _allLogEntries (all) and FilteredLogEntries (displayed)
@@ -267,28 +255,10 @@ public class MainWindowViewModel : ViewModelBase
         SourceConnection = new ConnectionViewModel();
         TargetConnection = new ConnectionViewModel();
         
-        // Initialize filtered collections
-        _filteredTables = new ObservableCollection<TableInfo>();
-        _filteredTargetTables = new ObservableCollection<TableInfo>();
-        _selectedTablesForMigration = new ObservableCollection<TableInfo>();
-
-        // Inizializza CanStartMigration al valore corretto
-        CanStartMigration = IsConnected && !IsMigrating;
-
-        // Observable per CanStartMigration
-        CanStartMigrationObservable = this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating,
-            (connected, migrating) => connected && !migrating)
-            .Do(canStart => CanStartMigration = canStart);
-
         ConnectDatabasesCommand = ReactiveCommand.CreateFromTask(ConnectDatabasesAsync);
         ConnectDatabasesCommand.ThrownExceptions.Subscribe(ex =>
             LoggerService.LogError("ConnectDatabasesCommand unhandled exception", ex));
         StartMigrationCommand = ReactiveCommand.CreateFromTask(StartMigrationAsync,
-            this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating,
-                (connected, migrating) => connected && !migrating));
-        SelectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => SetAllTablesSelectionAsync(true));
-        DeselectAllTablesCommand = ReactiveCommand.CreateFromTask(_ => SetAllTablesSelectionAsync(false));
-        RefreshTablesCommand = ReactiveCommand.CreateFromTask(RefreshTablesAsync,
             this.WhenAnyValue(vm => vm.IsConnected, vm => vm.IsMigrating,
                 (connected, migrating) => connected && !migrating));
 
@@ -910,16 +880,6 @@ public class MainWindowViewModel : ViewModelBase
             : " Chiavi esterne: " + string.Join(" | ", warnings.Take(3)) +
               (warnings.Count > 3 ? $" (e altri {warnings.Count - 3} avvisi, vedi il log)" : "");
 
-    public void SelectAllTablesDirectly()
-    {
-        _ = SetAllTablesSelectionAsync(true);
-    }
-
-    public void DeselectAllTablesDirectly()
-    {
-        _ = SetAllTablesSelectionAsync(false);
-    }
-
     public Task SelectAllTablesDirectlyAsync()
     {
         return SetAllTablesSelectionAsync(true);
@@ -961,11 +921,6 @@ public class MainWindowViewModel : ViewModelBase
             RecomputeTableViews(force: true);
             Log($"[{operation}TablesDirectly] Completed. SelectedTablesCount={SelectedTablesCount}");
         });
-    }
-
-    private void UpdateTableStatistics()
-    {
-        RecomputeTableViews();
     }
 
     /// <summary>

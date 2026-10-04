@@ -2,8 +2,8 @@
 <RunSettings>
   <RunConfiguration>
     <!-- The headless harness has one known way to hang (a second MainWindow in the same process never finishes building).
-         A hung test host must turn into a failed run after ten minutes, not into a six-hour CI job that also blocks the
-         DEV workflow, whose -dev tag the production release depends on. The whole UI suite takes a few seconds. -->
+         A hung test host must turn into a failed run after ten minutes, not into a CI job that hangs until the 30-minute timeout of _build.yml and blocks the
+         release workflow and every pull request. The whole UI suite takes a few seconds. -->
     <TestSessionTimeout>600000</TestSessionTimeout>
   </RunConfiguration>
 </RunSettings>

@@ -89,7 +89,7 @@ created as `SYSTEM`) on the fixture containers and drops them afterwards:
   Set `DBMIGRATOR_PG_PORT` when a local PostgreSQL service owns port 5432 (default 5432).
 - `OracleDeleteCascadeE2ETests` — the same for Oracle `DELETE FROM` with `ON DELETE CASCADE` / `SET NULL` keys.
 - `SqlServerUnicodeDataE2ETests` / `TextToSqlServerUnicodeE2ETests` — non-Latin text reaches a SQL Server target intact
-  (SQL Server → SQL Server, and PostgreSQL / Oracle → SQL Server, whose text columns are created as `nvarchar`/`nchar`).
+  (SQL Server → SQL Server, and PostgreSQL / Oracle → SQL Server, whose text columns are created as `nvarchar`).
 - `ConnectionEncryptionE2ETests` — "require encryption" is refused by PostgreSQL and Oracle servers without TLS. A third test needs a
   PostgreSQL with `ssl=on` and a self-signed certificate on the port in `DBMIGRATOR_PG_TLS_PORT` (not part of the CI containers, so it
   is skipped when unset); with one running, it checks that the certificate is refused until "accept the certificate" is set.
@@ -98,7 +98,7 @@ created as `SYSTEM`) on the fixture containers and drops them afterwards:
 ### UI tests (`tests/DatabaseMigrator.UiTests`, not part of the matrix)
 Windows only, so the Linux matrix does not build them. `dotnet test DatabaseMigrator.sln` runs them on every build; they drive
 the real window and view model headlessly. `FullRunE2ETests` there needs the SQL Server container:
-`DBMIGRATOR_RUN_E2E=true dotnet test tests/DatabaseMigrator.UiTests`.
+`$env:DBMIGRATOR_RUN_E2E = 'true'; dotnet test tests/DatabaseMigrator.UiTests`.
 
 ### `ScriptGenerationE2ETests`
 End-to-end tests for the **"Generate Script"** feature (`ScriptGenerationService` — the

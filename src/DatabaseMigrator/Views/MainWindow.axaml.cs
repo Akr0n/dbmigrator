@@ -12,7 +12,6 @@ using System.Reactive;
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using Avalonia.Controls.ApplicationLifetimes;
 using ReactiveUI;
 using System.Reactive.Linq;
 
