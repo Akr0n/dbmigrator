@@ -284,9 +284,11 @@ A candidate gets the number after the highest `-rc` tag of that version, so dele
 ## Version Information
 
 The executable carries its version and the commit it was built from: its product version is `X.Y.Z+<commit>` (`X.Y.Z-rc.N+<commit>`
-for a candidate). The window title reads `Database Migrator X.Y.Z+<7-character commit>`, the About text shows the same, and
-`debug.log` gets the line `Database Migrator X.Y.Z+<7-character commit> started` at every start, so a log sent from another PC says
-which build produced it. The releases, with their notes, are on the
+for a candidate). The window title reads `Database Migrator X.Y.Z`, the About text shows the same, and
+`debug.log` gets the line `Database Migrator X.Y.Z started` at every start, so a log sent from another PC says
+which version produced it. The full commit stays in the assembly metadata (product version `X.Y.Z+<commit>`).
+A local build without `-p:Version` (plain `dotnet run`/`dotnet build`) takes the version from the latest git tag
+(`SetVersionFromGitTag` in the app csproj); with no tags it falls back to the SDK default `1.0.0`. The releases, with their notes, are on the
 [Releases page](https://github.com/Akr0n/dbmigrator/releases); the latest stable one is marked "Latest", and a release marked "Pre-release" is a test build.
 
 **Build**: Win-x64, .NET 10.0 self-contained
