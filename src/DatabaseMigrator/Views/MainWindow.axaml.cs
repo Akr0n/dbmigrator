@@ -126,6 +126,12 @@ namespace DatabaseMigrator.Views;
             ExitMenuItem.Click += (s, e) => Close();
             AboutMenuItem.Click += (s, e) => ShowAbout();
 
+            // ── Theme menu (Modifica → Tema) ──────────────────────────────
+            ThemeSystemMenuItem.Click += (s, e) => SetTheme(ThemePreference.System);
+            ThemeLightMenuItem.Click += (s, e) => SetTheme(ThemePreference.Light);
+            ThemeDarkMenuItem.Click += (s, e) => SetTheme(ThemePreference.Dark);
+            SyncThemeMenu(ThemeManager.Load());
+
             // ── Tab "Genera Script" ───────────────────────────────────────
             ScriptLoadObjectsButton.Click += OnScriptLoadObjectsClicked;
             ScriptGenerateButton.Click += OnScriptGenerateClicked;
@@ -698,6 +704,20 @@ namespace DatabaseMigrator.Views;
         };
     }
 
+    private void SetTheme(ThemePreference preference)
+    {
+        ThemeManager.Save(preference);
+        ThemeManager.Apply(preference);
+        SyncThemeMenu(preference);
+    }
+
+    private void SyncThemeMenu(ThemePreference preference)
+    {
+        ThemeSystemMenuItem.IsChecked = preference == ThemePreference.System;
+        ThemeLightMenuItem.IsChecked = preference == ThemePreference.Light;
+        ThemeDarkMenuItem.IsChecked = preference == ThemePreference.Dark;
+    }
+
     private void OnMigrationModeChanged(object? sender, RoutedEventArgs e)
     {
         if (_isUpdatingMigrationMode)
@@ -1071,8 +1091,15 @@ namespace DatabaseMigrator.Views;
         _ => DatabaseType.SqlServer
     };
 
-    private void ShowAbout()
+    private async void ShowAbout()
     {
-        StatusBarTextBlock.Text = $"{BaseTitle} - Strumento per migrare dati tra SQL Server, PostgreSQL e Oracle";
+        try
+        {
+            await new AboutWindow().ShowDialog(this);
+        }
+        catch (Exception ex)
+        {
+            Log($"[ShowAbout] {ex.Message}");
+        }
     }
 }

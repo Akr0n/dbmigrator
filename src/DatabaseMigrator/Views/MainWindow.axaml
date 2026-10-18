@@ -1,30 +1,24 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:models="clr-namespace:DatabaseMigrator.Core.Models;assembly=DatabaseMigrator.Core"
-        xmlns:converters="clr-namespace:DatabaseMigrator.Converters"
         x:Class="DatabaseMigrator.Views.MainWindow"
         Title="Database Migrator"
         Width="1400"
         Height="900"
         WindowStartupLocation="CenterScreen"
-        Background="#0d1117"
+        Background="{DynamicResource AppPageBackground}"
         Icon="avares://DatabaseMigrator/Assets/logo.ico">
-
-    <Window.Resources>
-        <converters:LogLevelToForegroundConverter x:Key="LogLevelToForeground"/>
-    </Window.Resources>
 
     <Window.Styles>
         <!-- ═══════════════════════════════════════════════════════ -->
-        <!--  DESIGN SYSTEM — GitHub-inspired dark palette           -->
-        <!--  Page #0d1117 · Surface #161b22 · Border #30363d        -->
-        <!--  Accent #58a6ff · Primary #1f6feb                       -->
+        <!--  DESIGN SYSTEM — GitHub-inspired, theme-aware (brushes in App.axaml) -->
+        <!--  Page/surface/border/text/accent are DynamicResource brushes -->
         <!-- ═══════════════════════════════════════════════════════ -->
 
         <!-- Card: contenitore standard per ogni gruppo logico -->
         <Style Selector="Border.card">
-            <Setter Property="Background" Value="#161b22"/>
-            <Setter Property="BorderBrush" Value="#30363d"/>
+            <Setter Property="Background" Value="{DynamicResource AppSurfaceBackground}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="CornerRadius" Value="8"/>
             <Setter Property="Padding" Value="16"/>
@@ -35,21 +29,21 @@
         <Style Selector="TextBlock.cardTitle">
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="#58a6ff"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppAccent}"/>
             <Setter Property="Margin" Value="0,0,0,12"/>
         </Style>
         <Style Selector="TextBlock.fieldLabel">
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}"/>
         </Style>
         <Style Selector="TextBlock.muted">
             <Setter Property="FontSize" Value="11"/>
-            <Setter Property="Foreground" Value="#8b949e"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}"/>
         </Style>
         <Style Selector="TextBlock.body">
             <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}"/>
         </Style>
 
         <!-- Inputs -->
@@ -57,44 +51,44 @@
             <Setter Property="Height" Value="36"/>
             <Setter Property="Padding" Value="10,0"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
-            <Setter Property="Background" Value="#0d1117"/>
-            <Setter Property="Foreground" Value="#c9d1d9"/>
-            <Setter Property="BorderBrush" Value="#30363d"/>
+            <Setter Property="Background" Value="{DynamicResource AppPageBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="CornerRadius" Value="6"/>
             <Setter Property="FontSize" Value="12"/>
-            <Setter Property="CaretBrush" Value="#58a6ff"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource AppAccent}"/>
         </Style>
         <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
-            <Setter Property="BorderBrush" Value="#1f6feb"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AppPrimaryButton}"/>
         </Style>
         <Style Selector="ComboBox">
             <Setter Property="Height" Value="36"/>
             <Setter Property="Padding" Value="10,0"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
-            <Setter Property="Background" Value="#0d1117"/>
-            <Setter Property="Foreground" Value="#c9d1d9"/>
-            <Setter Property="BorderBrush" Value="#30363d"/>
+            <Setter Property="Background" Value="{DynamicResource AppPageBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="CornerRadius" Value="6"/>
             <Setter Property="FontSize" Value="12"/>
         </Style>
         <Style Selector="ComboBoxItem">
             <Setter Property="Padding" Value="10,6"/>
-            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}"/>
         </Style>
         <Style Selector="CheckBox">
-            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}"/>
             <Setter Property="FontSize" Value="12"/>
         </Style>
         <Style Selector="RadioButton">
-            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}"/>
             <Setter Property="FontSize" Value="12"/>
         </Style>
 
         <!-- Buttons -->
         <Style Selector="Button.primary">
-            <Setter Property="Background" Value="#1f6feb"/>
+            <Setter Property="Background" Value="{DynamicResource AppPrimaryButton}"/>
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="Padding" Value="16,0"/>
             <Setter Property="Height" Value="36"/>
@@ -105,104 +99,123 @@
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
         <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="#388bfd"/>
+            <Setter Property="Background" Value="{DynamicResource AppPrimaryHover}"/>
         </Style>
         <Style Selector="Button.primary:pressed /template/ ContentPresenter">
-            <Setter Property="Background" Value="#1158c7"/>
+            <Setter Property="Background" Value="{DynamicResource AppPrimaryPressed}"/>
         </Style>
         <Style Selector="Button.primary:disabled /template/ ContentPresenter">
-            <Setter Property="Background" Value="#1c2128"/>
+            <Setter Property="Background" Value="{DynamicResource AppSunkenBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}"/>
             <Setter Property="Opacity" Value="0.5"/>
         </Style>
         <Style Selector="Button.secondary">
-            <Setter Property="Background" Value="#21262d"/>
-            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="Background" Value="{DynamicResource AppSecondaryBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}"/>
             <Setter Property="Padding" Value="16,0"/>
             <Setter Property="Height" Value="36"/>
             <Setter Property="CornerRadius" Value="6"/>
-            <Setter Property="BorderBrush" Value="#30363d"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
         <Style Selector="Button.secondary:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="#30363d"/>
+            <Setter Property="Background" Value="{DynamicResource AppHoverBackground}"/>
         </Style>
         <Style Selector="Button.secondary:disabled /template/ ContentPresenter">
-            <Setter Property="Background" Value="#161b22"/>
+            <Setter Property="Background" Value="{DynamicResource AppSunkenBackground}"/>
             <Setter Property="Opacity" Value="0.5"/>
         </Style>
 
         <!-- Toggle that looks like a secondary button and turns blue while it is on (the log's "Segui") -->
         <Style Selector="ToggleButton.follow">
-            <Setter Property="Background" Value="#21262d"/>
-            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="Background" Value="{DynamicResource AppSecondaryBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}"/>
             <Setter Property="Padding" Value="16,0"/>
             <Setter Property="Height" Value="36"/>
             <Setter Property="CornerRadius" Value="6"/>
-            <Setter Property="BorderBrush" Value="#30363d"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
         <Style Selector="ToggleButton.follow:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#30363d"/>
+            <Setter Property="Background" Value="{DynamicResource AppHoverBackground}"/>
         </Style>
         <Style Selector="ToggleButton.follow:checked /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#1f6feb"/>
+            <Setter Property="Background" Value="{DynamicResource AppPrimaryButton}"/>
             <Setter Property="Foreground" Value="White"/>
         </Style>
         <Style Selector="ToggleButton.follow:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#388bfd"/>
+            <Setter Property="Background" Value="{DynamicResource AppPrimaryHover}"/>
         </Style>
 
         <!-- TabControl / TabItem -->
         <Style Selector="TabControl">
-            <Setter Property="Background" Value="#0d1117"/>
+            <Setter Property="Background" Value="{DynamicResource AppPageBackground}"/>
         </Style>
         <Style Selector="TabItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#8b949e"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextSecondary}"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Padding" Value="16,10"/>
         </Style>
         <Style Selector="TabItem:selected">
-            <Setter Property="Foreground" Value="#c9d1d9"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimary}"/>
         </Style>
         <Style Selector="TabItem:pointerover /template/ Border#PART_LayoutRoot">
-            <Setter Property="Background" Value="#1c2128"/>
+            <Setter Property="Background" Value="{DynamicResource AppSunkenBackground}"/>
+        </Style>
+
+        <!-- Log lines: the level color follows the theme live (a converter would freeze it) -->
+        <Style Selector="TextBlock.logLine">
+            <Setter Property="Foreground" Value="{DynamicResource AppLogInfo}"/>
+        </Style>
+        <Style Selector="TextBlock.logLine.logWarning">
+            <Setter Property="Foreground" Value="{DynamicResource AppLogWarning}"/>
+        </Style>
+        <Style Selector="TextBlock.logLine.logError">
+            <Setter Property="Foreground" Value="{DynamicResource AppLogError}"/>
         </Style>
     </Window.Styles>
 
-    <DockPanel Background="#0d1117">
+    <DockPanel Background="{DynamicResource AppPageBackground}">
         <!-- Menu Bar -->
-        <Menu DockPanel.Dock="Top" Background="#161b22" Foreground="#c9d1d9">
+        <Menu DockPanel.Dock="Top" Background="{DynamicResource AppSurfaceBackground}" Foreground="{DynamicResource AppTextPrimary}">
             <MenuItem Header="File">
                 <MenuItem Header="Salva Configurazione..." x:Name="SaveConfigMenuItem"/>
                 <MenuItem Header="Carica Configurazione..." x:Name="LoadConfigMenuItem"/>
                 <Separator/>
                 <MenuItem Header="Esci" x:Name="ExitMenuItem"/>
             </MenuItem>
+            <MenuItem Header="Modifica" x:Name="ModificaMenuItem">
+                <MenuItem Header="Tema" x:Name="TemaMenuItem">
+                    <MenuItem Header="Sistema" x:Name="ThemeSystemMenuItem" ToggleType="Radio" GroupName="ThemeGroup"/>
+                    <MenuItem Header="Chiaro" x:Name="ThemeLightMenuItem" ToggleType="Radio" GroupName="ThemeGroup"/>
+                    <MenuItem Header="Scuro" x:Name="ThemeDarkMenuItem" ToggleType="Radio" GroupName="ThemeGroup"/>
+                </MenuItem>
+            </MenuItem>
             <MenuItem Header="Aiuto">
                 <MenuItem Header="Informazioni" x:Name="AboutMenuItem"/>
             </MenuItem>
         </Menu>
 
-        <Grid RowDefinitions="*,Auto" Background="#0d1117">
-            <TabControl Grid.Row="0" x:Name="MainTabControl" Background="#0d1117" Foreground="#c9d1d9">
+        <Grid RowDefinitions="*,Auto" Background="{DynamicResource AppPageBackground}">
+            <TabControl Grid.Row="0" x:Name="MainTabControl" Background="{DynamicResource AppPageBackground}" Foreground="{DynamicResource AppTextPrimary}">
 
                 <!-- Tab 1: Connections -->
                 <TabItem>
                     <TabItem.Header>
                         <TextBlock Text="Connessioni Database"/>
                     </TabItem.Header>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" Background="Transparent">
-                        <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,*" Margin="24" Background="#0d1117">
+                    <ScrollViewer x:Name="ConnectionsScroll" VerticalScrollBarVisibility="Auto" Background="Transparent">
+                        <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,*" Margin="16" Background="{DynamicResource AppPageBackground}">
                             <!-- Source -->
-                            <Border Grid.Row="0" Grid.Column="0" Classes="card" Margin="0,0,8,0">
-                                <StackPanel Spacing="14">
+                            <Border Grid.Row="0" Grid.Column="0" Classes="card" Margin="0,0,8,0" Padding="12">
+                                <StackPanel Spacing="10">
                                     <StackPanel Spacing="4">
                                         <TextBlock Classes="cardTitle" Text="Database Sorgente" Margin="0"/>
                                         <TextBlock x:Name="SourceStatusTextBlock" FontSize="12" FontWeight="SemiBold"/>
@@ -242,7 +255,7 @@
                                         <Grid ColumnDefinitions="*,Auto">
                                             <TextBox Grid.Column="0" x:Name="SourcePasswordTextBox" PasswordChar="•" Watermark="password"/>
                                             <Button Grid.Column="1" x:Name="SourcePasswordToggle"
-                                                    Content="👁" Background="Transparent" Foreground="#8b949e"
+                                                    Content="👁" Background="Transparent" Foreground="{DynamicResource AppTextSecondary}"
                                                     Padding="10,0" FontSize="14" BorderThickness="0" Height="36"
                                                     Margin="4,0,0,0"
                                                     ToolTip.Tip="Mostra/nascondi password"/>
@@ -258,8 +271,8 @@
                             </Border>
 
                             <!-- Target -->
-                            <Border Grid.Row="0" Grid.Column="1" Classes="card" Margin="8,0,0,0">
-                                <StackPanel Spacing="14">
+                            <Border Grid.Row="0" Grid.Column="1" Classes="card" Margin="8,0,0,0" Padding="12">
+                                <StackPanel Spacing="10">
                                     <StackPanel Spacing="4">
                                         <TextBlock Classes="cardTitle" Text="Database Target" Margin="0"/>
                                         <TextBlock x:Name="TargetStatusTextBlock" FontSize="12" FontWeight="SemiBold"/>
@@ -299,7 +312,7 @@
                                         <Grid ColumnDefinitions="*,Auto">
                                             <TextBox Grid.Column="0" x:Name="TargetPasswordTextBox" PasswordChar="•" Watermark="password"/>
                                             <Button Grid.Column="1" x:Name="TargetPasswordToggle"
-                                                    Content="👁" Background="Transparent" Foreground="#8b949e"
+                                                    Content="👁" Background="Transparent" Foreground="{DynamicResource AppTextSecondary}"
                                                     Padding="10,0" FontSize="14" BorderThickness="0" Height="36"
                                                     Margin="4,0,0,0"
                                                     ToolTip.Tip="Mostra/nascondi password"/>
@@ -316,7 +329,7 @@
 
                             <!-- Connect Button -->
                             <Button Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" x:Name="ConnectButton"
-                                    Classes="primary" Height="44" FontSize="13" Margin="0,16,0,0"
+                                    Classes="primary" Height="40" FontSize="13" Margin="0,12,0,0"
                                     Content="Connetti ai Database"/>
                         </Grid>
                     </ScrollViewer>
@@ -327,10 +340,10 @@
                     <TabItem.Header>
                         <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                             <TextBlock Text="Selezione Tabelle"/>
-                            <TextBlock x:Name="TablesSelectedBadge" FontSize="11" Foreground="#58a6ff" IsVisible="False" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="TablesSelectedBadge" FontSize="11" Foreground="{DynamicResource AppAccent}" IsVisible="False" VerticalAlignment="Center"/>
                         </StackPanel>
                     </TabItem.Header>
-                    <Grid RowDefinitions="Auto,*,Auto" ColumnDefinitions="*,*" Margin="24" Background="#0d1117">
+                    <Grid RowDefinitions="Auto,*,Auto" ColumnDefinitions="*,*" Margin="24" Background="{DynamicResource AppPageBackground}">
                         <!-- Search + actions Row -->
                         <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Classes="card">
                             <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
@@ -346,15 +359,15 @@
                         <Border Grid.Row="1" Grid.Column="0" Classes="card" Margin="0,0,8,12">
                             <Grid RowDefinitions="Auto,*">
                                 <TextBlock Grid.Row="0" Classes="cardTitle" x:Name="SourceTablesHeader" Text="Sorgente: seleziona tabelle"/>
-                                <ListBox Grid.Row="1" x:Name="SourceTablesListBox" Background="#0d1117" BorderBrush="#30363d" BorderThickness="1" Foreground="#c9d1d9" CornerRadius="6">
+                                <ListBox Grid.Row="1" x:Name="SourceTablesListBox" Background="{DynamicResource AppPageBackground}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" Foreground="{DynamicResource AppTextPrimary}" CornerRadius="6">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:TableInfo}">
                                             <StackPanel Orientation="Horizontal" Spacing="10" Margin="5,8">
                                                 <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding Schema}" Foreground="#58a6ff" FontSize="12" VerticalAlignment="Center"/>
-                                                <TextBlock Text="." Foreground="#8b949e" FontSize="12" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding TableName}" Foreground="#c9d1d9" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#8b949e" FontSize="11" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding Schema}" Foreground="{DynamicResource AppAccent}" FontSize="12" VerticalAlignment="Center"/>
+                                                <TextBlock Text="." Foreground="{DynamicResource AppTextSecondary}" FontSize="12" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding TableName}" Foreground="{DynamicResource AppTextPrimary}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="{DynamicResource AppTextSecondary}" FontSize="11" VerticalAlignment="Center"/>
                                             </StackPanel>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
@@ -366,14 +379,14 @@
                         <Border Grid.Row="1" Grid.Column="1" Classes="card" Margin="8,0,0,12">
                             <Grid RowDefinitions="Auto,*">
                                 <TextBlock Grid.Row="0" Classes="cardTitle" Text="Destinazione: schema da creare"/>
-                                <ListBox Grid.Row="1" x:Name="TargetTablesListBox" Background="#0d1117" BorderBrush="#30363d" BorderThickness="1" Foreground="#c9d1d9" CornerRadius="6">
+                                <ListBox Grid.Row="1" x:Name="TargetTablesListBox" Background="{DynamicResource AppPageBackground}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" Foreground="{DynamicResource AppTextPrimary}" CornerRadius="6">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:TableInfo}">
                                             <StackPanel Orientation="Horizontal" Spacing="10" Margin="5,8">
-                                                <TextBlock Text="{Binding Schema}" Foreground="#58a6ff" FontSize="12" VerticalAlignment="Center"/>
-                                                <TextBlock Text="." Foreground="#8b949e" FontSize="12" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding TableName}" Foreground="#3fb950" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#8b949e" FontSize="11" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding Schema}" Foreground="{DynamicResource AppAccent}" FontSize="12" VerticalAlignment="Center"/>
+                                                <TextBlock Text="." Foreground="{DynamicResource AppTextSecondary}" FontSize="12" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding TableName}" Foreground="{DynamicResource AppSuccess}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="{DynamicResource AppTextSecondary}" FontSize="11" VerticalAlignment="Center"/>
                                             </StackPanel>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
@@ -386,11 +399,11 @@
                             <Grid ColumnDefinitions="*,*">
                                 <StackPanel Grid.Column="0" Spacing="4">
                                     <TextBlock x:Name="SourceCountTextBlock" Classes="muted" Text="Tabelle sorgente: 0"/>
-                                    <TextBlock x:Name="SelectedCountTextBlock" FontSize="12" FontWeight="SemiBold" Foreground="#58a6ff" Text="Tabelle selezionate: 0"/>
+                                    <TextBlock x:Name="SelectedCountTextBlock" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AppAccent}" Text="Tabelle selezionate: 0"/>
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Spacing="4">
                                     <TextBlock x:Name="TargetCountTextBlock" Classes="muted" Text="Tabelle destinazione: 0"/>
-                                    <TextBlock x:Name="TotalRowsTextBlock" FontSize="12" FontWeight="SemiBold" Foreground="#3fb950" Text="Righe totali da migrare: 0"/>
+                                    <TextBlock x:Name="TotalRowsTextBlock" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AppSuccess}" Text="Righe totali da migrare: 0"/>
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -402,7 +415,7 @@
                     <TabItem.Header>
                         <TextBlock Text="Migrazione"/>
                     </TabItem.Header>
-                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="24" Background="#0d1117">
+                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="24" Background="{DynamicResource AppPageBackground}">
                         <!-- Migration Mode Selection -->
                         <Border Grid.Row="0" Classes="card">
                             <StackPanel Spacing="10">
@@ -422,19 +435,19 @@
                             <StackPanel Spacing="10">
                                 <TextBlock Classes="cardTitle" Text="Tabelle da migrare"/>
                                 <StackPanel Orientation="Horizontal" Spacing="20">
-                                    <TextBlock Text="{Binding SelectedTablesCount, StringFormat='Selezionate: {0}'}" Classes="body" FontWeight="SemiBold" Foreground="#58a6ff"/>
-                                    <TextBlock Text="{Binding TotalRowsToMigrate, StringFormat='Righe totali: {0}'}" Classes="body" FontWeight="SemiBold" Foreground="#3fb950"/>
+                                    <TextBlock Text="{Binding SelectedTablesCount, StringFormat='Selezionate: {0}'}" Classes="body" FontWeight="SemiBold" Foreground="{DynamicResource AppAccent}"/>
+                                    <TextBlock Text="{Binding TotalRowsToMigrate, StringFormat='Righe totali: {0}'}" Classes="body" FontWeight="SemiBold" Foreground="{DynamicResource AppSuccess}"/>
                                 </StackPanel>
-                                <ListBox Background="#0d1117" Foreground="#c9d1d9" MaxHeight="200" MinHeight="60" BorderBrush="#30363d" BorderThickness="1" CornerRadius="6"
+                                <ListBox Background="{DynamicResource AppPageBackground}" Foreground="{DynamicResource AppTextPrimary}" MaxHeight="200" MinHeight="60" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="6"
                                          ItemsSource="{Binding SelectedTablesForMigration}">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:TableInfo}">
                                             <StackPanel Orientation="Horizontal" Spacing="10" Margin="2,4">
-                                                <TextBlock IsVisible="{Binding IsSelected}" Text="✓" Foreground="#3fb950" FontSize="11" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding Schema}" Foreground="#58a6ff" FontSize="11" VerticalAlignment="Center"/>
-                                                <TextBlock Text="." Foreground="#8b949e" FontSize="11" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding TableName}" FontSize="11" Foreground="#c9d1d9" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#8b949e" FontSize="10" VerticalAlignment="Center"/>
+                                                <TextBlock IsVisible="{Binding IsSelected}" Text="✓" Foreground="{DynamicResource AppSuccess}" FontSize="11" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding Schema}" Foreground="{DynamicResource AppAccent}" FontSize="11" VerticalAlignment="Center"/>
+                                                <TextBlock Text="." Foreground="{DynamicResource AppTextSecondary}" FontSize="11" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding TableName}" FontSize="11" Foreground="{DynamicResource AppTextPrimary}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="{DynamicResource AppTextSecondary}" FontSize="10" VerticalAlignment="Center"/>
                                             </StackPanel>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
@@ -455,8 +468,8 @@
                         <!-- Progress bar -->
                         <Border Grid.Row="3" Classes="card">
                             <Grid>
-                                <ProgressBar x:Name="ProgressBar" Value="0" Maximum="100" Height="24" Foreground="#3fb950" Background="#0d1117" CornerRadius="4"/>
-                                <TextBlock x:Name="ProgressTextBlock" TextAlignment="Center" FontWeight="SemiBold" Foreground="White" FontSize="12" VerticalAlignment="Center" Text="0%"/>
+                                <ProgressBar x:Name="ProgressBar" Value="0" Maximum="100" Height="24" Foreground="{DynamicResource AppSuccess}" Background="{DynamicResource AppPageBackground}" CornerRadius="4"/>
+                                <TextBlock x:Name="ProgressTextBlock" TextAlignment="Center" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimary}" FontSize="12" VerticalAlignment="Center" Text="0%"/>
                             </Grid>
                         </Border>
 
@@ -464,8 +477,8 @@
                                 Content="Avvia Migrazione"/>
 
                         <!-- Error box -->
-                        <Border x:Name="ErrorBorder" Grid.Row="5" Background="#3a1015" CornerRadius="6" Padding="14" BorderBrush="#f85149" BorderThickness="1" Margin="0,12,0,0" IsVisible="False">
-                            <TextBlock x:Name="ErrorTextBlock" Foreground="#ffa198" TextWrapping="Wrap" FontSize="11" Text=""/>
+                        <Border x:Name="ErrorBorder" Grid.Row="5" Background="{DynamicResource AppDangerBackground}" CornerRadius="6" Padding="14" BorderBrush="{DynamicResource AppDanger}" BorderThickness="1" Margin="0,12,0,0" IsVisible="False">
+                            <TextBlock x:Name="ErrorTextBlock" Foreground="{DynamicResource AppDangerText}" TextWrapping="Wrap" FontSize="11" Text=""/>
                         </Border>
                     </Grid>
                 </TabItem>
@@ -475,7 +488,7 @@
                     <TabItem.Header>
                         <TextBlock Text="Genera Script"/>
                     </TabItem.Header>
-                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="24" Background="#0d1117">
+                    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="24" Background="{DynamicResource AppPageBackground}">
 
                         <!-- Options -->
                         <Border Grid.Row="0" Classes="card">
@@ -522,18 +535,18 @@
                         <!-- Objects list -->
                         <Border Grid.Row="2" Classes="card">
                             <ListBox x:Name="ScriptObjectsListBox" ItemsSource="{Binding ScriptGeneration.Objects}"
-                                     Background="#0d1117" BorderBrush="#30363d" BorderThickness="1" Foreground="#c9d1d9" CornerRadius="6">
+                                     Background="{DynamicResource AppPageBackground}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" Foreground="{DynamicResource AppTextPrimary}" CornerRadius="6">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate DataType="{x:Type models:DatabaseObject}">
                                         <StackPanel Orientation="Horizontal" Spacing="10" Margin="5,6">
                                             <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center"/>
-                                            <Border Background="#1f6feb" CornerRadius="3" Padding="6,2" VerticalAlignment="Center" MinWidth="110">
+                                            <Border Background="{DynamicResource AppPrimaryButton}" CornerRadius="3" Padding="6,2" VerticalAlignment="Center" MinWidth="110">
                                                 <TextBlock Text="{Binding DisplayType}" Foreground="White" FontSize="10" FontWeight="SemiBold"/>
                                             </Border>
-                                            <TextBlock Text="{Binding Schema}" Foreground="#58a6ff" FontSize="12" VerticalAlignment="Center"/>
-                                            <TextBlock Text="." Foreground="#8b949e" FontSize="12" VerticalAlignment="Center"/>
-                                            <TextBlock Text="{Binding Name}" Foreground="#c9d1d9" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                            <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="#8b949e" FontSize="11"
+                                            <TextBlock Text="{Binding Schema}" Foreground="{DynamicResource AppAccent}" FontSize="12" VerticalAlignment="Center"/>
+                                            <TextBlock Text="." Foreground="{DynamicResource AppTextSecondary}" FontSize="12" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding Name}" Foreground="{DynamicResource AppTextPrimary}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding RowCount, StringFormat='({0} righe)'}" Foreground="{DynamicResource AppTextSecondary}" FontSize="11"
                                                        VerticalAlignment="Center" IsVisible="{Binding ShowRowCount}"/>
                                         </StackPanel>
                                     </DataTemplate>
@@ -546,7 +559,7 @@
                             <Grid ColumnDefinitions="*,Auto" MinHeight="36">
                                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="20" VerticalAlignment="Center" HorizontalAlignment="Left">
                                     <TextBlock VerticalAlignment="Center" Classes="muted" FontWeight="SemiBold" Text="{Binding ScriptGeneration.TotalObjectsCount, StringFormat='Oggetti totali: {0}'}"/>
-                                    <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="#58a6ff" Text="{Binding ScriptGeneration.SelectedCount, StringFormat='Selezionati: {0}'}"/>
+                                    <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AppAccent}" Text="{Binding ScriptGeneration.SelectedCount, StringFormat='Selezionati: {0}'}"/>
                                 </StackPanel>
                                 <Button Grid.Column="1" x:Name="ScriptGenerateButton" Classes="primary" Height="36"
                                         IsEnabled="{Binding !ScriptGeneration.IsBusy}" Content="Genera Script su File..."/>
@@ -557,8 +570,8 @@
                         <Border Grid.Row="4" Classes="card" Margin="0">
                             <StackPanel Spacing="8">
                                 <Grid>
-                                    <ProgressBar x:Name="ScriptProgressBar" Value="{Binding ScriptGeneration.ProgressPercentage}" Maximum="100" Height="22" Foreground="#3fb950" Background="#0d1117" CornerRadius="4"/>
-                                    <TextBlock TextAlignment="Center" FontWeight="SemiBold" Foreground="White" FontSize="11" VerticalAlignment="Center"
+                                    <ProgressBar x:Name="ScriptProgressBar" Value="{Binding ScriptGeneration.ProgressPercentage}" Maximum="100" Height="22" Foreground="{DynamicResource AppSuccess}" Background="{DynamicResource AppPageBackground}" CornerRadius="4"/>
+                                    <TextBlock TextAlignment="Center" FontWeight="SemiBold" Foreground="{DynamicResource AppTextPrimary}" FontSize="11" VerticalAlignment="Center"
                                                Text="{Binding ScriptGeneration.ProgressPercentage, StringFormat='{}{0}%'}"/>
                                 </Grid>
                                 <TextBlock x:Name="ScriptStatusTextBlock" Classes="muted" TextWrapping="Wrap"
@@ -573,12 +586,12 @@
                     <TabItem.Header>
                         <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                             <TextBlock Text="Log"/>
-                            <Border x:Name="LogErrorBadge" Background="#da3633" CornerRadius="9" Padding="6,1" IsVisible="False">
+                            <Border x:Name="LogErrorBadge" Background="{DynamicResource AppDangerBadge}" CornerRadius="9" Padding="6,1" IsVisible="False">
                                 <TextBlock x:Name="LogErrorBadgeText" Foreground="White" FontSize="10" FontWeight="SemiBold" Text="0"/>
                             </Border>
                         </StackPanel>
                     </TabItem.Header>
-                    <Grid RowDefinitions="Auto,*" Margin="24" Background="#0d1117">
+                    <Grid RowDefinitions="Auto,*" Margin="24" Background="{DynamicResource AppPageBackground}">
 
                         <!-- Toolbar -->
                         <Border Grid.Row="0" Classes="card">
@@ -613,7 +626,7 @@
                         <!-- Log list -->
                         <Border Grid.Row="1" Classes="card" Margin="0" Padding="2">
                             <ListBox x:Name="LogListBox"
-                                     Background="#0d1117"
+                                     Background="{DynamicResource AppPageBackground}"
                                      BorderThickness="0"
                                      CornerRadius="6"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -623,13 +636,15 @@
                                         <Grid ColumnDefinitions="85,52,*" Margin="6,2">
                                             <TextBlock Grid.Column="0"
                                                        Text="{Binding FormattedTime}"
-                                                       Foreground="#6e7681"
+                                                       Foreground="{DynamicResource AppTextTertiary}"
                                                        FontFamily="Consolas,Courier New,Monospace"
                                                        FontSize="11"
                                                        VerticalAlignment="Top"/>
                                             <TextBlock Grid.Column="1"
                                                        Text="{Binding LevelTag}"
-                                                       Foreground="{Binding Level, Converter={StaticResource LogLevelToForeground}}"
+                                                       Classes="logLine"
+                                                       Classes.logWarning="{Binding IsWarning}"
+                                                       Classes.logError="{Binding IsError}"
                                                        FontFamily="Consolas,Courier New,Monospace"
                                                        FontSize="11"
                                                        FontWeight="Bold"
@@ -637,7 +652,9 @@
                                                        Margin="4,0"/>
                                             <TextBlock Grid.Column="2"
                                                        Text="{Binding Message}"
-                                                       Foreground="{Binding Level, Converter={StaticResource LogLevelToForeground}}"
+                                                       Classes="logLine"
+                                                       Classes.logWarning="{Binding IsWarning}"
+                                                       Classes.logError="{Binding IsError}"
                                                        FontFamily="Consolas,Courier New,Monospace"
                                                        FontSize="11"
                                                        TextWrapping="Wrap"/>
@@ -650,7 +667,7 @@
                                         <Setter Property="Background" Value="Transparent"/>
                                     </Style>
                                     <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
-                                        <Setter Property="Background" Value="#1f6feb33"/>
+                                        <Setter Property="Background" Value="{DynamicResource AppSelectionOverlay}"/>
                                     </Style>
                                 </ListBox.Styles>
                             </ListBox>
@@ -660,12 +677,12 @@
             </TabControl>
 
             <!-- Status Bar -->
-            <Border Grid.Row="1" Background="#161b22" BorderBrush="#30363d" BorderThickness="0,1,0,0" Padding="16,10">
+            <Border Grid.Row="1" Background="{DynamicResource AppSurfaceBackground}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,1,0,0" Padding="16,10">
                 <DockPanel>
                     <TextBlock x:Name="StatusBarConnectionInfo"
-                               DockPanel.Dock="Right" Foreground="#8b949e" FontSize="11"
+                               DockPanel.Dock="Right" Foreground="{DynamicResource AppTextSecondary}" FontSize="11"
                                VerticalAlignment="Center" Margin="10,0,0,0"/>
-                    <TextBlock x:Name="StatusBarTextBlock" Foreground="#c9d1d9" FontSize="12" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="StatusBarTextBlock" Foreground="{DynamicResource AppTextPrimary}" FontSize="12" VerticalAlignment="Center"/>
                 </DockPanel>
             </Border>
         </Grid>

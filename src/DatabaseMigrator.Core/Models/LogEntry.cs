@@ -18,4 +18,8 @@ public sealed class LogEntry
         LogLevel.Error   => "ERROR",
         _                => "INFO "
     };
+
+    public bool IsWarning => Level == LogLevel.Warning;
+
+    public bool IsError => Level == LogLevel.Error;
 }

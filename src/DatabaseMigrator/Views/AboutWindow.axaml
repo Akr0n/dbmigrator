@@ -1,0 +1,33 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DatabaseMigrator.Views.AboutWindow"
+        Title="Informazioni su Database Migrator"
+        Width="540" Height="470"
+        WindowStartupLocation="CenterOwner"
+        CanResize="false"
+        ShowInTaskbar="false"
+        Icon="avares://DatabaseMigrator/Assets/logo.ico"
+        Background="{DynamicResource AppPageBackground}">
+    <StackPanel Margin="24" Spacing="12">
+        <TextBlock Text="Database Migrator" FontSize="20" FontWeight="Bold"
+                   Foreground="{DynamicResource AppTextPrimary}"/>
+        <TextBlock x:Name="AboutVersionText" FontSize="13" FontWeight="SemiBold"
+                   Foreground="{DynamicResource AppAccent}"/>
+        <TextBlock Text="Migra schema e dati tra SQL Server, PostgreSQL e Oracle, in qualsiasi combinazione."
+                   TextWrapping="Wrap" Foreground="{DynamicResource AppTextPrimary}"/>
+        <TextBlock Text="Info per l'assistenza (clicca Copia e incollale se chiedi aiuto):"
+                   Foreground="{DynamicResource AppTextSecondary}" FontSize="11" TextWrapping="Wrap"/>
+        <TextBox x:Name="AboutSupportText" IsReadOnly="True" AcceptsReturn="True" Height="84"
+                 FontSize="11" TextWrapping="Wrap"
+                 Background="{DynamicResource AppPageBackground}"
+                 Foreground="{DynamicResource AppTextPrimary}"
+                 BorderBrush="{DynamicResource AppBorderBrush}"/>
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button x:Name="AboutCopyButton" Content="Copia info"/>
+            <Button x:Name="AboutLogButton" Content="Apri cartella log"/>
+            <Button x:Name="AboutReleasesButton" Content="Release e guide"/>
+        </StackPanel>
+        <Button x:Name="AboutCloseButton" Content="Chiudi" Width="120"
+                HorizontalAlignment="Right" IsDefault="True" IsCancel="True"/>
+    </StackPanel>
+</Window>

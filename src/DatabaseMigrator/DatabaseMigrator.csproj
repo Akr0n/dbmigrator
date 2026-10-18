@@ -16,6 +16,19 @@
     <ApplicationIcon>Assets\logo.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- Local builds have no -p:Version (the release workflow stamps it): fall back to the latest
+       stable git tag so the title shows the real version instead of the SDK default 1.0.0.
+       Skipped whenever the release workflow stamps -p:Version=X.Y.Z; silently keeps the default
+       when git has no usable tags. -->
+  <Target Name="SetVersionFromGitTag" BeforeTargets="PrepareForBuild" Condition="'$(Version)' == '' Or '$(Version)' == '1.0.0'">
+    <Exec Command="git describe --tags --abbrev=0 --exclude &quot;*-dev&quot; --exclude &quot;*-rc*&quot;" ConsoleToMSBuild="true" IgnoreExitCode="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitTag" />
+    </Exec>
+    <PropertyGroup Condition="$(GitTag.StartsWith('v'))">
+      <Version>$(GitTag.Substring(1))</Version>
+    </PropertyGroup>
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.10" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.10" />

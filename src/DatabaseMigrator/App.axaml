@@ -1,4 +1,60 @@
 <Application xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="DatabaseMigrator.App">
-    <Application.Styles><FluentTheme /></Application.Styles>
+     <Application.Styles><FluentTheme /></Application.Styles>
+     <Application.Resources>
+         <ResourceDictionary>
+             <ResourceDictionary.ThemeDictionaries>
+                 <!-- Dark (GitHub dark): the historical look of the app -->
+                 <ResourceDictionary x:Key="Dark">
+                     <SolidColorBrush x:Key="AppPageBackground">#0d1117</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppSurfaceBackground">#161b22</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppSunkenBackground">#1c2128</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppSecondaryBackground">#21262d</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppHoverBackground">#30363d</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppBorderBrush">#30363d</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppTextPrimary">#c9d1d9</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppTextSecondary">#8b949e</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppTextTertiary">#6e7681</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppAccent">#58a6ff</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppPrimaryButton">#1f6feb</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppPrimaryHover">#388bfd</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppPrimaryPressed">#1158c7</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppSuccess">#3fb950</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppDanger">#f85149</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppDangerBackground">#3a1015</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppDangerText">#ffa198</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppDangerBadge">#da3633</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppSelectionOverlay">#1f6feb33</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppLogInfo">#e0e0e0</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppLogWarning">#ff9800</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppLogError">#ef5350</SolidColorBrush>
+                 </ResourceDictionary>
+                 <!-- Light (GitHub light) -->
+                 <ResourceDictionary x:Key="Light">
+                     <SolidColorBrush x:Key="AppPageBackground">#ffffff</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppSurfaceBackground">#f6f8fa</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppSunkenBackground">#eaeef2</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppSecondaryBackground">#f6f8fa</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppHoverBackground">#eaeef2</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppBorderBrush">#d0d7de</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppTextPrimary">#1f2328</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppTextSecondary">#59636e</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppTextTertiary">#59636e</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppAccent">#0969da</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppPrimaryButton">#0969da</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppPrimaryHover">#0860ca</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppPrimaryPressed">#054da3</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppSuccess">#1a7f37</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppDanger">#d1242c</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppDangerBackground">#ffebe9</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppDangerText">#d1242c</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppDangerBadge">#cf222e</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppSelectionOverlay">#0969da26</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppLogInfo">#1f2328</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppLogWarning">#9a6700</SolidColorBrush>
+                     <SolidColorBrush x:Key="AppLogError">#cf222e</SolidColorBrush>
+                 </ResourceDictionary>
+             </ResourceDictionary.ThemeDictionaries>
+         </ResourceDictionary>
+     </Application.Resources>
 </Application>
