@@ -12,5 +12,6 @@
     <PackageReference Include="Npgsql" Version="10.0.1" />
     <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.0" />
     <PackageReference Include="ReactiveUI" Version="22.3.1" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="9.0.21" />
   </ItemGroup>
 </Project>
