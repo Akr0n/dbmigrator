@@ -661,6 +661,8 @@ public class ScriptGenerationService : DatabaseServiceBase
         long rowsForTable = 0;
         int statementsSinceGo = 0;
         bool identityInsertOn = false;
+        long batchBytes = 0;
+        const long MaxBatchBytes = 32_000; // keep INSERT well under DB engine limits (SQL Server ~65KB)
 
         async Task FlushBatchAsync()
         {
@@ -696,6 +698,7 @@ public class ScriptGenerationService : DatabaseServiceBase
                 await output.WriteLineAsync("GO");
                 statementsSinceGo = 0;
             }
+            batchBytes = 0;
             batch.Clear();
         }
 
@@ -733,10 +736,11 @@ public class ScriptGenerationService : DatabaseServiceBase
                     _databaseService.FormatSqlValue(dialect, v, unicodeStringLiterals: true, oracleLineBreaksAsChr: true)).ToList();
                 string formatted = dialect == DatabaseType.Oracle ? JoinForSqlPlus(formattedValues) : string.Join(", ", formattedValues);
                 batch.Add(formatted);
+                batchBytes += formatted.Length;
                 rowsForTable++;
                 state.RowsWritten++;
 
-                if (batch.Count >= batchSize)
+                if (batch.Count >= batchSize || batchBytes >= MaxBatchBytes)
                 {
                     await FlushBatchAsync();
                     progress?.Report(new ScriptGenerationProgress

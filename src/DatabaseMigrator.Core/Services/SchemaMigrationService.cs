@@ -86,8 +86,8 @@ public class SchemaMigrationService : DatabaseServiceBase
                     DatabaseType.SqlServer => $"DROP TABLE [{EscapeSqlServerIdentifier(schema)}].[{EscapeSqlServerIdentifier(tableName)}]",
                     // Match FormatTableName: PostgreSQL DDL always uses lowercased quoted identifiers.
                     DatabaseType.PostgreSQL => $"DROP TABLE {FormatTableName(DatabaseType.PostgreSQL, schema, tableName)}",
-                    // Oracle: include the schema prefix so the correct table is dropped.
-                    DatabaseType.Oracle => $"DROP TABLE {schema.ToUpperInvariant()}.{tableName.ToUpperInvariant()}",
+                    // Oracle: use FormatTableName for consistency with all other DDL paths.
+                    DatabaseType.Oracle => $"DROP TABLE {FormatTableName(DatabaseType.Oracle, schema, tableName)}",
                     _ => throw new NotSupportedException()
                 };
 

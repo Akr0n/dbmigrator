@@ -18,6 +18,43 @@ public class TableSelectionUiTests
         new() { GetTables = _ => Task.FromResult(Vm.Tables(tables)) };
 
     [AvaloniaFact]
+    public async Task SelectAllWithEmptyFilter_SelectsAllTables()
+    {
+        var viewModel = await Vm.ConnectedAsync(ServiceWith("sales.Orders", "sales.Items", "hr.People"));
+
+        viewModel.TableSearchFilter = "";
+        await viewModel.SelectAllTablesDirectlyAsync();
+
+        Assert.Equal(3, viewModel.SelectedTablesCount);
+        Assert.True(viewModel.Tables.All(t => t.IsSelected));
+    }
+
+    [AvaloniaFact]
+    public async Task SelectAllWithNoMatch_SelectsNothing()
+    {
+        var viewModel = await Vm.ConnectedAsync(ServiceWith("sales.Orders", "hr.People"));
+
+        viewModel.TableSearchFilter = "nonexistent_xyz";
+        await viewModel.SelectAllTablesDirectlyAsync();
+
+        Assert.Equal(0, viewModel.SelectedTablesCount);
+        Assert.DoesNotContain(viewModel.Tables, t => t.IsSelected);
+    }
+
+    [AvaloniaFact]
+    public async Task SelectAllThenDeselectAll_ClearsEverything()
+    {
+        var viewModel = await Vm.ConnectedAsync(ServiceWith("sales.Orders", "hr.People"));
+
+        await viewModel.SelectAllTablesDirectlyAsync();
+        Assert.Equal(2, viewModel.SelectedTablesCount);
+
+        await viewModel.DeselectAllTablesDirectlyAsync();
+        Assert.Equal(0, viewModel.SelectedTablesCount);
+        Assert.DoesNotContain(viewModel.Tables, t => t.IsSelected);
+    }
+
+    [AvaloniaFact]
     public async Task SelectAllWithAFilter_SelectsOnlyTheTablesShown_AndKeepsAccumulating()
     {
         var viewModel = await Vm.ConnectedAsync(ServiceWith("sales.Orders", "sales.Items", "hr.People"));

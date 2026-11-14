@@ -422,6 +422,20 @@ public class MainWindowViewModel : ViewModelBase
         RecomputeTableViews(force: true);
     }
 
+    /// <summary>
+    /// Clears all table collections, selection state and subscriptions — called on disconnect to free memory.
+    /// </summary>
+    public void ClearTables()
+    {
+        DisposeAllTableSubscriptions();
+        Tables.Clear();
+        FilteredTables.Clear();
+        FilteredTargetTables.Clear();
+        SelectedTablesForMigration?.Clear();
+        SelectedTablesCount = 0;
+        TotalRowsToMigrate = 0;
+    }
+
     /// <summary>What to try when a connection fails because of the certificate or the encryption settings (empty when neither applies).</summary>
     private static string FailureHint(ConnectionInfo? connection) => connection?.DatabaseType switch
     {
@@ -451,6 +465,7 @@ public class MainWindowViewModel : ViewModelBase
             // The connection fields were just overwritten with settings that are not validated yet. Until the tests below
             // pass nothing may run with them, so a failed reconnect must not leave the old "connected" state behind.
             IsConnected = false;
+            ClearTables();
             ErrorMessage = "";
             StatusMessage = "Connessione ai database...";
             ProgressPercentage = 0;
@@ -467,6 +482,22 @@ public class MainWindowViewModel : ViewModelBase
                 ErrorMessage = "Errore: Compilare Server e Database";
                 StatusMessage = "Errore di validazione";
                 Log($"[ConnectDatabasesAsync] Validation failed. Source server='{SourceConnection?.Server}', source db='{SourceConnection?.Database}', target server='{TargetConnection?.Server}', target db='{TargetConnection?.Database}'");
+                return;
+            }
+
+            var sourceErrors = ConnectionInfo.Validate(SourceConnection.ConnectionInfo);
+            if (sourceErrors.Count > 0)
+            {
+                ErrorMessage = "Errore: " + string.Join(" ", sourceErrors);
+                StatusMessage = "Connessione sorgente fallita";
+                return;
+            }
+
+            var targetErrors = ConnectionInfo.Validate(TargetConnection.ConnectionInfo);
+            if (targetErrors.Count > 0)
+            {
+                ErrorMessage = "Errore: " + string.Join(" ", targetErrors);
+                StatusMessage = "Connessione target fallita";
                 return;
             }
 
@@ -1126,6 +1157,7 @@ public class MainWindowViewModel : ViewModelBase
             // The loaded settings are not validated and the table list still belongs to the previous source: connect again.
             // Same reset as the start of a Connect, so the Connections tab does not keep saying "Connesso" in green.
             IsConnected = false;
+            ClearTables();
             ConnectionSummary = "";
             SourceStatusText = "";
             TargetStatusText = "";

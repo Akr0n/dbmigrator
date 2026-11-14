@@ -2,6 +2,10 @@ using System;
 using System.Security.Cryptography;
 using System.Text;
 
+#if DEBUG
+using System.Diagnostics;
+#endif
+
 namespace DatabaseMigrator.Core.Services;
 
 public static class CredentialProtectionService
@@ -19,6 +23,9 @@ public static class CredentialProtectionService
 
         if (!OperatingSystem.IsWindows())
         {
+#if DEBUG
+            Debug.WriteLine("[CredentialProtectionService] DPAPI unavailable on non-Windows; credentials stored unencrypted.");
+#endif
             return false;
         }
 
@@ -29,8 +36,13 @@ public static class CredentialProtectionService
             protectedBase64 = Convert.ToBase64String(protectedBytes);
             return true;
         }
-        catch
+#pragma warning disable CS0168 // variabile 'ex' dichiarata ma non usata in Release (blocco DEBUG rimosso)
+        catch (Exception ex)
+#pragma warning restore CS0168
         {
+#if DEBUG
+            Debug.WriteLine($"[CredentialProtectionService] DPAPI protect failed: {ex.Message}");
+#endif
             return false;
         }
     }
@@ -46,6 +58,9 @@ public static class CredentialProtectionService
 
         if (!OperatingSystem.IsWindows())
         {
+#if DEBUG
+            Debug.WriteLine("[CredentialProtectionService] DPAPI unavailable on non-Windows; cannot decrypt credentials.");
+#endif
             return false;
         }
 
@@ -56,8 +71,13 @@ public static class CredentialProtectionService
             plainText = Encoding.UTF8.GetString(plainBytes);
             return true;
         }
-        catch
+#pragma warning disable CS0168 // variabile 'ex' dichiarata ma non usata in Release (blocco DEBUG rimosso)
+        catch (Exception ex)
+#pragma warning restore CS0168
         {
+#if DEBUG
+            Debug.WriteLine($"[CredentialProtectionService] DPAPI unprotect failed: {ex.Message}");
+#endif
             return false;
         }
     }

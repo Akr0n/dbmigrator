@@ -22,6 +22,7 @@ public sealed class DatabaseRuntimeOptions
 
 public sealed class LoggingRuntimeOptions
 {
+    public string? LogDirectory { get; set; } = null;
     public int MaxFileSizeMb { get; set; } = 10;
     public int RetentionDays { get; set; } = 14;
     public int MaxArchivedFiles { get; set; } = 20;
@@ -121,7 +122,21 @@ public static class RuntimeOptionsProvider
         options.Logging.RetentionDays = GetIntEnv("DBMIGRATOR_LOG_RETENTION_DAYS", options.Logging.RetentionDays);
         options.Logging.MaxArchivedFiles = GetIntEnv("DBMIGRATOR_LOG_MAX_ARCHIVED_FILES", options.Logging.MaxArchivedFiles);
 
+        var logDirEnv = Environment.GetEnvironmentVariable("DBMIGRATOR_LOG_PATH");
+        if (!string.IsNullOrWhiteSpace(logDirEnv))
+        {
+            options.Logging.LogDirectory = logDirEnv;
+        }
+
+        var trustFromEnv = Environment.GetEnvironmentVariable("DBMIGRATOR_TRUST_SERVER_CERTIFICATE");
         options.Security.TrustServerCertificateByDefault = GetBoolEnv("DBMIGRATOR_TRUST_SERVER_CERTIFICATE", options.Security.TrustServerCertificateByDefault);
+        if (trustFromEnv == "True")
+        {
+            System.Diagnostics.Debug.WriteLine(
+                "[RuntimeOptionsProvider] TrustServerCertificate enabled via DBMIGRATOR_TRUST_SERVER_CERTIFICATE env var — " +
+                "connections will accept any server certificate (MITM risk).");
+        }
+
         options.Security.AllowPlaintextConfigFallback = GetBoolEnv("DBMIGRATOR_ALLOW_PLAINTEXT_CONFIG_FALLBACK", options.Security.AllowPlaintextConfigFallback);
     }
 

@@ -92,18 +92,7 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
                     DatabaseType.Oracle => @"
                         SELECT owner, table_name
                         FROM all_tables
-                        WHERE owner NOT IN (
-                            'SYS', 'SYSTEM', 'XDB', 'ANONYMOUS',
-                            'APEX_030200', 'APEX_040200', 'APEX_050000', 'APEX_050100',
-                            'APEX_180200', 'APEX_190100', 'APEX_200100', 'APEX_210100', 'APEX_220100',
-                            'AUDSYS', 'CTXSYS', 'DBSNMP', 'DVSYS', 'DVF',
-                            'FLOWS_FILES', 'GSMADMIN_INTERNAL', 'GSMCATUSER', 'GSMROOTUSER',
-                            'LBACSYS', 'MDDATA', 'MDSYS', 'OJVMSYS', 'OLAPSYS',
-                            'ORACLE_OCM', 'ORDDATA', 'ORDPLUGINS', 'ORDSYS', 'OUTLN',
-                            'OWBSYS', 'OWBSYS_AUDIT', 'REMOTE_SCHEDULER_AGENT',
-                            'SI_INFORMTN_SCHEMA', 'SYS$UMF', 'SYSBACKUP', 'SYSDG',
-                            'SYSKM', 'SYSRAC', 'WMSYS', 'XS$NULL'
-                        )
+                        WHERE owner NOT IN ('SYS', 'SYSTEM')
                         ORDER BY owner, table_name",
                     
                     _ => throw new NotSupportedException($"Database type {connectionInfo.DatabaseType} not supported")
@@ -1812,7 +1801,10 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
 
     private string EscapeSqlString(string value)
     {
-        return value.Replace("'", "''");
+        // Replace backslash first (SQL Server/Oracle), then single quotes.
+        // PostgreSQL uses E'\\' for backslash but '' for quote; the driver handles escaping
+        // when using Npgsql, so this path is mainly for raw SQL generation (INSERT batches).
+        return value.Replace("\\", "\\\\").Replace("'", "''");
     }
 
     private static readonly char[] LineBreakChars = ['\r', '\n'];
@@ -1890,8 +1882,20 @@ public class DatabaseService : DatabaseServiceBase, IDatabaseService
             text.Clear();
         }
 
-        foreach (char c in value)
+        // Scan by index so we can lookahead for || and escape it; otherwise Oracle would
+        // interpret the two pipes as a concatenation operator instead of literal data.
+        for (int i = 0; i < value.Length; i++)
         {
+            if (value[i] == '|' && i + 1 < value.Length && value[i + 1] == '|')
+            {
+                FlushText();
+                result.Append("' || '");
+                lineBytes += 5;
+                i++; // skip the second pipe
+                continue;
+            }
+
+            var c = value[i];
             if (c == '\r' || c == '\n')
             {
                 FlushText();
