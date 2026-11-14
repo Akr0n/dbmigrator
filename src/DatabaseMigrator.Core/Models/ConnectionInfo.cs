@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Npgsql;
 
 namespace DatabaseMigrator.Core.Models;
@@ -12,6 +13,19 @@ public class ConnectionInfo
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
     public bool TrustServerCertificate { get; set; } = RuntimeOptionsProvider.Current.Security.TrustServerCertificateByDefault;
+
+    /// <summary>
+    /// Validates server and database fields. Returns a list of error messages (empty if valid).
+    /// </summary>
+    public static IList<string> Validate(ConnectionInfo info)
+    {
+        var errors = new List<string>();
+        if (string.IsNullOrWhiteSpace(info.Server))
+            errors.Add("Il server non può essere vuoto.");
+        if (string.IsNullOrWhiteSpace(info.Database))
+            errors.Add("Il database non può essere vuoto.");
+        return errors;
+    }
 
     /// <summary>
     /// PostgreSQL and Oracle only (SQL Server is always encrypted). Off: the driver's own default, which uses TLS when the
@@ -49,7 +63,7 @@ public class ConnectionInfo
         }
 
         System.Diagnostics.Debug.WriteLine(
-            $"[ConnectionInfo] SQL Server target {Server}:{Port}/{Database} (SqlAuth user={Username}, TrustServerCertificate={trustOption})");
+            $"[ConnectionInfo] SQL Server target {Server}:{Port}/{Database} (SqlAuth, TrustServerCertificate={trustOption})");
         return $"Server={Server},{Port};Database={Database};User Id={Username};Password={Password};Encrypt=True;TrustServerCertificate={trustOption};";
     }
 
@@ -71,7 +85,7 @@ public class ConnectionInfo
             // the certificate chain and that it was issued for this host.
             builder.SslMode = TrustServerCertificate ? SslMode.Require : SslMode.VerifyFull;
         }
-        System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] PostgreSQL target {Server}:{Port}/{Database} (user={Username})");
+        System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] PostgreSQL target {Server}:{Port}/{Database}");
         return builder.ConnectionString;
     }
 
@@ -111,7 +125,7 @@ public class ConnectionInfo
             cs += "DBA Privilege=SYSDBA;";
         }
         
-        System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] Oracle target {Server}:{Port}/{Database} (user={Username})");
+        System.Diagnostics.Debug.WriteLine($"[ConnectionInfo] Oracle target {Server}:{Port}/{Database}");
         return cs;
     }
 

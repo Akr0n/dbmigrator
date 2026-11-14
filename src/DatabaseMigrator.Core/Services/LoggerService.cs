@@ -11,9 +11,12 @@ namespace DatabaseMigrator.Core.Services;
 /// </summary>
 public static class LoggerService
 {
-    private static readonly string LogDirectory = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DatabaseMigrator");
+    private static string LogDirectory =>
+        !string.IsNullOrWhiteSpace(LoggingOptions.LogDirectory)
+            ? LoggingOptions.LogDirectory
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DatabaseMigrator");
 
     private static readonly object LockObject = new object();
     private static LoggingRuntimeOptions LoggingOptions => RuntimeOptionsProvider.Current.Logging;
@@ -131,7 +134,20 @@ public static class LoggerService
 
             string archiveName = $"{Path.GetFileNameWithoutExtension(filePath)}.{DateTime.Now:yyyyMMddHHmmss}.log";
             string archivePath = Path.Combine(LogDirectory, archiveName);
-            File.Move(filePath, archivePath, overwrite: true);
+
+            // Retry on File.Move (file may be locked by another process or antivirus scan)
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                try
+                {
+                    File.Move(filePath, archivePath, overwrite: true);
+                    break;
+                }
+                catch (IOException) when (attempt < 2)
+                {
+                    System.Threading.Thread.Sleep(100 * (attempt + 1));
+                }
+            }
 
             CleanupArchivedLogs(Path.GetFileNameWithoutExtension(filePath));
         }

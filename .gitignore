@@ -67,3 +67,5 @@ Thumbs.db
 *.docx
 generate_test_cases.py
 run_tests.py
+
+.codegraph/

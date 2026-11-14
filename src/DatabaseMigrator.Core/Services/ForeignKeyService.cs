@@ -99,14 +99,26 @@ public class ForeignKeyService : DatabaseServiceBase
         if (order.HadCycles)
             Log("[ForeignKeyService] Foreign keys form a cycle among the selected tables; no strict load order exists.");
 
-        // SQL Server can switch a key off and back on (NOCHECK / CHECK), which also covers cycles and self-references.
-        // PostgreSQL and Oracle rely on the load order alone.
+        // When cycles exist, SQL Server uses NOCHECK/CHECK, PostgreSQL sets session_replication_role,
+        // and Oracle disables/enables individual constraints. Without this, cyclic FKs reject rows.
+        if (order.HadCycles && target.DatabaseType != DatabaseType.SqlServer)
+        {
+            var disabled = target.DatabaseType switch
+            {
+                DatabaseType.PostgreSQL => await DisableForeignKeysPgAsync(target),
+                DatabaseType.Oracle => await DisableForeignKeysOracleAsync(target, foreignKeys.Where(fk => !fk.IsDisabled)),
+                _ => Array.Empty<ForeignKeyInfo>()
+            };
+            return new DataLoadPlan(order.Tables, true, disabled.Length,
+                disabled.Length == 0 ? null : succeeded => EnableForeignKeysGenericAsync(target, disabled, succeeded));
+        }
+
         if (target.DatabaseType != DatabaseType.SqlServer)
             return new DataLoadPlan(order.Tables, order.HadCycles, 0, null);
 
-        var disabled = await DisableForeignKeysAsync(target, foreignKeys.Where(fk => !fk.IsDisabled));
-        return new DataLoadPlan(order.Tables, order.HadCycles, disabled.Count,
-            disabled.Count == 0 ? null : succeeded => EnableForeignKeysAsync(target, disabled, succeeded));
+        var disabledSs = await DisableForeignKeysAsync(target, foreignKeys.Where(fk => !fk.IsDisabled));
+        return new DataLoadPlan(order.Tables, order.HadCycles, disabledSs.Count,
+            disabledSs.Count == 0 ? null : succeeded => EnableForeignKeysAsync(target, disabledSs, succeeded));
     }
 
     private async Task<List<ForeignKeyInfo>> DisableForeignKeysAsync(ConnectionInfo target, IEnumerable<ForeignKeyInfo> foreignKeys)
@@ -144,6 +156,82 @@ public class ForeignKeyService : DatabaseServiceBase
         // Logged on every path, including the early return when the target cannot be reached.
         foreach (var warning in warnings)
             Log($"[ForeignKeyService] WARNING: {warning}");
+        return warnings;
+    }
+
+    // PostgreSQL: disable ALL foreign keys for the session so cyclic loads succeed.
+    private async Task<ForeignKeyInfo[]> DisableForeignKeysPgAsync(ConnectionInfo target)
+    {
+        using var connection = CreateConnection(target);
+        await ExecuteWithRetryAsync(() => connection.OpenAsync(), "DisableForeignKeysPgAsync.Open");
+        await ExecuteAsync(connection, "SET session_replication_role = replica", "DisableForeignKeysPgAsync.SetRole");
+        Log("[ForeignKeyService] SET session_replication_role = replica for cyclic FK load");
+        return Array.Empty<ForeignKeyInfo>(); // nothing to re-enable individually
+    }
+
+    // Oracle: disable each foreign key constraint individually.
+    private async Task<ForeignKeyInfo[]> DisableForeignKeysOracleAsync(ConnectionInfo target, IEnumerable<ForeignKeyInfo> foreignKeys)
+    {
+        var disabled = new List<ForeignKeyInfo>();
+        using var connection = CreateConnection(target);
+        await ExecuteWithRetryAsync(() => connection.OpenAsync(), "DisableForeignKeysOracleAsync.Open");
+
+        foreach (var fk in foreignKeys)
+        {
+            try
+            {
+                Log($"[ForeignKeyService] Disabling Oracle constraint {fk.ConstraintName} on {fk.ChildSchema}.{fk.ChildTable}");
+                await ExecuteAsync(connection,
+                    $"ALTER TABLE \"{EscapeOracleIdentifier(fk.ChildSchema)}\".\"{EscapeOracleIdentifier(fk.ChildTable)}\" DISABLE CONSTRAINT \"{EscapeOracleIdentifier(fk.ConstraintName)}\"",
+                    "DisableForeignKeysOracleAsync.Disable");
+                disabled.Add(fk);
+            }
+            catch (Exception ex)
+            {
+                Log($"[ForeignKeyService] Could not disable Oracle constraint {fk.ConstraintName}: {ex.Message}");
+            }
+        }
+
+        return disabled.ToArray();
+    }
+
+    // Re-enable foreign keys for PostgreSQL and Oracle after a load.
+    private async Task<IReadOnlyList<string>> EnableForeignKeysGenericAsync(ConnectionInfo target, IReadOnlyList<ForeignKeyInfo> disabled, bool succeeded)
+    {
+        var warnings = new List<string>();
+        using var connection = CreateConnection(target);
+        try
+        {
+            await ExecuteWithRetryAsync(() => connection.OpenAsync(), "EnableForeignKeysGenericAsync.Open");
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Could not reconnect to re-enable foreign keys ({ex.Message}).");
+            return warnings;
+        }
+
+        if (target.DatabaseType == DatabaseType.PostgreSQL)
+        {
+            await ExecuteAsync(connection, "SET session_replication_role = origin", "EnableForeignKeysGenericAsync.ResetRole");
+            Log("[ForeignKeyService] SET session_replication_role = origin");
+        }
+        else // Oracle: re-enable each disabled constraint
+        {
+            foreach (var fk in disabled)
+            {
+                try
+                {
+                    await ExecuteAsync(connection,
+                        $"ALTER TABLE \"{EscapeOracleIdentifier(fk.ChildSchema)}\".\"{EscapeOracleIdentifier(fk.ChildTable)}\" ENABLE CONSTRAINT \"{EscapeOracleIdentifier(fk.ConstraintName)}\"",
+                        "EnableForeignKeysGenericAsync.Enable");
+                }
+                catch (Exception ex)
+                {
+                    warnings.Add($"Could not re-enable Oracle constraint {fk.ConstraintName} on {fk.ChildSchema}.{fk.ChildTable} ({ex.Message}). Run: ALTER TABLE ... ENABLE CONSTRAINT ...");
+                }
+            }
+        }
+
         return warnings;
     }
 
@@ -220,6 +308,14 @@ public class ForeignKeyService : DatabaseServiceBase
 
     private static (string, string) Key(string schema, string table) =>
         (schema.ToUpperInvariant(), table.ToUpperInvariant());
+
+    // Escape an Oracle identifier for use inside double-quoted syntax. Doubles any embedded double-quotes.
+    private static new string EscapeOracleIdentifier(string identifier)
+    {
+        if (string.IsNullOrEmpty(identifier))
+            return identifier;
+        return identifier.Replace("\"", "\"\"");
+    }
 
     // Columns: constraint name, child schema, child table, parent schema, parent table, 1 when disabled.
     private static string ForeignKeyQuery(DatabaseType type) => type switch

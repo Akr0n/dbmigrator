@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using DatabaseMigrator.Core.Models;
@@ -24,8 +25,8 @@ public static class TableSelection
     }
 
     /// <summary>
-    /// Selects the tables the filter shows. Tables the filter hides are left as they are, so selecting one schema
-    /// after another accumulates.
+    /// Selects every table the filter shows, leaving other tables untouched: a second "select all" with a different
+    /// filter must accumulate, so the user can select schema by schema without losing earlier choices.
     /// </summary>
     public static void SelectVisible(IEnumerable<TableInfo> tables, string? searchFilter)
     {
@@ -55,18 +56,62 @@ public static class TableSelection
     /// After a reload, selects the freshly loaded tables that are selected among the tables currently on screen.
     /// It takes the on-screen tables themselves, not a snapshot of their keys, so it always sees the selection as it
     /// is when it is called: a click made while the reload was running is kept instead of being undone.
-    /// Tables are matched by exact (schema, name): names that differ only by case, or that contain a dot, are
-    /// different tables.
+    /// Tables are matched by exact (schema, name) first; names that differ only by case are treated as different
+    /// tables unless there is exactly one selected candidate for that key (cross-DB compatibility).
     /// </summary>
     public static void CarryOver(IEnumerable<TableInfo> current, IEnumerable<TableInfo> reloaded)
     {
-        var selected = new HashSet<(string Schema, string Table)>(
-            current.Where(table => table.IsSelected).Select(table => (table.Schema, table.TableName)));
+        // Set of exact (schema|name) keys that are selected in current.
+        var selectedKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var table in current.Where(t => t.IsSelected))
+            selectedKeys.Add($"{table.Schema}|{table.TableName}");
 
+        // Build groups for case-insensitive fallback: lowercase key → list of selected original tables.
+        var groups = new Dictionary<string, List<TableInfo>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var table in current.Where(t => t.IsSelected))
+        {
+            var key = $"{table.Schema}|{table.TableName}".ToLowerInvariant();
+            if (!groups.TryGetValue(key, out var list))
+            {
+                list = new List<TableInfo>();
+                groups[key] = list;
+            }
+
+            list.Add(table);
+        }
+
+        // Pass 1: exact match (schema + case-sensitive name).
         foreach (var table in reloaded)
         {
-            if (selected.Contains((table.Schema, table.TableName)))
+            if (selectedKeys.Contains($"{table.Schema}|{table.TableName}"))
                 table.IsSelected = true;
+        }
+
+        // Count how many tables in reloaded share each lowercase key.
+        var reloadedKeyCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var table in reloaded)
+        {
+            var key = $"{table.Schema}|{table.TableName}".ToLowerInvariant();
+            if (!reloadedKeyCounts.TryGetValue(key, out var count))
+                count = 0;
+
+            reloadedKeyCounts[key] = count + 1;
+        }
+
+        // Pass 2: case-insensitive fallback only when reloaded has exactly one table per key
+        // and there is exactly one selected candidate in current.
+        foreach (var table in reloaded)
+        {
+            if (table.IsSelected) continue;
+
+            var lowerKey = $"{table.Schema}|{table.TableName}".ToLowerInvariant();
+            if (reloadedKeyCounts.TryGetValue(lowerKey, out var rCount) &&
+                rCount == 1 &&
+                groups.TryGetValue(lowerKey, out var candidates) &&
+                candidates.Count == 1)
+            {
+                table.IsSelected = true;
+            }
         }
     }
 

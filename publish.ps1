@@ -46,7 +46,7 @@ try {
         -r win-x64 `
         --self-contained `
         -p:PublishSingleFile=true `
-        -p:PublishReadyToRun=true `
+        -p:PublishReadyToRun=false `
         -p:PublishTrimmed=false `
         -p:IncludeNativeLibrariesForSelfExtract=true `
         -o $outputDir

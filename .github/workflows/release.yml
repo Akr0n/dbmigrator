@@ -153,7 +153,7 @@ jobs:
             echo
             echo "## Build"
             echo "- $TAG, commit $GITHUB_SHA"
-            echo "- .NET 10, Windows x64, self-contained"
+            echo "- .NET 11, Windows x64, self-contained"
           } >> RELEASE_NOTES.txt
           cat RELEASE_NOTES.txt >> "$GITHUB_STEP_SUMMARY"
 

@@ -42,7 +42,13 @@ public abstract class DatabaseServiceBase
 
     protected async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> operation, string operationName, DbTransaction? transaction = null)
     {
+        return await ExecuteWithRetryAsync(operation, operationName, transaction, timeoutSeconds: 0);
+    }
+
+    protected async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> operation, string operationName, DbTransaction? transaction, int timeoutSeconds)
+    {
         int attempt = 0;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         while (true)
         {
             try
@@ -55,6 +61,11 @@ public abstract class DatabaseServiceBase
             {
                 attempt++;
                 int delayMs = (int)Math.Min(_retryInitialDelayMilliseconds * Math.Pow(2, attempt - 1), 10_000);
+                if (timeoutSeconds > 0 && sw.Elapsed.TotalSeconds + delayMs / 1000.0 > timeoutSeconds)
+                {
+                    throw new TimeoutException($"[{operationName}] Retry budget exhausted after {attempt} attempts ({sw.Elapsed.TotalMilliseconds:F0}ms).");
+                }
+
                 Log($"[{operationName}] Transient error (attempt {attempt}/{_retryCount}), retrying in {delayMs}ms: {ex.Message}");
                 await Task.Delay(delayMs);
             }
