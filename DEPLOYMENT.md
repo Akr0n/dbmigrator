@@ -14,7 +14,7 @@
 - **Download**: the [latest release](https://github.com/Akr0n/dbmigrator/releases/latest)
 - **Built locally**: `.\publish.ps1` writes it to `release\`
 - **Requirements**: Windows 10/11 64-bit, no external dependencies
-- **Runtime**: .NET 10.0 (self-contained)
+- **Runtime**: .NET 11.0 (self-contained)
 
 ## Installation
 
@@ -291,7 +291,7 @@ A local build without `-p:Version` (plain `dotnet run`/`dotnet build`) takes the
 (`SetVersionFromGitTag` in the app csproj); with no tags it falls back to the SDK default `1.0.0`. The releases, with their notes, are on the
 [Releases page](https://github.com/Akr0n/dbmigrator/releases); the latest stable one is marked "Latest", and a release marked "Pre-release" is a test build.
 
-**Build**: Win-x64, .NET 10.0 self-contained
+**Build**: Win-x64, .NET 11.0 self-contained
 
 ### Release Notes v1.0.0
 - ✅ SQL Server, Oracle, PostgreSQL support
@@ -306,4 +306,4 @@ A local build without `-p:Version` (plain `dotnet run`/`dotnet build`) takes the
 
 ---
 
-**Built with**: .NET 10.0, Avalonia 11.3, ReactiveUI
+**Built with**: .NET 11.0, Avalonia 11.3, ReactiveUI
