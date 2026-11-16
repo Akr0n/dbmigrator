@@ -57,7 +57,13 @@ Apply via `FormatTableName`/`FormatColumnName`; introspection queries must match
 A fine lavoro, aggiungi una voce sotto "## Registro modifiche AI" nel file
 C:\Users\feder\OneDrive\Lavoro\_progetti_personali\_obsidian\Progetti\dbmigrator.md
 con data, cosa è stato chiesto, cosa è stato modificato e come è stato verificato,
-in italiano, massimo 5 righe.
+in italiano, massimo 5 righe.
 
 ## Uso di CodeGraph
 Per capire il codice usa PRIMA gli strumenti codegraph (codegraph_context, codegraph_explore) invece di leggere molti file. Leggi un file intero solo quando devi modificarlo.
+
+## Documentazione (leggere solo quando serve)
+- Struttura o nuovi moduli: docs/ARCHITECTURE.md
+- Rete, file, input esterni, dati: docs/SECURITY.md
+- Interfaccia grafica: docs/DESIGN.md
+- Stato del lavoro: STATO.md (leggere a inizio sessione, aggiornare a fine passo)
