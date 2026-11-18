@@ -50,7 +50,7 @@ A Windows tool for migrating data between relational databases (SQL Server, Orac
 dotnet publish src/DatabaseMigrator/DatabaseMigrator.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o publish
 ```
 
-The executable is then in `.\publish\DatabaseMigrator.exe` (without `-o` it ends up in `src\DatabaseMigrator\bin\Release\net10.0\win-x64\publish\`).
+The executable is then in `.\publish\DatabaseMigrator.exe` (without `-o` it ends up in `src\DatabaseMigrator\bin\Release\net11.0\win-x64\publish\`).
 
 ## Usage
 
@@ -231,7 +231,9 @@ See `PODMAN_E2E_TESTING.md` for prerequisites and details.
 
 - [QUICKSTART.md](QUICKSTART.md): the first migration in five minutes.
 - [DEPLOYMENT.md](DEPLOYMENT.md): requirements, troubleshooting and the release procedure.
-- [ARCHITECTURE.md](ARCHITECTURE.md): design, services and data-type mapping.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): design, services and data-type mapping.
+- [docs/DESIGN.md](docs/DESIGN.md): UI layout, controls and MVVM patterns.
+- [docs/SECURITY.md](docs/SECURITY.md): security rules, encryption and audit findings.
 - [PODMAN_E2E_TESTING.md](PODMAN_E2E_TESTING.md): the cross-database E2E tests with Podman.
 
 ## License
